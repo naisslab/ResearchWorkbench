@@ -1,0 +1,8 @@
+node_modules/
+dist/
+release/
+*.tsbuildinfo
+.research-build/
+.DS_Store
+build/icon.iconset/
+output/playwright/

@@ -1,0 +1,463 @@
+/* Compact editor chrome, consistent controls, and draggable pane boundaries. */
+.sidebar {
+  border-right: 0;
+  padding: 0 10px;
+}
+.sidebar .brand {
+  gap: 8px;
+  margin: 3px 8px 12px;
+}
+.sidebar .brand-symbol {
+  width: 27px;
+  height: 27px;
+  border: 0;
+  background: transparent;
+}
+.sidebar .brand-symbol .research-mark {
+  width: 25px;
+  height: 25px;
+}
+.sidebar .brand strong {
+  font-size: 14px;
+  letter-spacing: -0.2px;
+}
+.sidebar .brand span {
+  font-size: 10px;
+  margin-top: 1px;
+}
+.workspace-picker {
+  padding: 8px;
+  margin-bottom: 16px;
+  border-radius: 3px;
+  background: transparent;
+}
+.workspace-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 3px;
+}
+.nav-section-label {
+  font-size: 9px;
+  letter-spacing: 0.7px;
+  margin-bottom: 7px;
+}
+.main-nav {
+  gap: 1px;
+}
+.main-nav button {
+  height: 30px;
+  gap: 9px;
+  padding: 0 9px;
+  border-radius: 3px;
+  font-size: 11.5px;
+}
+.main-nav button svg {
+  width: 15px;
+  height: 15px;
+}
+.research-label {
+  margin-top: 18px;
+  margin-bottom: 6px;
+}
+.area-row {
+  min-height: 29px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+.area-name {
+  font-size: 11px;
+}
+.area-projects {
+  gap: 0;
+  padding-top: 2px;
+}
+.area-projects button {
+  min-height: 27px;
+  padding: 5px 7px;
+  border-radius: 2px;
+  font-size: 11px;
+}
+.sidebar-bottom {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  margin-top: 10px;
+}
+.local-note {
+  font-size: 10px;
+  padding: 2px 9px 7px;
+}
+.sidebar-bottom > button {
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 3px;
+  font-size: 11px;
+  background: transparent;
+}
+.app-header {
+  height: 40px;
+  gap: 13px;
+  padding: 0 18px;
+}
+.global-search {
+  height: 25px;
+  border-radius: 3px;
+  min-width: 210px;
+}
+.header-date {
+  font-size: 10px;
+}
+.page-content {
+  padding: 22px 24px;
+}
+.page-heading {
+  margin-bottom: 18px;
+  align-items: center;
+}
+h1 {
+  font-size: 22px;
+  letter-spacing: -0.45px;
+}
+.eyebrow {
+  font-size: 9px;
+  letter-spacing: 0.6px;
+  margin-bottom: 5px;
+}
+.page-heading p {
+  margin-top: 5px;
+  font-size: 11.5px;
+}
+.button {
+  min-height: 28px;
+  padding: 5px 10px;
+  font-size: 11px;
+  border-radius: 3px;
+  gap: 6px;
+  background: var(--surface);
+}
+.button.small {
+  min-height: 26px;
+  padding: 4px 8px;
+  font-size: 10.5px;
+}
+.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.button.primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.icon-button {
+  border-radius: 3px;
+}
+.stats-grid {
+  margin-bottom: 18px;
+  border-radius: 3px;
+  background: var(--surface);
+}
+.stat-card {
+  min-height: 64px;
+  padding: 12px 16px;
+  gap: 10px;
+}
+.stat-value {
+  font-size: 24px;
+  letter-spacing: -0.6px;
+  font-weight: 550;
+}
+.stat-detail {
+  font-size: 10px;
+  margin-top: 3px;
+}
+.overview-layout {
+  gap: 18px;
+}
+.projects-search {
+  height: 30px;
+  border-radius: 3px;
+  margin-bottom: 10px;
+}
+.section-actions select {
+  border-radius: 3px;
+}
+.project-grid {
+  gap: 10px;
+}
+.project-card,
+.aside-card {
+  border-radius: 3px;
+}
+.project-card-body {
+  padding: 12px 14px 10px;
+}
+.card-top {
+  margin-bottom: 6px;
+}
+.card-title-row {
+  gap: 8px;
+  margin: 6px 0;
+}
+.research-project-icon {
+  width: 27px;
+  height: 27px;
+  border-radius: 3px;
+  border: 0;
+  background: transparent;
+}
+.research-project-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.project-card h3 {
+  font-size: 13px;
+  letter-spacing: -0.15px;
+}
+.project-card p {
+  font-size: 11px;
+  line-height: 1.55;
+}
+.project-card-footer {
+  padding: 8px 14px;
+}
+.stage-badge {
+  border-radius: 3px;
+  font-size: 9.5px;
+}
+.aside-card {
+  padding: 14px;
+  background: var(--surface);
+}
+.workbench-header {
+  height: 40px;
+  min-height: 40px;
+  padding: 0 12px;
+  background: var(--surface);
+}
+.toolbar-actions {
+  gap: 5px;
+  min-width: 0;
+}
+.crumb {
+  gap: 6px;
+  font-size: 10.5px;
+}
+.crumb strong {
+  font-size: 11.5px;
+}
+.layout-reset {
+  color: var(--muted);
+  margin-right: 2px;
+}
+.file-sidebar,
+.editor-pane {
+  border-right: 0;
+}
+.file-sidebar {
+  flex-shrink: 0;
+}
+.pdf-pane {
+  min-width: 260px;
+  flex-shrink: 0;
+}
+.pane-heading,
+.editor-tab {
+  height: 32px;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+}
+.editor-language {
+  letter-spacing: 0;
+}
+.editor-file-tab {
+  height: 32px;
+  font-size: 11px;
+}
+.file-search {
+  margin: 8px;
+  border-radius: 3px;
+  min-height: 26px;
+  padding: 4px 6px;
+}
+.file-tree-row {
+  min-height: 25px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  font-size: 11px;
+}
+.file-root {
+  padding-bottom: 8px;
+}
+.file-root-heading > button {
+  padding-top: 7px;
+  font-size: 11px;
+}
+.file-root-location {
+  font-size: 9.5px;
+  padding-bottom: 5px;
+}
+.file-sidebar-bottom {
+  padding: 10px;
+  gap: 7px;
+}
+.cm-content {
+  padding-top: 10px !important;
+  padding-bottom: 10px !important;
+}
+.cm-scroller {
+  line-height: 1.6 !important;
+}
+.paper-icon {
+  width: 42px;
+  height: 55px;
+  margin-bottom: 16px;
+}
+.paper-icon svg {
+  width: 24px;
+  height: 24px;
+}
+.pdf-empty h3,
+.pane-empty h3 {
+  font-size: 13px;
+  font-weight: 550;
+  letter-spacing: 0;
+}
+.pdf-empty p {
+  margin: 7px 0 14px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.bottom-tabs {
+  border-top: 0;
+  height: 30px;
+  gap: 15px;
+}
+.bottom-panel {
+  resize: none;
+  max-height: none;
+}
+.terminal-toolbar,
+.build-summary {
+  height: 29px;
+  min-height: 29px;
+}
+.app-status {
+  height: 22px;
+  font-size: 10px;
+}
+
+.panel-divider {
+  position: relative;
+  flex-shrink: 0;
+  padding: 0;
+  background: var(--sidebar);
+  outline: none;
+  touch-action: none;
+  z-index: 4;
+  -webkit-app-region: no-drag;
+}
+.panel-divider.vertical {
+  width: 4px;
+  cursor: col-resize;
+}
+.panel-divider.horizontal {
+  height: 4px;
+  width: 100%;
+  cursor: row-resize;
+}
+.panel-divider::before {
+  content: "";
+  position: absolute;
+}
+.panel-divider.vertical::before {
+  inset: 0 -3px;
+}
+.panel-divider.horizontal::before {
+  inset: -3px 0;
+}
+.panel-divider::after {
+  content: "";
+  position: absolute;
+  background: var(--border);
+  transition: background 100ms ease;
+}
+.panel-divider.vertical::after {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  left: 1px;
+}
+.panel-divider.horizontal::after {
+  left: 0;
+  right: 0;
+  height: 1px;
+  top: 1px;
+}
+.panel-divider:hover::after,
+.panel-divider:focus-visible::after,
+.panel-divider.dragging::after {
+  background: var(--accent);
+}
+.panel-divider.vertical:hover::after,
+.panel-divider.vertical:focus-visible::after,
+.panel-divider.vertical.dragging::after {
+  width: 2px;
+}
+.panel-divider.horizontal:hover::after,
+.panel-divider.horizontal:focus-visible::after,
+.panel-divider.horizontal.dragging::after {
+  height: 2px;
+}
+.panel-dragging,
+.panel-dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+.panel-dragging-vertical,
+.panel-dragging-vertical * {
+  cursor: col-resize !important;
+}
+.panel-dragging-horizontal,
+.panel-dragging-horizontal * {
+  cursor: row-resize !important;
+}
+.panel-dragging iframe {
+  pointer-events: none;
+}
+@media (max-width: 1250px) {
+  .page-content {
+    padding: 20px;
+  }
+  .workbench-header {
+    flex-wrap: wrap;
+    height: auto;
+    min-height: 58px;
+    padding: 6px 10px;
+  }
+  .toolbar-actions {
+    gap: 4px;
+  }
+  .stats-grid {
+    margin-bottom: 16px;
+  }
+}
+.file-root-heading {
+  display: flex;
+  align-items: center;
+  padding-right: 5px;
+}
+.file-root-heading > button:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.file-root-heading .detach-file-root {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+  opacity: 0;
+}
+.file-root-heading:hover .detach-file-root,
+.file-root-heading:focus-within .detach-file-root {
+  opacity: 1;
+}

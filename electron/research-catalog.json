@@ -1,0 +1,1458 @@
+{
+  "checkedAt": "2026-10-09",
+  "areas": [
+    {
+      "id": "ml",
+      "name": "ML Systems",
+      "color": "#087cba",
+      "icon": "circuit"
+    },
+    {
+      "id": "security",
+      "name": "Security and Privacy",
+      "color": "#ab6f05",
+      "icon": "shield"
+    },
+    {
+      "id": "cps",
+      "name": "Cyber-Physical Systems",
+      "color": "#a04a95",
+      "icon": "radio"
+    }
+  ],
+  "entries": [
+    {
+      "id": "flowwise",
+      "name": "FlowWise",
+      "areaId": "ml",
+      "topic": "Model Serving",
+      "icon": "workflow",
+      "summary": "Stateful fast-slow model serving for streaming network traffic intelligence.",
+      "stage": "accepted",
+      "statusNote": "SoCC 2026 acceptance is recorded on the lab website.",
+      "confidence": "verified",
+      "folders": [
+        {
+          "path": "fast-serving",
+          "mainFile": "paper.tex",
+          "role": "Manuscript"
+        },
+        {
+          "path": "FlowWise",
+          "mainFile": "",
+          "role": "Code"
+        }
+      ],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/6a2f8e387f9694ae91f658bd"
+        },
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2402.03694"
+        },
+        {
+          "label": "Code",
+          "url": "https://github.com/noise-lab/FlowWise"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab: flowwise, ACM SoCC 2026.",
+        "fast-serving/paper.tex title; FlowWise/README.md.",
+        "Overleaf: fast-serving."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "Code and manuscript are one project. Older fast-serving / SIGMETRICS drafts are historical versions. Acceptance does not establish a camera-ready deadline.",
+      "venue": "ACM SoCC 2026"
+    },
+    {
+      "id": "pacc",
+      "name": "PACC",
+      "areaId": "ml",
+      "topic": "Traffic Representation",
+      "icon": "circuit",
+      "summary": "Protocol-aware cross-layer compression for compact network traffic representation.",
+      "stage": "submitted",
+      "statusNote": "Lab website lists this preprint as In Submission; the exact venue needs confirmation.",
+      "confidence": "verified",
+      "folders": [
+        {
+          "path": "pacc-paper",
+          "mainFile": "paper.tex",
+          "role": "Manuscript"
+        },
+        {
+          "path": "pacc",
+          "mainFile": "",
+          "role": "Code"
+        }
+      ],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/691ffe173ba0f538f6dda5e1"
+        },
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2602.08331"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab: pacc, In Submission.",
+        "pacc-paper/paper.tex; pacc/README.md.",
+        "Overleaf: Cross-layer Traffic Representation."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": ""
+    },
+    {
+      "id": "tracecodec",
+      "name": "TraceCodec",
+      "areaId": "ml",
+      "topic": "Network Synthesis",
+      "icon": "binary",
+      "summary": "A compiler-backed neural codec for stateful multi-flow network traffic traces.",
+      "stage": "submitted",
+      "statusNote": "Lab website lists this preprint as In Submission; no target venue is verified.",
+      "confidence": "verified",
+      "folders": [
+        {
+          "path": "trace_codec_paper",
+          "mainFile": "neurips_2026.tex",
+          "role": "Manuscript"
+        }
+      ],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/69e73c6f0ccc77e2852a14f9"
+        },
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2605.29941"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab: tracecodec, In Submission.",
+        "trace_codec_paper/neurips_2026.tex.",
+        "Overleaf: trace_codec_paper."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "The local filename mentions NeurIPS 2026. A filename alone does not confirm the current venue or submission outcome."
+    },
+    {
+      "id": "traceforge",
+      "name": "TraceForge",
+      "areaId": "ml",
+      "topic": "Network Synthesis",
+      "icon": "route",
+      "summary": "Replayable what-if PCAP generation using action semantics and latent flow matching.",
+      "stage": "writing",
+      "statusNote": "Stage inferred from the local draft; confirm the current submission state.",
+      "confidence": "inferred",
+      "folders": [
+        {
+          "path": "traceforge_paper",
+          "mainFile": "main.tex",
+          "role": "Manuscript"
+        }
+      ],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/69b7b76b98537bc2b0391a3b"
+        }
+      ],
+      "evidence": [
+        "traceforge_paper/README.md and main.tex.",
+        "Overleaf: traceforge_paper."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "Keep separate from TraceCodec: the local drafts describe generation and representation as separate projects."
+    },
+    {
+      "id": "tabquerybench",
+      "name": "TabQueryBench",
+      "areaId": "ml",
+      "topic": "Tabular Data & Benchmarks",
+      "icon": "table",
+      "summary": "A query-centric benchmark for synthetic tabular data.",
+      "stage": "submitted",
+      "statusNote": "Website: In Submission. Overleaf includes ICLR and VLDB variants; confirm the active version.",
+      "confidence": "verified",
+      "folders": [
+        {
+          "path": "tabquerybench_paper",
+          "mainFile": "main.tex",
+          "role": "Manuscript"
+        },
+        {
+          "path": "tabquerybench_paper_VLDB",
+          "mainFile": "main.tex",
+          "role": "VLDB variant"
+        }
+      ],
+      "links": [
+        {
+          "label": "Overleaf \u00b7 ICLR",
+          "url": "https://www.overleaf.com/project/6a8bc8f217dc43f4e5fa01b2"
+        },
+        {
+          "label": "Overleaf \u00b7 VLDB",
+          "url": "https://www.overleaf.com/project/6a38eef51c255f2d278ae5a5"
+        },
+        {
+          "label": "Overleaf \u00b7 earlier draft",
+          "url": "https://www.overleaf.com/project/69b27219c555c38a69bb2156"
+        },
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2607.03926"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab: tabquerybench, In Submission.",
+        "Both local manuscript titles match.",
+        "Overleaf: three version groups, including a duplicate ICLR copy."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "One project, multiple venue variants. Use the collaborator-owned ICLR draft rather than assuming the personal duplicate is authoritative.",
+      "venue": "ICLR / VLDB variants (confirm)"
+    },
+    {
+      "id": "datalloy",
+      "name": "DataAlloy / DataEvolve",
+      "areaId": "ml",
+      "topic": "Tabular Data & Benchmarks",
+      "icon": "database",
+      "summary": "Evolving executable data engines for synthetic tabular and relational data.",
+      "stage": "writing",
+      "statusNote": "Stage inferred from the local draft; confirm the current submission state.",
+      "confidence": "inferred",
+      "folders": [
+        {
+          "path": "dataevolve-paper",
+          "mainFile": "main.tex",
+          "role": "Manuscript"
+        },
+        {
+          "path": "DataEvolve",
+          "mainFile": "",
+          "role": "Code"
+        },
+        {
+          "path": "datalloy-mvp",
+          "mainFile": "",
+          "role": "Earlier prototype"
+        }
+      ],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/69b271dcf6877b9e883f6b84"
+        }
+      ],
+      "evidence": [
+        "dataevolve-paper/main.tex defines the system as DATALLOY.",
+        "DataEvolve/README.md describes the synthetic-data workbench.",
+        "Overleaf: DataAlloy-paper."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "DataEvolve is the code workspace; the local manuscript calls the system DATALLOY. Keep the website and MVP directories as supporting assets."
+    },
+    {
+      "id": "tracefoundry",
+      "name": "TraceFoundry",
+      "areaId": "ml",
+      "topic": "Workload Synthesis",
+      "icon": "database",
+      "summary": "Cross-trace synthesis of GPU workload records and evaluation on held-out workloads.",
+      "stage": "experiments",
+      "statusNote": "October 8 local records show ongoing training and incomplete final scientific comparisons.",
+      "confidence": "inferred",
+      "folders": [
+        {
+          "path": "Cross-Trace-Synth",
+          "mainFile": "main.tex",
+          "role": "Manuscript"
+        },
+        {
+          "path": "TraceFoundry_Codex",
+          "mainFile": "",
+          "role": "Current code"
+        },
+        {
+          "path": "TraceFoundry_Claude",
+          "mainFile": "",
+          "role": "Alternative implementation"
+        }
+      ],
+      "links": [
+        {
+          "label": "Overleaf \u00b7 Synthetic Job Schedulers",
+          "url": "https://www.overleaf.com/project/691f2bccaa2c6b86b787f83a"
+        },
+        {
+          "label": "GitHub \u00b7 Manuscript",
+          "url": "https://github.com/naisslab/Cross-Trace-Synth"
+        }
+      ],
+      "evidence": [
+        "Cross-Trace-Synth/main.tex: TraceFoundry macro and Cross-Trace Synthesis for More Generalized GPU Workloads.",
+        "TraceFoundry_Codex/README.md, current execution dated October 8.",
+        "Overleaf: Synthetic Job Schedulers (candidate manuscript association).",
+        "User confirmed Overleaf association on October 9, 2026; Overleaf GitHub integration shows naisslab/Cross-Trace-Synth."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "Synthetic Job Schedulers is the TraceFoundry manuscript, confirmed by the user and inspected on October 9, 2026. Overleaf is linked to naisslab/Cross-Trace-Synth."
+    },
+    {
+      "id": "scenario-synthesis",
+      "name": "Trace-Conditioned Scenario Synthesis",
+      "areaId": "ml",
+      "topic": "Network Synthesis",
+      "icon": "route",
+      "summary": "Infer network scenarios from traces, then regenerate traffic with executable simulators.",
+      "stage": "writing",
+      "statusNote": "Stage inferred from the local draft; confirm the current submission state.",
+      "confidence": "inferred",
+      "folders": [
+        {
+          "path": "ns3-synth-hotnets",
+          "mainFile": "main.tex",
+          "role": "Manuscript"
+        },
+        {
+          "path": "ns3-synth",
+          "mainFile": "",
+          "role": "Python implementation"
+        },
+        {
+          "path": "netscene",
+          "mainFile": "",
+          "role": "Rust implementation"
+        }
+      ],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/6a4bb379bbed397096941c01"
+        }
+      ],
+      "evidence": [
+        "ns3-synth-hotnets/README.md and main.tex.",
+        "ns3-synth/README.md; netscene/README.md.",
+        "Overleaf: Trace-Conditioned Scenario Synthesis as a New Abstraction for Traffic Generation."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "Group the two implementations under the same research question. The HotNets filename and draft do not prove submission or acceptance."
+    },
+    {
+      "id": "trace-rsi",
+      "name": "TraceModel RSI",
+      "areaId": "ml",
+      "topic": "Network Synthesis",
+      "icon": "workflow",
+      "summary": "Agent-guided measurement and iterative improvement of cross-condition traffic generation.",
+      "stage": "experiments",
+      "statusNote": "Local README describes a preliminary study; confirm the latest experiment and paper state.",
+      "confidence": "inferred",
+      "folders": [
+        {
+          "path": "TraceModel_RSI",
+          "mainFile": "",
+          "role": "Experiments"
+        }
+      ],
+      "links": [],
+      "evidence": [
+        "TraceModel_RSI/README.md: ECS 27/28 Task 3 preliminary study."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "A separate validation study supporting the proposal. Keep distinct from TraceForge, which is the generator used by the study."
+    },
+    {
+      "id": "synthetic-data-sok",
+      "name": "Synthetic Network Data SoK",
+      "areaId": "ml",
+      "topic": "Network Synthesis",
+      "icon": "network",
+      "summary": "Systematizing and orchestrating opportunities for synthetic network data.",
+      "stage": "writing",
+      "statusNote": "Local manuscript source verified. SIGMETRICS 2027 target supplied by the user. Overleaf has no GitHub repository linked.",
+      "confidence": "inferred",
+      "folders": [
+        {
+          "path": "Synthetic-Network-Data-SoK",
+          "role": "Manuscript",
+          "mainFile": "paper.tex"
+        }
+      ],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/66f6d7c605d879e23c28157a"
+        }
+      ],
+      "evidence": [
+        "Overleaf project title: Towards Systematizing and Orchestrating the Opportunities of Synthetic Network Data.",
+        "Overleaf source archive downloaded October 9, 2026; paper.tex, sections, tables, figures and reference.bib verified."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": ""
+    },
+    {
+      "id": "pg-sft",
+      "name": "PG-SFT",
+      "areaId": "ml",
+      "topic": "Agent Learning",
+      "icon": "bot",
+      "summary": "Balance capability acquisition and retention in offline agent fine-tuning.",
+      "stage": "submitted",
+      "statusNote": "Lab website: In Submission. Overleaf draft is labelled ICLR 2027; target and submission receipt need confirmation.",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/6ab54ac0bd19fbe9251d9c7e"
+        },
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2610.00949"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab: pg-sft, In Submission.",
+        "Overleaf: pgsft-iclr27."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "",
+      "venue": "ICLR 2027 draft (confirm)"
+    },
+    {
+      "id": "spliceleak",
+      "name": "SpliceLeak",
+      "areaId": "security",
+      "topic": "AI Infrastructure Security",
+      "icon": "shield",
+      "summary": "Agent-assisted side-channel attacks on non-prefix KV cache in RAG.",
+      "stage": "submitted",
+      "statusNote": "Lab website lists this preprint as In Submission.",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2606.21842"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab: spliceleak."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "Several Overleaf drafts owned by He Sun have generic venue names. No exact draft association is asserted."
+    },
+    {
+      "id": "hillinfer",
+      "name": "HillInfer",
+      "areaId": "ml",
+      "topic": "Model Serving",
+      "icon": "cpu",
+      "summary": "Long-context edge LLM inference with hierarchical KV eviction using SmartSSD.",
+      "stage": "submitted",
+      "statusNote": "Lab website lists this preprint as In Submission.",
+      "confidence": "verified",
+      "folders": [
+        {
+          "path": "HillInfer-Overleaf",
+          "role": "Manuscript",
+          "mainFile": "sample-sigconf.tex"
+        },
+        {
+          "path": "HillInfer-Paper",
+          "role": "arXiv Source",
+          "mainFile": "usenix.tex"
+        }
+      ],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/69fde367d5d619df8eed2560"
+        },
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2602.18750"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab: hillinfer.",
+        "arXiv 2602.18750v2 source downloaded October 9, 2026; usenix.tex title confirms HillInfer. This is the published source snapshot, not a verified current Overleaf checkout.",
+        "User confirmed Eurosys 2027 / HillServe is the same project. Complete latest Overleaf source downloaded October 9, 2026; sample-sigconf.tex entry verified. GitHub linking is controlled by the project owner."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "The user confirmed on October 9, 2026 that Eurosys 2027 (HillServe) is the latest HillInfer manuscript. ICDE 2027 remains the intended target. arXiv source retained separately."
+    },
+    {
+      "id": "threat-intelligence",
+      "name": "A SoK for SoCs",
+      "areaId": "security",
+      "topic": "Threat Intelligence",
+      "icon": "shield",
+      "summary": "Systematize AI-based cyber threat intelligence generation and sharing.",
+      "stage": "submitted",
+      "statusNote": "Lab website: In Submission. Overleaf manuscript is labelled NDSS 2027; confirm the actual submission.",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/6659126c71e8342bc9ac2d88"
+        },
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2609.01174"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab: sok-for-socs.",
+        "Overleaf: ThreatIntelligence_SOK_NDSS-27."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "",
+      "venue": "NDSS 2027 draft (confirm)"
+    },
+    {
+      "id": "ghostaccess",
+      "name": "GhostAccess",
+      "areaId": "security",
+      "topic": "AI Infrastructure Security",
+      "icon": "cpu",
+      "summary": "Infer GPU workloads through a CPU LLC side channel under unified memory.",
+      "stage": "accepted",
+      "statusNote": "MICRO 2026 acceptance is recorded on the lab website; Overleaf has a camera-ready draft.",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf \u00b7 camera-ready",
+          "url": "https://www.overleaf.com/project/6a217438f29db013e380c727"
+        },
+        {
+          "label": "Lab publication",
+          "url": "https://naisslab.github.io/#publications"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab: ghostaccess and July 2026 acceptance news.",
+        "Overleaf: paper-um-llc-sca-micro2026-camera-ready."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "Combine earlier CCS and MICRO submissions with the camera-ready version in this project.",
+      "venue": "IEEE/ACM MICRO 2026"
+    },
+    {
+      "id": "synthetic-privacy",
+      "name": "Synthetic Traffic Privacy",
+      "areaId": "security",
+      "topic": "Network Privacy",
+      "icon": "fingerprint",
+      "summary": "Quantify privacy implications of high-fidelity synthetic network traffic.",
+      "stage": "accepted",
+      "statusNote": "IMC 2026 acceptance is recorded on the lab website; exact publication state needs confirmation.",
+      "confidence": "verified",
+      "folders": [
+        {
+          "path": "synthetic_privacy",
+          "mainFile": "latest_new/paper.tex",
+          "role": "Manuscript"
+        }
+      ],
+      "links": [
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2511.20497"
+        },
+        {
+          "label": "Code",
+          "url": "https://github.com/VanTranHong/IMC-26-privacy-traffic-generator"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab: synthetic-traffic-privacy, ACM IMC 2026.",
+        "synthetic_privacy: submitted, latest and latest_new manuscript variants."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "The newest named local folder is attached for convenience, not asserted to be the authoritative camera-ready source. Keep marked-diff folders as supporting assets.",
+      "venue": "ACM IMC 2026"
+    },
+    {
+      "id": "netguard",
+      "name": "NetGuard / Generative Active Adaptation",
+      "areaId": "security",
+      "topic": "Network Detection",
+      "icon": "activity",
+      "summary": "Generative active adaptation for drifting and imbalanced network intrusion detection.",
+      "stage": "accepted",
+      "statusNote": "CoNEXT 2026 acceptance is recorded on the lab website.",
+      "confidence": "verified",
+      "folders": [
+        {
+          "path": "NetGuard",
+          "mainFile": "",
+          "role": "Revision exports"
+        }
+      ],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/692514a7be20280a16b0ed48"
+        },
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2503.03022"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab: generative-active-adaptation.",
+        "NetGuard Version 3598 archive contains the matching manuscript title.",
+        "Overleaf: CoNext 2026 NetGuard."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "Local exports include marked differences and templates, so no clean LaTeX entry file is attached automatically. Use the verified Overleaf link.",
+      "venue": "ACM CoNEXT 2026"
+    },
+    {
+      "id": "llm-fingerprints",
+      "name": "LLM Resource Fingerprints",
+      "areaId": "security",
+      "topic": "AI Infrastructure Security",
+      "icon": "fingerprint",
+      "summary": "Identify an agent\u2019s underlying model from input/output token-usage histories.",
+      "stage": "experiments",
+      "statusNote": "Local repository documents experiments and results; publication state is unverified.",
+      "confidence": "inferred",
+      "folders": [
+        {
+          "path": "llm-resource-fingerprints",
+          "mainFile": "",
+          "role": "Code & experiments"
+        }
+      ],
+      "links": [],
+      "evidence": [
+        "llm-resource-fingerprints/README.md."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": ""
+    },
+    {
+      "id": "agent-telemetry",
+      "name": "Agent Causal Traceroute",
+      "areaId": "security",
+      "topic": "Agent Assurance",
+      "icon": "network",
+      "summary": "Use agent, message, tool and environment traces to study failure attribution.",
+      "stage": "exploration",
+      "statusNote": "Local preliminary analysis and proposal wording exist; a completed system is not established.",
+      "confidence": "inferred",
+      "folders": [
+        {
+          "path": "IoA-telemetry",
+          "mainFile": "",
+          "role": "Preliminary analysis"
+        }
+      ],
+      "links": [],
+      "evidence": [
+        "IoA-telemetry/preliminary-results-agent-traceroute.md.",
+        "IoA-telemetry/traceroute-failure-analysis.md."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": ""
+    },
+    {
+      "id": "iot-unifier",
+      "name": "IoT Semantic Unifier",
+      "areaId": "cps",
+      "topic": "Smart Environments",
+      "icon": "radio",
+      "summary": "Use the home router to unify semantic observations in mixed smart homes.",
+      "stage": "writing",
+      "statusNote": "Stage inferred from the local draft; confirm the current submission state.",
+      "confidence": "inferred",
+      "folders": [
+        {
+          "path": "iot-unification-paper",
+          "mainFile": "main.tex",
+          "role": "Manuscript"
+        },
+        {
+          "path": "iot-unifier",
+          "mainFile": "",
+          "role": "Rust code"
+        }
+      ],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/69c7f17cb7ab304548fc773b"
+        }
+      ],
+      "evidence": [
+        "iot-unification-paper/main.tex: The Home Router as a Semantic Unifier for Mixed Smart Homes.",
+        "iot-unifier/README.md describes early implementation.",
+        "Overleaf: iot-unification-paper."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": ""
+    },
+    {
+      "id": "air-ground",
+      "name": "Air\u2013Ground Safety\u2013Security",
+      "areaId": "cps",
+      "topic": "Cooperative Driving",
+      "icon": "radar",
+      "summary": "Co-design safety and security for air\u2013ground cooperative driving.",
+      "stage": "experiments",
+      "statusNote": "Local repository describes the funded engineering stack and evaluation plan; final outcomes are unverified.",
+      "confidence": "inferred",
+      "folders": [
+        {
+          "path": "AirGround-CollaborativeDriving",
+          "mainFile": "",
+          "role": "Code & design"
+        }
+      ],
+      "links": [],
+      "evidence": [
+        "AirGround-CollaborativeDriving/README.md: AGCD-SafetySec and HKU Faculty Interdisciplinary Fund."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": "Keep separate from SafeCoop. Shared driving context does not establish that they are the same project."
+    },
+    {
+      "id": "safecoop",
+      "name": "SafeCoop",
+      "areaId": "cps",
+      "topic": "Cooperative Driving",
+      "icon": "radar",
+      "summary": "Study full-stack safety in agentic collaborative driving.",
+      "stage": "submitted",
+      "statusNote": "Lab website lists this preprint as In Submission.",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "Paper",
+          "url": "https://www.arxiv.org/pdf/2510.18123"
+        },
+        {
+          "label": "Code",
+          "url": "https://github.com/taco-group/SafeCoop"
+        },
+        {
+          "label": "Project website",
+          "url": "https://xiangbogaobarry.github.io/SafeCoop/"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab: safecoop."
+      ],
+      "recommended": true,
+      "collection": "current",
+      "notes": ""
+    },
+    {
+      "id": "quancache",
+      "name": "QuanCache",
+      "areaId": "ml",
+      "topic": "Model Serving",
+      "icon": "cpu",
+      "summary": "Overleaf manuscript. Confirm the research scope and active version before prioritizing.",
+      "stage": "writing",
+      "statusNote": "Project title and link verified; topic and stage are provisional. Venue labels do not prove submission.",
+      "confidence": "review",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/6a71990a776124592438b8d5"
+        }
+      ],
+      "evidence": [
+        "Overleaf project list, read October 9, 2026. Manuscript body was not inspected."
+      ],
+      "recommended": false,
+      "collection": "current",
+      "notes": "Some titles have venue/year labels. Those labels are not evidence of submission, acceptance or a deadline."
+    },
+    {
+      "id": "intenteval",
+      "name": "IntentEval",
+      "areaId": "ml",
+      "topic": "Agent Evaluation",
+      "icon": "bot",
+      "summary": "Overleaf manuscript. Confirm the research scope and active version before prioritizing.",
+      "stage": "writing",
+      "statusNote": "Project title and link verified; topic and stage are provisional. Venue labels do not prove submission.",
+      "confidence": "review",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/69a33c79fddb7cd41fd48b65"
+        }
+      ],
+      "evidence": [
+        "Overleaf project list, read October 9, 2026. Manuscript body was not inspected."
+      ],
+      "recommended": false,
+      "collection": "current",
+      "notes": "Some titles have venue/year labels. Those labels are not evidence of submission, acceptance or a deadline."
+    },
+    {
+      "id": "web-rag",
+      "name": "Web RAG",
+      "areaId": "ml",
+      "topic": "Retrieval Systems",
+      "icon": "network",
+      "summary": "Structure-completed evidence units for Web retrieval-augmented generation.",
+      "stage": "writing",
+      "statusNote": "Manuscript source verified; WWW 2027 target supplied by the user. Overleaf GitHub linking is controlled by the project owner.",
+      "confidence": "review",
+      "folders": [
+        {
+          "path": "Web-RAG-Paper",
+          "role": "Manuscript",
+          "mainFile": "main.tex"
+        }
+      ],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/6ac34713c3c1f48953293fc1"
+        }
+      ],
+      "evidence": [
+        "Overleaf project list, read October 9, 2026. Manuscript body was not inspected.",
+        "Overleaf source archive downloaded October 9, 2026 from WWW2027-Web RAG; main.tex, sections, figures, preamble.sty and references.bib verified."
+      ],
+      "recommended": false,
+      "collection": "current",
+      "notes": "Some titles have venue/year labels. Those labels are not evidence of submission, acceptance or a deadline."
+    },
+    {
+      "id": "rag-serving",
+      "name": "RAG Serving Survey",
+      "areaId": "ml",
+      "topic": "Retrieval Systems",
+      "icon": "network",
+      "summary": "Overleaf manuscript. Confirm the research scope and active version before prioritizing.",
+      "stage": "writing",
+      "statusNote": "Project title and link verified; topic and stage are provisional. Venue labels do not prove submission.",
+      "confidence": "review",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/6ac7c300a8966b68c3f73686"
+        }
+      ],
+      "evidence": [
+        "Overleaf project list, read October 9, 2026. Manuscript body was not inspected."
+      ],
+      "recommended": false,
+      "collection": "current",
+      "notes": "Some titles have venue/year labels. Those labels are not evidence of submission, acceptance or a deadline."
+    },
+    {
+      "id": "deepstore",
+      "name": "DeepStore",
+      "areaId": "ml",
+      "topic": "Network Trace Storage",
+      "icon": "database",
+      "summary": "Overleaf manuscript. Confirm the research scope and active version before prioritizing.",
+      "stage": "writing",
+      "statusNote": "Project title and link verified; topic and stage are provisional. Venue labels do not prove submission.",
+      "confidence": "review",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/68dc295101f3f346f3172026"
+        }
+      ],
+      "evidence": [
+        "Overleaf project list, read October 9, 2026. Manuscript body was not inspected."
+      ],
+      "recommended": false,
+      "collection": "current",
+      "notes": "Some titles have venue/year labels. Those labels are not evidence of submission, acceptance or a deadline."
+    },
+    {
+      "id": "lumen",
+      "name": "Lumen",
+      "areaId": "ml",
+      "topic": "Model Serving",
+      "icon": "cpu",
+      "summary": "Overleaf manuscript. Confirm the research scope and active version before prioritizing.",
+      "stage": "writing",
+      "statusNote": "Project title and link verified; topic and stage are provisional. Venue labels do not prove submission.",
+      "confidence": "review",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/6a4ca5681b04014daa2e2a29"
+        }
+      ],
+      "evidence": [
+        "Overleaf project list, read October 9, 2026. Manuscript body was not inspected."
+      ],
+      "recommended": false,
+      "collection": "current",
+      "notes": "Some titles have venue/year labels. Those labels are not evidence of submission, acceptance or a deadline."
+    },
+    {
+      "id": "demoteattack",
+      "name": "DemoteAttack",
+      "areaId": "security",
+      "topic": "AI Infrastructure Security",
+      "icon": "shield",
+      "summary": "Overleaf manuscript. Confirm the research scope and active version before prioritizing.",
+      "stage": "writing",
+      "statusNote": "Project title and link verified; topic and stage are provisional. Venue labels do not prove submission.",
+      "confidence": "review",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/6aba0f785ea5c8567e040c1e"
+        }
+      ],
+      "evidence": [
+        "Overleaf project list, read October 9, 2026. Manuscript body was not inspected."
+      ],
+      "recommended": false,
+      "collection": "current",
+      "notes": "Some titles have venue/year labels. Those labels are not evidence of submission, acceptance or a deadline."
+    },
+    {
+      "id": "toolpulse",
+      "name": "ToolPulse / Tool Side Channel",
+      "areaId": "security",
+      "topic": "AI Infrastructure Security",
+      "icon": "activity",
+      "summary": "Overleaf manuscript. Confirm the research scope and active version before prioritizing.",
+      "stage": "writing",
+      "statusNote": "Project title and link verified; topic and stage are provisional. Venue labels do not prove submission.",
+      "confidence": "review",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/69b3ad8ca05656060df75af1"
+        }
+      ],
+      "evidence": [
+        "Overleaf project list, read October 9, 2026. Manuscript body was not inspected."
+      ],
+      "recommended": false,
+      "collection": "current",
+      "notes": "Some titles have venue/year labels. Those labels are not evidence of submission, acceptance or a deadline."
+    },
+    {
+      "id": "agent-firewall",
+      "name": "Language Model Firewall",
+      "areaId": "security",
+      "topic": "Agent Assurance",
+      "icon": "shield",
+      "summary": "A stateful firewall that checks LLM agent tool calls before execution.",
+      "stage": "writing",
+      "statusNote": "Draft manuscript inspected; the user selected IEEE S&P 2027 as its submission target.",
+      "confidence": "review",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/6a4b23a010c03b93d5ac5ee7"
+        }
+      ],
+      "evidence": [
+        "Overleaf project list, read October 9, 2026. Manuscript body was not inspected.",
+        "Overleaf manuscript inspected October 9, 2026: Stateful Firewall for LLM Agents in Home Routers."
+      ],
+      "recommended": false,
+      "collection": "current",
+      "notes": "The Overleaf project retains the title Agent Firewall - Security 2027. The user selected IEEE S&P 2027 as the target on October 9, 2026."
+    },
+    {
+      "id": "tick-tells",
+      "name": "Tick Tells",
+      "areaId": "security",
+      "topic": "Sensor Side Channels",
+      "icon": "activity",
+      "summary": "Overleaf manuscript. Confirm the research scope and active version before prioritizing.",
+      "stage": "writing",
+      "statusNote": "Project title and link verified; topic and stage are provisional. Venue labels do not prove submission.",
+      "confidence": "review",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/6a6185c7f46612423237b51b"
+        }
+      ],
+      "evidence": [
+        "Overleaf project list, read October 9, 2026. Manuscript body was not inspected."
+      ],
+      "recommended": false,
+      "collection": "current",
+      "notes": "Some titles have venue/year labels. Those labels are not evidence of submission, acceptance or a deadline."
+    },
+    {
+      "id": "intent-drift",
+      "name": "Agent Intent Drift",
+      "areaId": "security",
+      "topic": "Agent Assurance",
+      "icon": "route",
+      "summary": "Overleaf manuscript. Confirm the research scope and active version before prioritizing.",
+      "stage": "writing",
+      "statusNote": "Project title and link verified; topic and stage are provisional. Venue labels do not prove submission.",
+      "confidence": "review",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/6a7af6352c6872bc76381019"
+        }
+      ],
+      "evidence": [
+        "Overleaf project list, read October 9, 2026. Manuscript body was not inspected."
+      ],
+      "recommended": false,
+      "collection": "current",
+      "notes": "Some titles have venue/year labels. Those labels are not evidence of submission, acceptance or a deadline."
+    },
+    {
+      "id": "ecs27",
+      "name": "ECS 2027/28 Proposal",
+      "areaId": "ml",
+      "topic": "Research Proposals",
+      "icon": "network",
+      "summary": "Proposal workspace supporting the next network-generation research program.",
+      "stage": "writing",
+      "statusNote": "Overleaf proposal title is verified; research scope and current stage need review.",
+      "confidence": "review",
+      "folders": [],
+      "links": [
+        {
+          "label": "Overleaf",
+          "url": "https://www.overleaf.com/project/6aa7633071bf1ffa4d3a9df0"
+        }
+      ],
+      "evidence": [
+        "Overleaf: ECS-27to28.",
+        "TraceModel_RSI/README.md identifies an ECS 27/28 Task 3 study."
+      ],
+      "recommended": false,
+      "collection": "current",
+      "notes": ""
+    },
+    {
+      "id": "netssm",
+      "name": "NetSSM",
+      "areaId": "ml",
+      "topic": "Network Synthesis",
+      "icon": "network",
+      "summary": "State-space models for multi-flow state-aware network trace generation.",
+      "stage": "accepted",
+      "statusNote": "Acceptance recorded; publication state needs confirmation. ACM CoNEXT 2026",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2503.22663"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        },
+        {
+          "label": "Personal website",
+          "url": "https://www.shinan.info/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab publication record: netssm; ACM CoNEXT 2026."
+      ],
+      "recommended": false,
+      "collection": "archive",
+      "notes": "",
+      "venue": "ACM CoNEXT 2026"
+    },
+    {
+      "id": "wifinger",
+      "name": "WiFinger",
+      "areaId": "security",
+      "topic": "Network Privacy",
+      "icon": "fingerprint",
+      "summary": "Fingerprint noisy IoT event traffic using packet-level sequence matching.",
+      "stage": "published",
+      "statusNote": "Published work listed on the personal and lab websites. NDSS 2026",
+      "confidence": "verified",
+      "folders": [
+        {
+          "path": "wifinger",
+          "mainFile": "",
+          "role": "Code"
+        }
+      ],
+      "links": [
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2508.03151"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        },
+        {
+          "label": "Personal website",
+          "url": "https://www.shinan.info/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab publication record: wifinger; NDSS 2026."
+      ],
+      "recommended": false,
+      "collection": "archive",
+      "notes": "",
+      "venue": "NDSS 2026"
+    },
+    {
+      "id": "iot-minimization",
+      "name": "IoT Data Minimization",
+      "areaId": "cps",
+      "topic": "Smart Environments",
+      "icon": "radio",
+      "summary": "Algorithmic data minimization for machine learning over IoT data streams.",
+      "stage": "published",
+      "statusNote": "Published work listed on the personal and lab websites. VLDB 2026",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        },
+        {
+          "label": "Personal website",
+          "url": "https://www.shinan.info/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab publication record: iot-minimization; VLDB 2026."
+      ],
+      "recommended": false,
+      "collection": "archive",
+      "notes": "",
+      "venue": "VLDB 2026"
+    },
+    {
+      "id": "on-device-evidence",
+      "name": "On-Device Evidence Gathering",
+      "areaId": "cps",
+      "topic": "Human-Centered Sensing",
+      "icon": "activity",
+      "summary": "Joint identity\u2013action detection for evidence gathering on intimate partner infiltration.",
+      "stage": "accepted",
+      "statusNote": "Acceptance recorded; publication state needs confirmation. ACM IMWUT/UbiComp 2026",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2502.03682"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        },
+        {
+          "label": "Personal website",
+          "url": "https://www.shinan.info/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab publication record: on-device-evidence; ACM IMWUT/UbiComp 2026."
+      ],
+      "recommended": false,
+      "collection": "archive",
+      "notes": "",
+      "venue": "ACM IMWUT/UbiComp 2026"
+    },
+    {
+      "id": "jiti",
+      "name": "JITI",
+      "areaId": "ml",
+      "topic": "Model Serving",
+      "icon": "workflow",
+      "summary": "Dynamic model serving for just-in-time traffic inference.",
+      "stage": "published",
+      "statusNote": "Published work listed on the personal and lab websites. ACM CoNEXT 2025",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "Paper",
+          "url": "https://arxiv.org/pdf/2302.11718"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        },
+        {
+          "label": "Personal website",
+          "url": "https://www.shinan.info/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab publication record: jiti; ACM CoNEXT 2025."
+      ],
+      "recommended": false,
+      "collection": "archive",
+      "notes": "",
+      "venue": "ACM CoNEXT 2025"
+    },
+    {
+      "id": "cato",
+      "name": "CATO",
+      "areaId": "ml",
+      "topic": "Model Serving",
+      "icon": "circuit",
+      "summary": "End-to-end optimization of ML-based traffic analysis pipelines.",
+      "stage": "published",
+      "statusNote": "Published work listed on the personal and lab websites. USENIX NSDI 2025",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "Paper",
+          "url": "https://www.usenix.org/system/files/nsdi25-wan-gerry.pdf"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        },
+        {
+          "label": "Personal website",
+          "url": "https://www.shinan.info/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab publication record: cato; USENIX NSDI 2025."
+      ],
+      "recommended": false,
+      "collection": "archive",
+      "notes": "",
+      "venue": "USENIX NSDI 2025"
+    },
+    {
+      "id": "netdiffusion",
+      "name": "NetDiffusion",
+      "areaId": "ml",
+      "topic": "Network Synthesis",
+      "icon": "network",
+      "summary": "Protocol-constrained traffic generation for network data augmentation.",
+      "stage": "published",
+      "statusNote": "Published work listed on the personal and lab websites. ACM SIGMETRICS 2024",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "Paper",
+          "url": "https://dl.acm.org/doi/pdf/10.1145/3639037"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        },
+        {
+          "label": "Personal website",
+          "url": "https://www.shinan.info/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab publication record: netdiffusion; ACM SIGMETRICS 2024."
+      ],
+      "recommended": false,
+      "collection": "archive",
+      "notes": "",
+      "venue": "ACM SIGMETRICS 2024"
+    },
+    {
+      "id": "leaf",
+      "name": "LEAF",
+      "areaId": "ml",
+      "topic": "Network Detection",
+      "icon": "activity",
+      "summary": "Navigate concept drift in cellular networks.",
+      "stage": "published",
+      "statusNote": "Published work listed on the personal and lab websites. ACM CoNEXT 2023",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "Paper",
+          "url": "https://www.shinan.info/wp-content/uploads/2023/09/liu-conext23.pdf"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        },
+        {
+          "label": "Personal website",
+          "url": "https://www.shinan.info/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab publication record: leaf; ACM CoNEXT 2023."
+      ],
+      "recommended": false,
+      "collection": "archive",
+      "notes": "",
+      "venue": "ACM CoNEXT 2023"
+    },
+    {
+      "id": "amir",
+      "name": "AMIR",
+      "areaId": "cps",
+      "topic": "Human-Centered Sensing",
+      "icon": "radio",
+      "summary": "Active multimodal interaction recognition from video and network traffic.",
+      "stage": "published",
+      "statusNote": "Published work listed on the personal and lab websites. ACM IMWUT/UbiComp 2023",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "Paper",
+          "url": "https://www.shinan.info/wp-content/uploads/2023/03/liu-imwut23.pdf"
+        },
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        },
+        {
+          "label": "Personal website",
+          "url": "https://www.shinan.info/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab publication record: amir; ACM IMWUT/UbiComp 2023."
+      ],
+      "recommended": false,
+      "collection": "archive",
+      "notes": "",
+      "venue": "ACM IMWUT/UbiComp 2023"
+    },
+    {
+      "id": "gps-security",
+      "name": "GPS Spoofing & Defense",
+      "areaId": "security",
+      "topic": "Wireless Security",
+      "icon": "radar",
+      "summary": "A research line spanning stealthy navigation attacks, chipset-based defenses and multi-antenna spoofing.",
+      "stage": "published",
+      "statusNote": "Published work listed on the personal and lab websites. USENIX Security 2018 / 2021; ACM WiSec 2025",
+      "confidence": "verified",
+      "folders": [],
+      "links": [
+        {
+          "label": "NAISS Lab",
+          "url": "https://naisslab.github.io/"
+        },
+        {
+          "label": "Personal website",
+          "url": "https://www.shinan.info/"
+        }
+      ],
+      "evidence": [
+        "NAISS Lab publication record: gps-security; USENIX Security 2018 / 2021; ACM WiSec 2025."
+      ],
+      "recommended": false,
+      "collection": "archive",
+      "notes": "",
+      "venue": "USENIX Security 2018 / 2021; ACM WiSec 2025"
+    }
+  ]
+}

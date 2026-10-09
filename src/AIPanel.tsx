@@ -1,0 +1,1007 @@
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  Sparkles,
+  ArrowUp,
+  Square,
+  RefreshCw,
+  ExternalLink,
+  FileText,
+  TextSelect,
+  X,
+  Plus,
+  ChevronDown,
+  ChevronRight,
+  ArrowDown,
+  LogOut,
+  Gauge,
+  Folder,
+  Check,
+  LoaderCircle,
+} from "lucide-react";
+import type {
+  AIApproval,
+  AIContext,
+  AIConversation,
+  AIMessage,
+  AIResult,
+  AIState,
+  Project,
+} from "./types";
+import AIMarkdown, { CopyAction } from "./AIMarkdown";
+import AIActivityLog from "./AIActivityLog";
+import "./ai.css";
+
+async function unwrap<T>(promise: Promise<AIResult<T>>) {
+  const result = await promise;
+  if (!result.ok) throw new Error(result.error.message);
+  return result.value;
+}
+const number = (value: number) => value.toLocaleString("en-US");
+
+function Approval({
+  request,
+  busy,
+  answer,
+}: {
+  request: AIApproval;
+  busy: boolean;
+  answer(
+    decision: "accept" | "decline" | "answer",
+    answers?: Record<string, { answers: string[] }>,
+  ): void;
+}) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  return (
+    <div className="ai-approval">
+      <strong>
+        {request.kind === "question"
+          ? "The agent needs your input"
+          : request.kind === "file"
+            ? "Approve file access"
+            : request.kind === "permissions"
+              ? "Additional access requested"
+              : request.network
+                ? "Approve network access"
+                : "Approve command"}
+      </strong>
+      {request.reason && <p>{request.reason}</p>}
+      {request.command && <pre>{request.command}</pre>}
+      {request.cwd && <small>Working directory: {request.cwd}</small>}
+      {request.grantRoot && (
+        <small>Requested folder: {request.grantRoot}</small>
+      )}
+      {request.network && (
+        <small>
+          {request.network.protocol} · {request.network.host}
+        </small>
+      )}
+      {request.kind === "question" ? (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            answer(
+              "answer",
+              Object.fromEntries(
+                (request.questions || []).map((q) => [
+                  q.id,
+                  { answers: [values[q.id] || ""] },
+                ]),
+              ),
+            );
+          }}
+        >
+          {request.questions?.map((question) => (
+            <label key={question.id}>
+              {question.question}
+              {question.options && (
+                <div className="ai-answer-options">
+                  {question.options.map((option) => (
+                    <button
+                      key={option.label}
+                      type="button"
+                      className={
+                        values[question.id] === option.label ? "selected" : ""
+                      }
+                      title={option.description}
+                      onClick={() =>
+                        setValues((v) => ({
+                          ...v,
+                          [question.id]: option.label,
+                        }))
+                      }
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <input
+                aria-label={question.question}
+                value={values[question.id] || ""}
+                onChange={(event) =>
+                  setValues((v) => ({
+                    ...v,
+                    [question.id]: event.target.value,
+                  }))
+                }
+                placeholder="Your answer"
+                required
+              />
+            </label>
+          ))}
+          <button
+            className="button primary small"
+            disabled={busy}
+            type="submit"
+          >
+            Continue
+          </button>
+        </form>
+      ) : (
+        <div className="ai-approval-actions">
+          {request.kind !== "permissions" && request.canAccept !== false && (
+            <button
+              className="button primary small"
+              disabled={busy}
+              onClick={() => answer("accept")}
+            >
+              Allow once
+            </button>
+          )}
+          <button
+            className="button small"
+            disabled={busy}
+            onClick={() => answer("decline")}
+          >
+            Decline
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const Message = memo(function Message({
+  message,
+  modelLabel,
+  answering,
+  answer,
+  openReference,
+}: {
+  message: AIMessage;
+  modelLabel?: string;
+  answering: boolean;
+  answer(
+    request: AIApproval,
+    decision: "accept" | "decline" | "answer",
+    answers?: Record<string, { answers: string[] }>,
+  ): void;
+  openReference(reference: string): void;
+}) {
+  const changedFiles = [...new Set(message.activities?.flatMap((activity) => activity.changes?.map((change) => change.path) || []) || [])];
+  return (
+    <article className={`ai-message ai-message-${message.role}`} data-message-id={message.id}>
+      <div className="ai-message-heading">
+        {message.role === "assistant" ? <Sparkles size={14} /> : <span className="ai-user-dot" />}
+        <strong>{message.role === "assistant" ? "Agent" : "You"}</strong>
+        {message.model && <span>{modelLabel || message.model}</span>}
+        {message.status === "running" && <span className="ai-run-state" role="status"><LoaderCircle size={12} className="spin" />{message.approvals?.length ? "Needs your approval" : "Working…"}</span>}
+      </div>
+      {message.attachments?.map((attachment, index) => <small className="ai-message-attachment" key={index}><FileText size={11} /> {attachment.name}{attachment.kind === "selection" ? " · selection" : ""}</small>)}
+      <AIActivityLog message={message} openReference={openReference} />
+      {message.approvals?.map((request) => <Approval key={request.id} request={request} busy={answering} answer={(decision, answers) => answer(request, decision, answers)} />)}
+      {message.text && (message.role === "assistant" ? <AIMarkdown text={message.text} openReference={openReference} /> : <div className="ai-user-text">{message.text}</div>)}
+      {!!changedFiles.length && message.status !== "running" && <div className="ai-changed-files">{changedFiles.map((path) => <button type="button" key={path} title={`Open ${path}`} onClick={() => openReference(path)}><FileText size={12} /><span>{path.split("/").at(-1)}</span></button>)}</div>}
+      {message.diff && <details className="ai-turn-diff"><summary><FileText size={12} /> Review changes<ChevronRight size={12} className="ai-disclosure" /></summary><pre>{message.diff}</pre></details>}
+      {message.error && <p className="ai-message-error" role="alert">{message.error.message}{message.error.requestId && <small>Request: {message.error.requestId}</small>}</p>}
+      {message.text && message.status !== "running" && <div className="ai-message-footer"><CopyAction text={message.text} />{message.usage && <small className="ai-message-usage" title="Tokens reported for this run">{number(message.usage.inputTokens)} input · {number(message.usage.outputTokens)} output tokens</small>}{message.status === "cancelled" && <small>Stopped</small>}</div>}
+    </article>
+  );
+});
+
+export default function AIPanel({
+  project,
+  file,
+  rootId,
+  text,
+  selection,
+  dirty,
+  prepare,
+  onRunning,
+  onFilesChanged,
+  onOpenReference,
+  visible,
+}: {
+  project: Project;
+  file: string;
+  rootId: string;
+  text: string;
+  selection: string;
+  dirty: boolean;
+  prepare(): Promise<void>;
+  onRunning(running: boolean): void;
+  onFilesChanged(): Promise<void>;
+  onOpenReference(reference: string, rootId: string): Promise<void>;
+  visible: boolean;
+}) {
+  const [state, setState] = useState<AIState | null>(null);
+  const [conversation, setConversation] = useState<AIConversation>({
+    projectId: project.id,
+    profileId: null,
+    messages: [],
+  });
+  const [draft, setDraft] = useState("");
+  const [model, setModel] = useState("");
+  const [agentRoot, setAgentRoot] = useState("primary");
+  const [context, setContext] = useState<AIContext>();
+  const [operation, setOperation] = useState("");
+  const [error, setError] = useState("");
+  const [popover, setPopover] = useState<"account" | "usage" | null>(null);
+  const [showLatest, setShowLatest] = useState(false);
+  const stateRef = useRef<AIState | null>(null);
+  const modelRefresh = useRef("");
+  const transcript = useRef<HTMLDivElement>(null);
+  const transcriptContent = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
+  const stickToBottom = useRef(true);
+  const wasRunning = useRef(false);
+  const draftKey = `research-workbench.ai-draft.${state?.activeProfileId || "disconnected"}.${project.id}`;
+  const running = conversation.messages.some(
+    (message) => message.status === "running",
+  );
+  const busy = running || operation === "send";
+  const profile = state?.profiles.find((p) => p.id === state.activeProfileId);
+  const roots = [
+    ...(project.folder
+      ? [
+          {
+            id: "primary",
+            label: project.folderLabel || "Manuscript",
+            folder: project.folder,
+          },
+        ]
+      : []),
+    ...(project.localFolders || []),
+  ];
+  const root = roots.find((item) => item.id === agentRoot);
+
+  const takeState = useCallback((next: AIState) => {
+    stateRef.current = next;
+    setState(next);
+  }, []);
+  useEffect(() => {
+    const api = window.research;
+    if (!api) {
+      setError("AI is available in the desktop app.");
+      return;
+    }
+    let disposed = false;
+    let deltaTimer: ReturnType<typeof setTimeout> | undefined;
+    const deltas = new Map<string, string>();
+    const discardDeltas = () => {
+      clearTimeout(deltaTimer);
+      deltaTimer = undefined;
+      deltas.clear();
+    };
+    const offState = api.onAIState((next) => {
+      if (!disposed) takeState(next);
+    });
+    const offConversation = api.onAIConversation((next) => {
+      if (
+        !disposed &&
+        next.projectId === project.id &&
+        next.profileId === stateRef.current?.activeProfileId
+      ) {
+        // Conversation snapshots already contain every delta sent before them.
+        discardDeltas();
+        setConversation(next);
+      }
+    });
+    const offDelta = api.onAIDelta((event) => {
+      if (
+        !disposed &&
+        event.projectId === project.id &&
+        event.profileId === stateRef.current?.activeProfileId
+      ) {
+        deltas.set(event.requestId, (deltas.get(event.requestId) || "") + event.delta);
+        if (!deltaTimer) deltaTimer = setTimeout(() => {
+          const pending = new Map(deltas);
+          discardDeltas();
+          if (!disposed) setConversation((value) => ({
+            ...value,
+            messages: value.messages.map((message) => pending.has(message.id) ? { ...message, text: message.text + pending.get(message.id) } : message),
+          }));
+        }, 40);
+      }
+    });
+    void unwrap(api.aiState())
+      .then((next) => {
+        if (!disposed) takeState(next);
+      })
+      .catch((e) => {
+        if (!disposed) setError(e.message);
+      });
+    return () => {
+      disposed = true;
+      discardDeltas();
+      offState();
+      offConversation();
+      offDelta();
+    };
+  }, [project.id, takeState]);
+  useEffect(() => {
+    let disposed = false;
+    setContext(undefined);
+    stickToBottom.current = true;
+    setShowLatest(false);
+    setError("");
+    modelRefresh.current = "";
+    setConversation({
+      projectId: project.id,
+      profileId: state?.activeProfileId || null,
+      messages: [],
+    });
+    try {
+      setDraft(localStorage.getItem(draftKey) || "");
+    } catch {
+      setDraft("");
+    }
+    if (window.research)
+      void unwrap(window.research.aiConversation(project.id))
+        .then((next) => {
+          if (!disposed) setConversation(next);
+        })
+        .catch((e) => {
+          if (!disposed) setError(e.message);
+        });
+    return () => {
+      disposed = true;
+    };
+  }, [project.id, state?.activeProfileId, draftKey]);
+  function updateDraft(value: string) {
+    setDraft(value);
+    try {
+      if (value) localStorage.setItem(draftKey, value);
+      else localStorage.removeItem(draftKey);
+    } catch {
+      /* Keep the draft in memory. */
+    }
+  }
+  useEffect(() => {
+    if (!root && roots.length) setAgentRoot(roots[0].id);
+  }, [root, roots]);
+  useEffect(() => {
+    if (conversation.agentRootId) setAgentRoot(conversation.agentRootId);
+  }, [conversation.agentRootId]);
+  useEffect(() => {
+    if (
+      !state?.sharing ||
+      state.status !== "connected" ||
+      state.models.length ||
+      state.modelError ||
+      !state.activeProfileId ||
+      modelRefresh.current === state.activeProfileId
+    )
+      return;
+    modelRefresh.current = state.activeProfileId;
+    setOperation("models");
+    void unwrap(window.research!.aiModels())
+      .then(takeState)
+      .catch((e) => setError(e.message))
+      .finally(() => setOperation(""));
+  }, [state, takeState]);
+  useEffect(() => {
+    if (!state?.activeProfileId) {
+      setModel("");
+      return;
+    }
+    let preferred = "";
+    try {
+      preferred =
+        localStorage.getItem(
+          `research-workbench.ai-model.${state.activeProfileId}`,
+        ) || "";
+    } catch {
+      /* Use the catalog default. */
+    }
+    setModel((current) =>
+      state.models.some((m) => m.slug === preferred)
+        ? preferred
+        : state.models.some((m) => m.slug === current)
+          ? current
+          : state.models[0]?.slug || "",
+    );
+  }, [state?.models, state?.activeProfileId]);
+  useLayoutEffect(() => {
+    const node = transcript.current;
+    if (stickToBottom.current && node && visible) node.scrollTop = node.scrollHeight;
+  }, [conversation, visible]);
+  useLayoutEffect(() => {
+    if (!input.current || !visible) return;
+    input.current.style.height = "0px";
+    input.current.style.height = `${Math.min(112, Math.max(24, input.current.scrollHeight))}px`;
+  }, [draft, visible]);
+  useEffect(() => {
+    const node = transcript.current;
+    const content = transcriptContent.current;
+    if (!node || !content) return;
+    const resize = new ResizeObserver(() => {
+      if (!node.clientHeight) return;
+      if (stickToBottom.current) node.scrollTop = node.scrollHeight;
+      setShowLatest(node.scrollHeight - node.scrollTop - node.clientHeight > 48);
+    });
+    resize.observe(node);
+    resize.observe(content);
+    return () => resize.disconnect();
+  }, []);
+  useEffect(() => {
+    if (wasRunning.current && !busy)
+      void onFilesChanged().finally(() => onRunning(false));
+    else onRunning(busy);
+    wasRunning.current = busy;
+  }, [busy, onFilesChanged, onRunning]);
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPopover(null);
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, []);
+  const perform = useCallback(async (name: string, fn: () => Promise<unknown>) => {
+    setOperation(name);
+    setError("");
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setOperation("");
+    }
+  }, []);
+  const openReference = useCallback((reference: string) => {
+    setError("");
+    const open = /^https?:/i.test(reference)
+      ? window.research!.openLink(reference)
+      : onOpenReference(reference, conversation.agentRootId || agentRoot);
+    void open.catch((error: Error) => setError(error.message));
+  }, [onOpenReference, conversation.agentRootId, agentRoot]);
+  const answer = useCallback((request: AIApproval, decision: "accept" | "decline" | "answer", answers?: Record<string, { answers: string[] }>) => {
+    void perform("answer", () => unwrap(window.research!.aiAnswer({ projectId: project.id, id: request.id, decision, answers })));
+  }, [perform, project.id]);
+  function accountAction(name: string, fn: () => Promise<unknown>) {
+    setPopover(null);
+    void perform(name, async () => {
+      await fn();
+      takeState(await unwrap(window.research!.aiState()));
+    });
+  }
+  async function send() {
+    if (!draft.trim() || busy || !model || !state?.sharing || !root) return;
+    const message = draft;
+    stickToBottom.current = true;
+    await perform("send", async () => {
+      await prepare();
+      const next = await unwrap(
+        window.research!.aiSend({
+          projectId: project.id,
+          message,
+          model,
+          rootId: agentRoot,
+          context,
+        }),
+      );
+      setConversation(next);
+      updateDraft("");
+      setContext(undefined);
+      input.current?.focus();
+    });
+  }
+  function attach(kind: AIContext["kind"]) {
+    setContext({
+      kind,
+      file,
+      rootId,
+      text: kind === "selection" ? selection : text,
+    });
+  }
+  const actionDisabled = !!operation || state?.status === "connecting";
+  const banner =
+    error ||
+    state?.error?.message ||
+    state?.modelError?.message ||
+    state?.runtime.error?.message;
+  const usageError = [state?.error, state?.modelError].some(
+    (e) => e?.status === 429 || e?.code.includes("usage_limit"),
+  );
+  return (
+    <section className="ai-panel" aria-label="Project AI agent">
+      <div className="ai-toolbar">
+        <div className="ai-agent-label">
+          <Sparkles size={13} />
+          <strong>Agent</strong>
+          <span title="Can edit files and run commands in this project's attached folders">
+            Project access
+          </span>
+        </div>
+        <select
+          aria-label="AI model"
+          value={model}
+          disabled={busy || !state?.sharing || !state.models.length}
+          onChange={(event) => {
+            setModel(event.target.value);
+            try {
+              localStorage.setItem(
+                `research-workbench.ai-model.${state?.activeProfileId}`,
+                event.target.value,
+              );
+            } catch {
+              /* Selection remains available this session. */
+            }
+          }}
+        >
+          {!state?.models.length && (
+            <option value="">
+              {operation === "models" ? "Loading models…" : "Select model"}
+            </option>
+          )}
+          {state?.models.map((m) => (
+            <option key={m.slug} value={m.slug}>
+              {m.displayName}
+            </option>
+          ))}
+        </select>
+        <button
+          className="icon-button"
+          title="Refresh AI models"
+          disabled={actionDisabled || busy || !state?.sharing}
+          onClick={() =>
+            void perform("models", async () =>
+              takeState(await unwrap(window.research!.aiModels())),
+            )
+          }
+        >
+          <RefreshCw
+            size={12}
+            className={operation === "models" ? "spin" : ""}
+          />
+        </button>
+        <div className="ai-toolbar-spacer" />
+        <button
+          className={
+            popover === "usage"
+              ? "ai-toolbar-button selected"
+              : "ai-toolbar-button"
+          }
+          onClick={() => setPopover((p) => (p === "usage" ? null : "usage"))}
+        >
+          <Gauge size={13} /> Usage
+        </button>
+        <button
+          className="ai-toolbar-button ai-account-button"
+          onClick={() =>
+            setPopover((p) => (p === "account" ? null : "account"))
+          }
+        >
+          <i className={state?.sharing ? "live-dot" : "idle-dot"} />
+          <span>{profile?.label || "ChatGPT"}</span>
+          <ChevronDown size={11} />
+        </button>
+        <button
+          className="icon-button"
+          title="New AI chat"
+          disabled={busy || actionDisabled || !conversation.messages.length}
+          onClick={() =>
+            void perform("clear", async () =>
+              setConversation(
+                await unwrap(window.research!.aiClear(project.id)),
+              ),
+            )
+          }
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+      {popover && (
+        <>
+          <button
+            className="ai-popover-dismiss"
+            aria-label="Close AI menu"
+            onClick={() => setPopover(null)}
+          />
+          <div className={`ai-popover ai-popover-${popover}`}>
+            {popover === "usage" ? (
+              <>
+                <strong>ChatGPT plan usage</strong>
+                <p>Review your subscription limits and credits in ChatGPT.</p>
+                <button
+                  className="button small full-width"
+                  onClick={() =>
+                    void perform("usage", () =>
+                      unwrap(window.research!.aiOpenUsage()),
+                    )
+                  }
+                >
+                  <ExternalLink size={12} /> Open ChatGPT Usage
+                </button>
+                <div className="ai-local-usage">
+                  <strong>Recorded in Workbench</strong>
+                  <dl>
+                    <div>
+                      <dt>Agent runs</dt>
+                      <dd>{number(state?.usage.requests || 0)}</dd>
+                    </div>
+                    <div>
+                      <dt>Input tokens</dt>
+                      <dd>{number(state?.usage.inputTokens || 0)}</dd>
+                    </div>
+                    <div>
+                      <dt>Output tokens</dt>
+                      <dd>{number(state?.usage.outputTokens || 0)}</dd>
+                    </div>
+                  </dl>
+                  <small>
+                    Reported tokens for this account on this Mac, across
+                    projects. These totals do not show your remaining plan
+                    allowance.
+                    {state?.usage.unreportedRequests
+                      ? ` ${state.usage.unreportedRequests} runs did not report usage.`
+                      : ""}
+                  </small>
+                </div>
+              </>
+            ) : (
+              <>
+                <strong>ChatGPT connection</strong>
+                {state?.profiles.map((p) => (
+                  <button
+                    className="ai-profile"
+                    key={p.id}
+                    disabled={busy || actionDisabled}
+                    onClick={() =>
+                      accountAction("account", () =>
+                        unwrap(window.research!.aiSelectProfile(p.id)),
+                      )
+                    }
+                  >
+                    <span>
+                      <b>{p.label}</b>
+                      <small>
+                        {p.sharing
+                          ? "Using ChatGPT plan"
+                          : p.status === "connected"
+                            ? "Plan usage disabled"
+                            : "Reconnect required"}
+                      </small>
+                    </span>
+                    {p.id === state.activeProfileId && <Check size={13} />}
+                  </button>
+                ))}
+                {profile && (
+                  <button
+                    className="ai-menu-action"
+                    disabled={busy || actionDisabled}
+                    onClick={() =>
+                      accountAction("connect", () =>
+                        unwrap(
+                          window.research!.aiSignIn({
+                            profileId: profile.id,
+                            reconsent: !state?.sharing,
+                          }),
+                        ),
+                      )
+                    }
+                  >
+                    <RefreshCw size={12} />
+                    {state?.sharing
+                      ? "Reconnect account"
+                      : "Enable ChatGPT plan usage"}
+                  </button>
+                )}
+                <button
+                  className="ai-menu-action"
+                  disabled={busy || actionDisabled}
+                  onClick={() =>
+                    accountAction("connect", () =>
+                      unwrap(window.research!.aiSignIn({ newProfile: true })),
+                    )
+                  }
+                >
+                  <Plus size={12} /> Add ChatGPT account
+                </button>
+                {state?.sharing && (
+                  <button
+                    className="ai-menu-action"
+                    disabled={busy || actionDisabled}
+                    onClick={() =>
+                      accountAction("disconnect", () =>
+                        unwrap(window.research!.aiDisconnect()),
+                      )
+                    }
+                  >
+                    <LogOut size={12} /> Sign out
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </>
+      )}
+      {banner && (
+        <div className="ai-error" role="alert">
+          <span>{banner}</span>
+          {usageError && (
+            <button
+              title="Open ChatGPT Usage"
+              onClick={() =>
+                void unwrap(window.research!.aiOpenUsage()).catch(() => {})
+              }
+            >
+              <ExternalLink size={12} /> Usage
+            </button>
+          )}
+        </div>
+      )}
+      {state?.status === "connecting" &&
+        (state.sharing || !!conversation.messages.length) && (
+          <div className="ai-error">
+            <span>Finish ChatGPT sign-in in your browser.</span>
+            <button
+              onClick={() =>
+                accountAction("cancel", () =>
+                  unwrap(window.research!.aiCancelSignIn()),
+                )
+              }
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+      <div className="ai-conversation-area">
+      <div
+        className="ai-transcript"
+        ref={transcript}
+        onScroll={() => {
+          const node = transcript.current!;
+          const away = node.scrollHeight - node.scrollTop - node.clientHeight > 48;
+          stickToBottom.current = !away;
+          setShowLatest(away);
+        }}
+      >
+        <div className="ai-transcript-content" ref={transcriptContent}>
+        {!state ? (
+          <div className="ai-empty">
+            <LoaderCircle size={20} className="spin" />
+            <p>Loading AI connection…</p>
+          </div>
+        ) : !state.sharing && !conversation.messages.length ? (
+          <div className="ai-empty ai-connect">
+            <div className="ai-empty-mark">
+              <Sparkles size={20} />
+            </div>
+            <div>
+              <h3>Your research, with an agent</h3>
+              <p>
+                Edit project files, run experiments, and fix LaTeX builds using
+                your ChatGPT plan.
+              </p>
+            </div>
+            {state.status === "connecting" ? (
+              <div className="ai-connect-actions">
+                <span>
+                  <LoaderCircle size={13} className="spin" /> Finish sign-in in
+                  your browser
+                </span>
+                <button
+                  className="button small"
+                  onClick={() =>
+                    accountAction("cancel", () =>
+                      unwrap(window.research!.aiCancelSignIn()),
+                    )
+                  }
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                className="button primary small"
+                disabled={actionDisabled}
+                onClick={() =>
+                  accountAction("connect", () =>
+                    unwrap(window.research!.aiSignIn({ reconsent: !!profile })),
+                  )
+                }
+              >
+                Continue with ChatGPT <ExternalLink size={12} />
+              </button>
+            )}
+          </div>
+        ) : conversation.messages.length ? (
+          conversation.messages.map((message) => (
+            <Message
+              key={message.id}
+              message={message}
+              modelLabel={state.models.find((model) => model.slug === message.model)?.displayName}
+              answering={operation === "answer"}
+              answer={answer}
+              openReference={openReference}
+            />
+          ))
+        ) : (
+          <div className="ai-empty ai-ready">
+            <Sparkles size={18} />
+            <div>
+              <h3>What should we work on?</h3>
+              <p>
+                The agent can edit files and run commands in your attached
+                project folders.
+              </p>
+              <div className="ai-starters">
+                <button
+                  onClick={() =>
+                    updateDraft(
+                      "Compile the LaTeX manuscript, fix any build errors, and tell me what changed.",
+                    )
+                  }
+                >
+                  Fix LaTeX build
+                </button>
+                <button
+                  onClick={() =>
+                    updateDraft(
+                      "Inspect this project, identify the relevant tests, and run them. Fix failures related to the current changes.",
+                    )
+                  }
+                >
+                  Run tests
+                </button>
+                <button
+                  onClick={() =>
+                    updateDraft(
+                      "Review the manuscript for clarity and consistency. Propose and apply focused edits, then check that it still compiles.",
+                    )
+                  }
+                >
+                  Improve the draft
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        </div>
+      </div>
+      {showLatest && <button className="ai-jump-latest" type="button" onClick={() => {
+        stickToBottom.current = true;
+        if (transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight;
+        setShowLatest(false);
+      }}><ArrowDown size={13} /> Jump to latest</button>}
+      </div>
+      <form
+        className="ai-composer"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void send();
+        }}
+      >
+        <div className="ai-composer-inner">
+        <div className="ai-context-bar">
+          <Folder size={11} />
+          <select
+            aria-label="Agent working folder"
+            value={agentRoot}
+            disabled={busy || !!conversation.messages.length}
+            title={root?.folder}
+            onChange={(event) => setAgentRoot(event.target.value)}
+          >
+            {!roots.length && (
+              <option value="primary">Attach a project folder</option>
+            )}
+            {roots.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            title="Attach a snapshot of the current file"
+            disabled={busy || !file || !text.trim()}
+            onClick={() => attach("file")}
+          >
+            <FileText size={11} /> Current file
+          </button>
+          <button
+            type="button"
+            title="Attach selected text from the editor"
+            disabled={busy || !file || !selection.trim()}
+            onClick={() => attach("selection")}
+          >
+            <TextSelect size={11} /> Selection
+          </button>
+          {context && (
+            <span className="ai-context-chip" title="Attached text snapshot">
+              <FileText size={10} />
+              {context.file.split("/").at(-1)}
+              {context.kind === "selection" ? " · selection" : ""}
+              <button
+                type="button"
+                aria-label="Remove AI attachment"
+                onClick={() => setContext(undefined)}
+              >
+                <X size={10} />
+              </button>
+            </span>
+          )}
+          <small>
+            {busy
+              ? "Agent working…"
+              : dirty
+                ? "Current file will be saved before running"
+                : state?.sharing
+                  ? "Using ChatGPT plan"
+                  : "Connect ChatGPT to start"}
+          </small>
+        </div>
+        <div className="ai-input-row">
+          <textarea
+            ref={input}
+            aria-label="Message the AI agent"
+            value={draft}
+            placeholder={
+              busy
+                ? "Draft your next request while the agent works…"
+                : state?.sharing
+                ? "Ask the agent to edit files, run a script, or fix a build…"
+                : "Connect ChatGPT, then tell the agent what to work on…"
+            }
+            rows={1}
+            onChange={(event) => updateDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
+                event.preventDefault();
+                void send();
+              }
+            }}
+          />
+          {busy ? (
+            <button
+              className="ai-send ai-stop"
+              type="button"
+              title="Stop agent"
+              aria-label="Stop AI agent"
+              disabled={operation === "stop"}
+              onClick={() =>
+                void perform("stop", async () =>
+                  setConversation(
+                    await unwrap(window.research!.aiStop(project.id)),
+                  ),
+                )
+              }
+            >
+              <Square size={13} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              className="ai-send"
+              type="submit"
+              title="Send message (Enter)"
+              aria-label="Run AI agent"
+              disabled={
+                !draft.trim() ||
+                !model ||
+                !state?.sharing ||
+                !root ||
+                actionDisabled ||
+                !state.runtime.available
+              }
+            >
+              <ArrowUp size={16} />
+            </button>
+          )}
+        </div>
+        <div className="ai-composer-hint"><span>{busy ? "Your draft will stay here until this run finishes." : "Enter to send · Shift+Enter for a new line"}</span></div>
+        </div>
+      </form>
+    </section>
+  );
+}
