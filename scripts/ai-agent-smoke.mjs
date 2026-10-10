@@ -649,6 +649,12 @@ await smoke("ai", async (root) => {
     name: "Reasoning effort",
     exact: true,
   });
+  assert.equal(
+    await page
+      .getByRole("radiogroup", { name: "Reasoning effort", exact: true })
+      .count(),
+    0,
+  );
   await effortSlider.focus();
   await effortSlider.press("End");
   assert.equal(await effortSlider.getAttribute("aria-valuetext"), "Extra High");
@@ -671,7 +677,6 @@ await smoke("ai", async (root) => {
   );
   await page.mouse.up();
   assert.equal(await effortSlider.getAttribute("aria-valuetext"), "Extra High");
-  await page.getByRole("radio", { name: "Extra High", exact: true }).click();
   await page.getByRole("radio", { name: "Fast", exact: true }).click();
   await page.waitForFunction(() => {
     const thumb = document
@@ -694,12 +699,8 @@ await smoke("ai", async (root) => {
   await page
     .getByRole("radio", { name: "Research Model", exact: true })
     .click();
-  assert.equal(
-    await page
-      .getByRole("radio", { name: "Medium", exact: true })
-      .getAttribute("aria-checked"),
-    "true",
-  );
+  assert.equal(await effortSlider.getAttribute("aria-valuetext"), "Medium");
+  assert.equal(await effortSlider.isDisabled(), true);
   assert.equal(
     await page.getByRole("radio", { name: "Fast", exact: true }).count(),
     0,
@@ -711,12 +712,7 @@ await smoke("ai", async (root) => {
     "true",
   );
   await page.getByRole("radio", { name: "Code Model", exact: true }).click();
-  assert.equal(
-    await page
-      .getByRole("radio", { name: "Extra High", exact: true })
-      .getAttribute("aria-checked"),
-    "true",
-  );
+  assert.equal(await effortSlider.getAttribute("aria-valuetext"), "Extra High");
   assert.equal(
     await page
       .getByRole("radio", { name: "Fast", exact: true })

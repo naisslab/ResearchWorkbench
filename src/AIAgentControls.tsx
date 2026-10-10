@@ -426,28 +426,6 @@ export default function AIAgentControls({
                       </small>
                     </div>
                   )}
-                  <div
-                    role="radiogroup"
-                    aria-label="Reasoning effort"
-                    className="ai-setting-options"
-                  >
-                    {model?.supportedReasoningEfforts?.map((option) => (
-                      <button
-                        key={option.reasoningEffort}
-                        type="button"
-                        role="radio"
-                        aria-checked={
-                          settings.reasoningEffort === option.reasoningEffort
-                        }
-                        title={option.description}
-                        onClick={() =>
-                          update({ reasoningEffort: option.reasoningEffort })
-                        }
-                      >
-                        {effortLabel(option.reasoningEffort)}
-                      </button>
-                    ))}
-                  </div>
                   {!model?.supportedReasoningEfforts?.length && (
                     <small>Uses the model’s default reasoning.</small>
                   )}
