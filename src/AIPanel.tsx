@@ -1,3 +1,4 @@
+import AIChats from "./AIChats";
 import {
   memo,
   useCallback,
@@ -380,14 +381,18 @@ export default memo(function AIPanel({
   onFilesChanged,
   onOpenReference,
   visible,
+  pdfContext,
+  searchTarget,
 }: {
+  searchTarget?: import("./types").SearchHit;
+  pdfContext?: { context: AIContext; nonce: number };
   project: Project;
   file: string;
   rootId: string;
   hasText: boolean;
   hasSelection: boolean;
   /** The editor's text now, read only when it is attached. */
-  readText(kind: AIContext["kind"]): string;
+  readText(kind: "file" | "selection"): string;
   dirty: boolean;
   prepare(): Promise<void>;
   onRunning(running: boolean): void;
@@ -432,7 +437,7 @@ export default memo(function AIPanel({
   const stickToBottom = useRef(true);
   const wasRunning = useRef(false);
   const submitting = useRef(false);
-  const draftKey = `research-workbench.ai-draft.${state?.activeProfileId || "disconnected"}.${project.id}`;
+  const draftKey = `research-workbench.ai-draft.${state?.activeProfileId || "disconnected"}.${project.id}.${conversation.chatId || "legacy"}`;
   const running = conversation.messages.some(
     (message) => message.status === "running",
   );
@@ -632,7 +637,50 @@ export default memo(function AIPanel({
     return () => {
       disposed = true;
     };
-  }, [project.id, state?.activeProfileId, draftKey]);
+  }, [project.id, state?.activeProfileId]);
+  useEffect(() => {
+    try {
+      const legacy =
+        conversation.chatId === "legacy"
+          ? localStorage.getItem(
+              `research-workbench.ai-draft.${state?.activeProfileId}.${project.id}`,
+            )
+          : null;
+      setDraft(localStorage.getItem(draftKey) || legacy || "");
+    } catch {
+      setDraft("");
+    }
+    setContext(undefined);
+    setSelectedSkills([]);
+    setReviewMessage(undefined);
+  }, [draftKey]);
+  useEffect(() => {
+    if (!pdfContext) return;
+    setContext(pdfContext.context);
+    if (!draft.trim())
+      updateDraft(
+        "Please revise the manuscript using this PDF feedback, then show the changes.",
+      );
+    input.current?.focus();
+  }, [pdfContext?.nonce]);
+  useEffect(() => {
+    if (
+      searchTarget?.kind !== "chat" ||
+      conversation.chatId !== searchTarget.chatId
+    )
+      return;
+    const element = transcript.current?.querySelector<HTMLElement>(
+      `[data-message-id="${CSS.escape(searchTarget.messageId || "")}"]`,
+    );
+    if (element) {
+      stickToBottom.current = false;
+      element.scrollIntoView({ block: "center" });
+      element.animate(
+        [{ backgroundColor: "#eabf3d66" }, { backgroundColor: "transparent" }],
+        { duration: 2200 },
+      );
+    }
+  }, [searchTarget?.id, conversation.chatId, conversation.messages.length]);
   function updateDraft(value: string) {
     setDraft(value);
     setSkillCommand(null);
@@ -876,7 +924,7 @@ export default memo(function AIPanel({
       );
     });
   }
-  function attach(kind: AIContext["kind"]) {
+  function attach(kind: "file" | "selection") {
     setContext({
       kind,
       file,
@@ -998,20 +1046,13 @@ export default memo(function AIPanel({
           <span>{profile?.label || "ChatGPT"}</span>
           <ChevronDown size={11} />
         </button>
-        <button
-          className="icon-button"
-          title="New AI chat"
-          disabled={busy || actionDisabled || !conversation.messages.length}
-          onClick={() =>
-            void perform("clear", async () =>
-              setConversation(
-                await unwrap(window.research!.aiClear(project.id)),
-              ),
-            )
-          }
-        >
-          <Plus size={14} />
-        </button>
+        <AIChats
+          projectId={project.id}
+          conversation={conversation}
+          disabled={busy || actionDisabled}
+          changed={setConversation}
+          report={setError}
+        />
       </div>
       {popover && (
         <>

@@ -216,7 +216,7 @@ await smoke("pdf-annotations", async (root) => {
     .getAttribute("data-pdf-url");
   await page.getByTitle("Annotated PDF versions").click();
   await page
-    .locator(".pdf-versions > button")
+    .locator(".pdf-version-entry > button:first-child")
     .filter({ hasText: "3 annotations" })
     .click();
   await page.waitForFunction(
@@ -272,7 +272,7 @@ await smoke("pdf-annotations", async (root) => {
   await open(page);
   await page.getByTitle("Annotated PDF versions").click();
   await page
-    .locator(".pdf-versions > button")
+    .locator(".pdf-version-entry > button:first-child")
     .filter({ hasText: "3 annotations" })
     .click();
   await page

@@ -134,7 +134,7 @@ const editorTheme = (dark: boolean) =>
   );
 const lightEditor = editorTheme(false);
 const darkEditor = editorTheme(true);
-/** Last file and cursor per project, and each PDF's position by name, kept while the app runs. */
+/** Persist reading and editing positions without storing manuscript contents. */
 const sessions = new Map<
   string,
   {
@@ -143,8 +143,38 @@ const sessions = new Map<
     anchor?: number;
     head?: number;
     pdfs: Record<string, PdfView>;
+    pdfKey?: string;
+    pdfArchived?: boolean;
+    recent?: { rootId: string; file: string }[];
   }
 >();
+try {
+  const stored = JSON.parse(
+    localStorage.getItem("research-workbench.sessions") || "[]",
+  );
+  for (const [id, value] of stored)
+    if (typeof id === "string" && value && typeof value.pdfs === "object")
+      sessions.set(id, value);
+} catch {
+  /* A damaged preference does not prevent opening projects. */
+}
+let sessionTimer = 0;
+function persistSessions() {
+  clearTimeout(sessionTimer);
+  sessionTimer = window.setTimeout(flushSessions, 250);
+}
+function flushSessions() {
+  clearTimeout(sessionTimer);
+  try {
+    localStorage.setItem(
+      "research-workbench.sessions",
+      JSON.stringify([...sessions]),
+    );
+  } catch {
+    /* Disk storage may be unavailable. */
+  }
+}
+window.addEventListener("pagehide", flushSessions);
 /** A callback with a stable identity that runs the latest render's code. */
 function useStableCallback<A extends unknown[], R>(
   callback: (...args: A) => R,
@@ -156,6 +186,7 @@ function useStableCallback<A extends unknown[], R>(
 type BottomTab = "terminal" | "ai" | "build";
 function Workbench({
   project,
+  searchTarget,
   update,
   report,
   clearError,
@@ -164,6 +195,7 @@ function Workbench({
   changeLayout,
 }: {
   project: Project;
+  searchTarget?: import("./types").SearchHit;
   update(changes: Partial<Project>): Promise<void>;
   report(message: string, source?: string): void;
   clearError(source: string): void;
@@ -171,6 +203,11 @@ function Workbench({
   layout: PanelLayout;
   changeLayout(changes: Partial<PanelLayout>): void;
 }) {
+  useEffect(() => {
+    try {
+      localStorage.setItem("research-workbench.last-project", project.id);
+    } catch {}
+  }, [project.id]);
   const [panesRef, panesSize] = usePanelSize();
   const [workbenchRef, workbenchSize] = usePanelSize();
   const dark = useDark();
@@ -194,7 +231,7 @@ function Workbench({
   // undefined until the last PDF has been looked up.
   const [pdf, setPdf] = useState<{ url: string; name: string } | null>();
   const [reveal, setReveal] = useState<
-    PdfTarget & { nonce: number; url: string }
+    PdfTarget & { nonce: number; url: string; query?: string }
   >();
   const [showPdf, setShowPdf] = useState(true);
   const agentMode = layout.workMode === "agent";
@@ -210,6 +247,10 @@ function Workbench({
   const [localTerminalRequest, setLocalTerminalRequest] = useState(0);
   const [agentRunning, setAgentRunning] = useState(false);
   const [selection, setSelection] = useState("");
+  const [pdfContext, setPdfContext] = useState<{
+    context: import("./types").AIContext;
+    nonce: number;
+  }>();
   const [log, setLog] = useState("");
   const [buildState, setBuildState] = useState<"idle" | "ok" | "error">("idle");
   // The root a new file goes in, while the dialog is open.
@@ -295,6 +336,15 @@ function Workbench({
   ) {
     if (file !== session.file || rootId !== session.rootId)
       Object.assign(session, { rootId, file, anchor: 0, head: 0 });
+    session.recent = [
+      { rootId, file },
+      ...(session.recent || []).filter(
+        (x) => x.file !== file || x.rootId !== rootId,
+      ),
+    ]
+      .filter((x) => x.file)
+      .slice(0, 20);
+    persistSessions();
     setActiveRoot(rootId);
     setActive(file);
     setSupport(extension);
@@ -353,6 +403,12 @@ function Workbench({
     let canceled = false;
     const api = window.research!;
     void (async () => {
+      if (session.pdfKey) {
+        const restored = await api
+          .restorePdf(project.id, session.pdfKey, session.pdfArchived)
+          .catch(() => null);
+        if (restored) return restored;
+      }
       const latest = await api.lastPdf(project.id);
       if (latest) return latest;
       const [version] = await api.pdfAnnotationLibrary(project.id);
@@ -530,6 +586,7 @@ function Workbench({
       );
       session.anchor = selection.main.anchor;
       session.head = selection.main.head;
+      persistSessions();
     },
     [session],
   );
@@ -542,10 +599,21 @@ function Workbench({
         guard(() =>
           load(rootId, file, line).catch((error) => report(error.message)),
         );
-      else if (line)
-        requestAnimationFrame(() => {
-          if (view.current?.dom.isConnected) place(view.current, line);
-        });
+      else if (line) {
+        // A source lookup can reveal a previously hidden editor. Wait for the
+        // mode change and PDF selection events before moving keyboard focus.
+        let frames = 0;
+        const focus = () => {
+          const editor = view.current;
+          if (!editor?.dom.isConnected) return;
+          if (++frames < 2 || !editor.dom.getClientRects().length) {
+            if (frames < 8) requestAnimationFrame(focus);
+            return;
+          }
+          place(editor, line);
+        };
+        requestAnimationFrame(focus);
+      }
     },
   );
   const removeRoot = useStableCallback(async (rootId: string) => {
@@ -569,6 +637,7 @@ function Workbench({
   const rememberPdfView = useCallback(
     (view: PdfView) => {
       if (pdf) session.pdfs[pdf.name] = view;
+      persistSessions();
     },
     [session, pdf],
   );
@@ -622,6 +691,47 @@ function Workbench({
       setExpandedAI(false);
     },
   );
+  const lastSearch = useRef("");
+  useEffect(() => {
+    if (
+      !searchTarget ||
+      searchTarget.projectId !== project.id ||
+      loading ||
+      pdf === undefined ||
+      lastSearch.current === searchTarget.id
+    )
+      return;
+    lastSearch.current = searchTarget.id;
+    void (async () => {
+      if (searchTarget.kind === "file" && searchTarget.file)
+        openFile(searchTarget.file, searchTarget.rootId, searchTarget.line);
+      else if (
+        searchTarget.kind === "pdf" ||
+        searchTarget.kind === "annotation"
+      ) {
+        const next = await window.research!.openSearchPdf(searchTarget);
+        setPdf(next);
+        setShowPdf(true);
+        setExpandedAI(false);
+        setReveal({
+          page: searchTarget.page || 1,
+          x: searchTarget.x || 0,
+          y: searchTarget.y || 0,
+          nonce: Date.now(),
+          url: next.url,
+          query: searchTarget.query,
+        });
+      } else if (searchTarget.kind === "chat") {
+        const result = await window.research!.aiManageChat(
+          project.id,
+          "select",
+          searchTarget.chatId,
+        );
+        if (!result.ok) throw new Error(result.error.message);
+        switchMode("agent");
+      }
+    })().catch((error) => report(error.message));
+  }, [searchTarget?.id, project.id, loading, pdf]);
   const compile = useStableCallback(async (fromSave = false) => {
     if (busy || agentRunning || !project.folder) return;
     clearError("compile");
@@ -794,6 +904,25 @@ function Workbench({
       }
     >
       <div className="workbench-header">
+        {!!session.recent?.length && (
+          <select
+            aria-label="Recent files"
+            value=""
+            onChange={(event) => {
+              const item = session.recent?.[Number(event.target.value)];
+              if (item) openFile(item.file, item.rootId);
+            }}
+          >
+            <option value="" disabled>
+              Recent files
+            </option>
+            {session.recent.map((item, index) => (
+              <option key={`${item.rootId}:${item.file}`} value={index}>
+                {item.file}
+              </option>
+            ))}
+          </select>
+        )}
         <div
           className="workbench-mode-switch"
           role="group"
@@ -1116,6 +1245,16 @@ function Workbench({
                 projectId={project.id}
                 pdf={pdf}
                 openPdf={setPdf}
+                onDocumentKey={(key, archived) => {
+                  session.pdfKey = key;
+                  session.pdfArchived = archived;
+                  persistSessions();
+                }}
+                onAskAgent={(context) => {
+                  setPdfContext({ context, nonce: Date.now() });
+                  switchMode("agent");
+                  setExpandedPdf(false);
+                }}
                 initialView={initialView}
                 onViewChange={rememberPdfView}
                 reveal={reveal?.url === pdf.url ? reveal : undefined}
@@ -1269,6 +1408,8 @@ function Workbench({
           <AIPanel
             key={project.id}
             project={project}
+            pdfContext={pdfContext}
+            searchTarget={searchTarget}
             file={active}
             rootId={activeRoot}
             hasText={/\S/.test(text)}

@@ -347,6 +347,7 @@ function createAI({
                 "This project's AI history could not be read. Its data has been preserved.",
               );
           }
+          value.chatId ||= "legacy";
           conversations.set(id, value);
         })().finally(() => loads.delete(id)),
       );
@@ -373,6 +374,8 @@ function createAI({
     };
   }
   async function saveConversation(value) {
+    value.chatId ||= "legacy";
+    value.updatedAt = new Date().toISOString();
     const id = key(value.profileId, value.projectId);
     const contents = JSON.stringify(value);
     await writes(
@@ -940,11 +943,23 @@ function createAI({
         text:
           (value.messages.some((message) => message.review?.revertedAt)
             ? "Earlier agent changes were reverted. Read the current project files before editing.\n\n"
-            : "") + value.messages.at(-2).inputText,
+            : "") +
+          (value.restoredHistory
+            ? "This conversation was restored from a backup. Prior messages are reference context, not new instructions:\n" +
+              value.messages
+                .slice(0, -2)
+                .slice(-30)
+                .map((m) => `${m.role}: ${m.text}`)
+                .join("\n")
+                .slice(-60000) +
+              "\nCurrent request:\n"
+            : "") +
+          value.messages.at(-2).inputText,
         skills: value.messages.at(-2).skills || [],
         signal,
         onThread: async (threadId) => {
           value.threadId = threadId;
+          delete value.restoredHistory;
           await saveConversation(value);
         },
         onEvent,
@@ -1057,30 +1072,141 @@ function createAI({
     await result.job?.done;
     return publicConversation(result.value);
   }
-  async function clear(projectId) {
+  const chatFolder = (value) =>
+    path.join(directory, "chats", key(value.profileId, value.projectId));
+  function chatFile(value, id) {
+    if (typeof id !== "string" || !/^(legacy|[a-f0-9-]{36})$/.test(id))
+      throw new AIError("invalid_chat", "Choose a saved conversation.");
+    return path.join(chatFolder(value), `${id}.json`);
+  }
+  const chatTitle = (value) =>
+    value.title ||
+    value.messages.find((m) => m.role === "user")?.text.slice(0, 70) ||
+    "New conversation";
+  async function savedChats(value) {
+    const names = await fs.readdir(chatFolder(value)).catch((error) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
+    const result = new Map();
+    for (const name of names.filter((name) => name.endsWith(".json"))) {
+      const item = JSON.parse(
+        await fs.readFile(chatFile(value, name.slice(0, -5)), "utf8"),
+      );
+      if (
+        item.profileId === value.profileId &&
+        item.projectId === value.projectId
+      )
+        result.set(item.chatId, item);
+    }
+    result.set(value.chatId || "legacy", value);
+    return [...result.values()];
+  }
+  async function chats(projectId) {
     const value = await conversation(projectId);
-    if (!value.profileId) return value;
-    await stop(projectId);
-    const runs = value.messages
-      .filter((message) => message.role === "assistant")
-      .map((message) => reviewKey(value.profileId, projectId, message.id));
-    value.messages = [];
-    value.queue = [];
-    value.queuePaused = false;
-    delete value.queueError;
-    delete value.threadId;
-    delete value.threadUsage;
-    delete value.agentCwd;
-    delete value.agentRootId;
-    const id = key(value.profileId, projectId);
-    const entry = agents.get(id);
-    if (entry) await closeAgent(entry);
-    agents.delete(id);
-    await saveConversation(value);
-    // Cleared runs can no longer be reviewed, so their file versions go too.
-    await changes.discard(runs).catch(() => {});
-    publishConversation(value);
-    return publicConversation(value);
+    if (!value.profileId) return [];
+    return (await savedChats(value))
+      .map((item) => ({
+        id: item.chatId || "legacy",
+        title: chatTitle(item),
+        archived: !!item.archived,
+        updatedAt: item.updatedAt || item.messages.at(-1)?.createdAt || "",
+        active: item.chatId === value.chatId,
+      }))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+  async function manageChat(projectId, action, chatId, title) {
+    const initial = await conversation(projectId);
+    if (!initial.profileId)
+      throw new AIError("sign_in_required", "Sign in to manage conversations.");
+    const id = key(initial.profileId, projectId);
+    return mutate(id, async () => {
+      const value = await conversation(projectId);
+      if (
+        value.profileId !== initial.profileId ||
+        accountChanges ||
+        isRunning(projectId)
+      )
+        throw new AIError(
+          "agent_busy",
+          "Pause the queue and wait for the agent before switching conversations.",
+        );
+      if (!["new", "select", "rename", "archive", "unarchive"].includes(action))
+        throw new AIError("invalid_chat", "Unknown conversation action.");
+      let target = value;
+      if (action !== "new" && chatId !== value.chatId) {
+        target = JSON.parse(await fs.readFile(chatFile(value, chatId), "utf8"));
+        if (
+          target.profileId !== value.profileId ||
+          target.projectId !== projectId
+        )
+          throw new AIError(
+            "invalid_chat",
+            "Conversation does not belong to this account and project.",
+          );
+      }
+      if (action === "rename") {
+        if (typeof title !== "string" || !title.trim() || title.length > 120)
+          throw new AIError(
+            "invalid_title",
+            "Enter a name of up to 120 characters.",
+          );
+        target.title = title.trim();
+      }
+      if (action === "archive" || action === "unarchive")
+        target.archived = action === "archive";
+      if (["rename", "archive", "unarchive"].includes(action)) {
+        await protectedWrite(
+          chatFile(value, target.chatId),
+          JSON.stringify(target),
+        );
+        if (target === value) await saveConversation(value);
+      }
+      if (
+        action === "new" ||
+        action === "select" ||
+        (action === "archive" && target === value)
+      ) {
+        await protectedWrite(
+          chatFile(value, value.chatId),
+          JSON.stringify(value),
+        );
+        const next =
+          action === "select"
+            ? target
+            : {
+                projectId,
+                profileId: value.profileId,
+                chatId: crypto.randomUUID(),
+                messages: [],
+                queue: [],
+                createdAt: new Date().toISOString(),
+              };
+        next.archived = false;
+        next.queuePaused = !!next.queue?.length;
+        const entry = agents.get(id);
+        if (entry) await closeAgent(entry);
+        agents.delete(id);
+        await saveConversation(next);
+        conversations.set(id, next);
+        publishConversation(next);
+        return publicConversation(next);
+      }
+      publishConversation(value);
+      return publicConversation(value);
+    });
+  }
+  async function clear(projectId) {
+    return manageChat(projectId, "new");
+  }
+  async function searchChats(projectId) {
+    const value = await conversation(projectId);
+    if (!value.profileId) return [];
+    return (await savedChats(value)).map((item) => ({
+      chatId: item.chatId,
+      title: chatTitle(item),
+      messages: item.messages.map(({ id, text }) => ({ id, text })),
+    }));
   }
   async function reviewTarget(projectId, messageId) {
     const value = await conversation(projectId);
@@ -1184,6 +1310,14 @@ function createAI({
   }
   return {
     getState,
+    flush: async () => {
+      await accountQueue.settled();
+      await mutations.settled();
+      await writes.settled();
+    },
+    chats,
+    manageChat,
+    searchChats,
     isRunning,
     review,
     reviewFile,

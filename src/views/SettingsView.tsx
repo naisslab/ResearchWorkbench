@@ -1,3 +1,4 @@
+import BackupControls from "../BackupControls";
 import { useState } from "react";
 import {
   ArrowDownToLine,
@@ -193,6 +194,7 @@ export default function SettingsView({
         <div className="data-path">
           {info?.dataPath || "Loading storage location…"}
         </div>
+        <BackupControls report={report} notify={notify} />
         <div className="backup-actions">
           <button
             className="button"

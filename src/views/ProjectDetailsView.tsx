@@ -117,7 +117,39 @@ export default function ProjectDetailsView({
                 >
                   {t.done ? <CheckCircle2 size={18} /> : <Circle size={18} />}
                 </button>
-                <span>{t.text}</span>
+                <span className="task-copy">
+                  {t.text}
+                  {!t.done && (
+                    <BlurField
+                      aria-label={`Blocker for ${t.text}`}
+                      placeholder="Blocker or waiting for…"
+                      value={t.blocked || ""}
+                      onCommit={(blocked) =>
+                        update((latest) => ({
+                          tasks: latest.tasks.map((item) =>
+                            item.id === t.id ? { ...item, blocked } : item,
+                          ),
+                        }))
+                      }
+                    />
+                  )}
+                </span>
+                <button
+                  className="button text small"
+                  aria-label={`${t.pinned ? "Unpin" : "Pin"} ${t.text}`}
+                  aria-pressed={!!t.pinned}
+                  onClick={() =>
+                    update((latest) => ({
+                      tasks: latest.tasks.map((item) =>
+                        item.id === t.id
+                          ? { ...item, pinned: !item.pinned }
+                          : item,
+                      ),
+                    }))
+                  }
+                >
+                  {t.pinned ? "Pinned" : "Pin for today"}
+                </button>
                 <button
                   className="icon-button"
                   title="Remove task"

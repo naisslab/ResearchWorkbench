@@ -72,8 +72,70 @@ export default memo(function OverviewView({
     area !== "all" && areas.get(area)?.name,
     stage !== "all" && stageName[stage as Project["stage"]],
   ].filter(Boolean);
+  let recentProject: Project | undefined;
+  try {
+    const sessions = JSON.parse(
+      localStorage.getItem("research-workbench.sessions") || "[]",
+    ) as [string, unknown][];
+    const id = localStorage.getItem("research-workbench.last-project");
+    recentProject =
+      areaProjects.find((p) => p.id === id) ||
+      areaProjects.find((p) => sessions.some(([id]) => p.id === id));
+  } catch {}
+  const pinned = areaProjects.flatMap((project) =>
+    project.tasks
+      .filter((task) => task.pinned && !task.done)
+      .map((task) => ({ project, task })),
+  );
   return (
     <>
+      <section className="today-card">
+        <div className="section-heading">
+          <h2>Today</h2>
+          {recentProject && (
+            <button
+              className="button small"
+              onClick={() =>
+                navigate("workbench", { projectId: recentProject.id })
+              }
+            >
+              Continue {recentProject.name} <ArrowRight size={14} />
+            </button>
+          )}
+        </div>
+        {pinned.length ? (
+          pinned.map(({ project, task }) => (
+            <div className="today-task" key={`${project.id}:${task.id}`}>
+              <button
+                className="task-check"
+                aria-label={`Complete pinned ${task.text}`}
+                onClick={() =>
+                  void update(project.id, (latest) => ({
+                    tasks: latest.tasks.map((t) =>
+                      t.id === task.id ? { ...t, done: true } : t,
+                    ),
+                  }))
+                }
+              >
+                <Circle size={17} />
+              </button>
+              <button
+                onClick={() => navigate("details", { projectId: project.id })}
+              >
+                <strong>{task.text}</strong>
+                <small>
+                  {project.name}
+                  {task.blocked ? ` · Blocked: ${task.blocked}` : ""}
+                </small>
+              </button>
+            </div>
+          ))
+        ) : (
+          <p className="muted">
+            Pin next steps in a project to choose what to focus on today.
+          </p>
+        )}
+      </section>
       <div className="stats-grid">
         <Stat
           icon={<FileText size={19} />}

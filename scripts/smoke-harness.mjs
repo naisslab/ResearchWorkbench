@@ -28,9 +28,7 @@ export async function launchApp({
   });
   page = await app.firstWindow();
   page.on("pageerror", (error) => errors.push(error.message));
-  await page
-    .getByRole("heading", { name: "Research Overview", exact: true })
-    .waitFor();
+  await page.locator(".sidebar").waitFor();
   return { app, page };
 }
 

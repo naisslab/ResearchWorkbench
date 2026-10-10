@@ -28,9 +28,36 @@ async function ready(page, number) {
         requestAnimationFrame(() => requestAnimationFrame(resolve)),
       ),
   );
-  await page
-    .locator(`.pdf-page[data-page-number="${number}"][data-rendered="true"]`)
-    .waitFor();
+  try {
+    await page
+      .locator(`.pdf-page[data-page-number="${number}"][data-rendered="true"]`)
+      .waitFor({ timeout: 30000 });
+  } catch (error) {
+    console.error(
+      "PDF layout:",
+      JSON.stringify(
+        await page.evaluate(() => ({
+          pages: [...document.querySelectorAll(".pdf-page")].map((page) => ({
+            data: { ...page.dataset },
+            top: page.offsetTop,
+            rect: page.getBoundingClientRect().toJSON(),
+            canvas: [
+              page.querySelector("canvas").width,
+              page.querySelector("canvas").height,
+            ],
+            loading: page.querySelector(".pdf-page-loading")?.textContent,
+          })),
+          scroll: {
+            top: document.querySelector(".pdf-scroll").scrollTop,
+            height: document.querySelector(".pdf-scroll").clientHeight,
+          },
+        })),
+        null,
+        2,
+      ),
+    );
+    throw error;
+  }
 }
 async function goTo(page, number) {
   await page.getByLabel("PDF page number").fill(String(number));

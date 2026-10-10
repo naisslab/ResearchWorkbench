@@ -931,3 +931,45 @@ test("queue size is bounded and account switching preserves a paused isolated qu
   assert.equal(restored.queuePaused, true);
   assert.equal(restored.messages.at(-1).status, "cancelled");
 });
+
+test("project chats preserve legacy history and change reviews across new, rename, archive, switch and restart", async (t) => {
+  const f = await clientFixture(t);
+  await f.client.send({
+    projectId: "one",
+    message: "Revise the manuscript",
+    model: "fixture-model",
+    rootId: "primary",
+  });
+  const old = await waitFor(async () => {
+    const value = await f.client.conversation("one");
+    return value.messages.at(-1)?.status === "completed" &&
+      !f.client.isRunning("one")
+      ? value
+      : false;
+  });
+  const oldReview = await f.client.review("one", old.messages[1].id);
+  const fresh = await f.client.clear("one");
+  assert.notEqual(fresh.chatId, old.chatId);
+  assert.equal(fresh.messages.length, 0);
+  let summaries = await f.client.chats("one");
+  assert.equal(summaries.length, 2);
+  await f.client.manageChat("one", "rename", old.chatId, "Experiment results");
+  await f.client.manageChat("one", "archive", old.chatId);
+  summaries = await f.client.chats("one");
+  assert.equal(summaries.find((c) => c.id === old.chatId).archived, true);
+  await f.client.manageChat("one", "select", old.chatId);
+  assert.deepEqual(
+    (await f.client.review("one", old.messages[1].id)).files,
+    oldReview.files,
+  );
+  assert.equal((await f.client.conversation("one")).messages.length, 2);
+  await f.client.dispose();
+  const restarted = f.make();
+  f.cleanup(() => restarted.dispose());
+  assert.equal((await restarted.conversation("one")).chatId, old.chatId);
+  assert.equal(
+    (await restarted.chats("one")).find((c) => c.id === old.chatId).title,
+    "Experiment results",
+  );
+  await assert.rejects(restarted.manageChat("two", "select", fresh.chatId));
+});

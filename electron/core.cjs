@@ -188,7 +188,10 @@ function validateState(value) {
       if (
         typeof task.id !== "string" ||
         typeof task.text !== "string" ||
-        typeof task.done !== "boolean"
+        typeof task.done !== "boolean" ||
+        (task.pinned !== undefined && typeof task.pinned !== "boolean") ||
+        (task.blocked !== undefined &&
+          (typeof task.blocked !== "string" || task.blocked.length > 8000))
       )
         throw new Error("Invalid task.");
     for (const d of p.deadlines) {

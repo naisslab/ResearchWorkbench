@@ -2017,3 +2017,75 @@ button.stat-card:hover {
     flex-wrap: wrap;
   }
 }
+
+.search-filters {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0;
+  font-size: 12px;
+}
+.search-snippet {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  margin: 6px 0 0;
+  font-size: 12px;
+  opacity: 0.8;
+}
+.search-warnings {
+  max-height: 140px;
+  overflow: auto;
+  font-size: 12px;
+  padding: 10px;
+}
+.search-results > button > div {
+  min-width: 0;
+}
+.complete-backup {
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.complete-backup > label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.complete-backup input[type="checkbox"] {
+  width: auto;
+}
+.complete-backup .form-help {
+  overflow-wrap: anywhere;
+}
+
+.today-card {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 20px;
+}
+.today-task {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 12px 0;
+}
+.today-task > button:last-child {
+  text-align: left;
+}
+.today-task small {
+  display: block;
+  opacity: 0.65;
+  margin-top: 4px;
+}
+.task-copy {
+  min-width: 0;
+  flex: 1;
+}
+.task-copy input {
+  font-size: 11px;
+  margin-top: 6px;
+  width: 100%;
+}

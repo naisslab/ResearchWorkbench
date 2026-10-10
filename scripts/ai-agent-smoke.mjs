@@ -260,6 +260,7 @@ await smoke("ai", async (root) => {
     };
     let conversation = {
       projectId: "ai-ui-project",
+      chatId: "legacy",
       profileId: null,
       messages: [],
       queue: [],
@@ -314,9 +315,43 @@ await smoke("ai", async (root) => {
       conversation.profileId = state.activeProfileId;
       emit("state", state);
     };
+    const savedChats = new Map();
     const handlers = {
       "ai:state": () => ok(state),
       "ai:conversation": () => ok(conversation),
+      "ai:chats": () =>
+        ok(
+          [...savedChats.values(), conversation].map((value) => ({
+            id: value.chatId,
+            title:
+              value.title ||
+              value.messages
+                .find((message) => message.role === "user")
+                ?.text.slice(0, 70) ||
+              "New conversation",
+            active: value.chatId === conversation.chatId,
+            archived: !!value.archived,
+            updatedAt: new Date().toISOString(),
+          })),
+        ),
+      "ai:manage-chat": (_, _id, action, id, title) => {
+        if (action === "new") {
+          savedChats.set(conversation.chatId, structuredClone(conversation));
+          const result = handlers["ai:clear"]();
+          conversation.chatId = crypto.randomUUID();
+          emit("conversation", conversation);
+          return ok(conversation);
+        }
+        if (action === "select") {
+          const next = savedChats.get(id);
+          if (!next) throw new Error("Missing chat fixture");
+          savedChats.set(conversation.chatId, structuredClone(conversation));
+          conversation = structuredClone(next);
+          savedChats.delete(id);
+        } else if (action === "rename") conversation.title = title;
+        emit("conversation", conversation);
+        return ok(conversation);
+      },
       "ai:review": (_, _id, messageId) =>
         ok(
           legacyReview(
@@ -1602,7 +1637,20 @@ await smoke("ai", async (root) => {
   await page.waitForFunction(
     () => !document.querySelector('[aria-label="Stop AI agent"]'),
   );
+  const oldMessageCount = await page.locator(".ai-message").count();
   await page.getByTitle("New AI chat", { exact: true }).click();
   await page.getByText("What should we work on?", { exact: true }).waitFor();
+  await page.getByTitle("Conversation history", { exact: true }).click();
+  await page
+    .locator(".chat-row")
+    .filter({ hasNotText: "New conversation" })
+    .first()
+    .locator("button")
+    .first()
+    .click();
+  await page.waitForFunction(
+    (count) => document.querySelectorAll(".ai-message").length === count,
+    oldMessageCount,
+  );
   return "PASS: bundled Codex discovery, ChatGPT connection/cancel, slash skill filtering, keyboard/pointer selection, cursor and text preservation, duplicate prevention, IME/URL/path handling, skills in queued requests, permission/model/reasoning/speed selection and persistence, pointer and keyboard effort slider, reduced motion, queued submissions with captured models, queue reorder/remove/pause/restore/resume, saved drafts, save before run, editor lock, approvals, Markdown and code copy, file/PDF navigation, expandable work log, expanded AI view, IME-safe Enter/Shift+Enter, streaming snapshot consistency, scroll preservation, usage, stop, new chat, and compact dark layout.";
 });

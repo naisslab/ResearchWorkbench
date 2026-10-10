@@ -31,6 +31,7 @@ export interface PdfAnnotation {
   position?: PdfPoint;
 }
 export interface AnnotatedPdfData {
+  archived?: boolean;
   key: string;
   name: string;
   data: Uint8Array;

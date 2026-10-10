@@ -513,3 +513,32 @@
     box-shadow: none;
   }
 }
+
+.textLayer span.pdf-search-match {
+  background: #facc1566;
+  outline: 1px solid #d39d2480;
+  border-radius: 2px;
+}
+
+.pdf-version-entry {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border);
+}
+.pdf-version-entry > button:first-child {
+  text-align: left;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pdf-migration {
+  padding: 12px;
+  font-size: 12px;
+  max-height: 240px;
+  overflow: auto;
+  border-bottom: 1px solid var(--border);
+}
+.pdf-migration li {
+  margin: 4px 0;
+}

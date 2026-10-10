@@ -24,14 +24,16 @@
     "icons": "node scripts/make-icons.mjs",
     "package": "npm run build && electron-builder --mac dir",
     "dist": "npm run build && electron-builder --mac dmg",
-    "format": "prettier --write src electron scripts/*.mjs tests vite.config.ts package.json tsconfig.json"
+    "format": "prettier --write src electron scripts/*.mjs tests vite.config.ts package.json tsconfig.json",
+    "test:continuity-ui": "node scripts/continuity-smoke.mjs"
   },
   "dependencies": {
     "@openai/codex": "0.160.0",
     "jose": "^6.2.12",
     "js-yaml": "^4.3.2",
     "node-pty": "^1.0.0",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.4.624"
   },
   "devDependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -60,7 +62,6 @@
     "electron": "^41.0.0",
     "electron-builder": "^26.0.12",
     "lucide-react": "^0.468.0",
-    "pdfjs-dist": "^5.4.624",
     "playwright": "^1.56.0",
     "prettier": "^3.9.9",
     "react": "^19.0.0",

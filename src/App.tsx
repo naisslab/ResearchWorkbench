@@ -93,6 +93,8 @@ export default function App() {
     item?: DatedItem;
   }>();
   const [removing, setRemoving] = useState<Project | null>(null);
+  const [searchTarget, setSearchTarget] =
+    useState<import("./types").SearchHit>();
   const [searchOpen, setSearchOpen] = useState(false);
   // One toast at a time; a newer one replaces it.
   const [toast, setToast] = useState<Toast | null>(null);
@@ -214,6 +216,12 @@ export default function App() {
       if (next === view && projectId === selected && area === areaFilter)
         return;
       const go = () => {
+        try {
+          localStorage.setItem(
+            "research-workbench.navigation",
+            JSON.stringify({ view: next, projectId, area }),
+          );
+        } catch {}
         setView(next);
         setSelected(projectId);
         setAreaFilter(area);
@@ -251,9 +259,37 @@ export default function App() {
       return setLoadingError(
         "Open this workspace in the desktop app. Run npm run dev from the project folder.",
       );
-    window.research
-      .load()
-      .then(replace, (e: Error) => setLoadingError(e.message));
+    window.research.load().then(
+      (next) => {
+        replace(next);
+        try {
+          const saved = JSON.parse(
+            localStorage.getItem("research-workbench.navigation") || "null",
+          );
+          if (
+            saved &&
+            [
+              "overview",
+              "board",
+              "deadlines",
+              "settings",
+              "collection",
+              "details",
+              "workbench",
+            ].includes(saved.view) &&
+            (!saved.projectId ||
+              next.projects.some((p) => p.id === saved.projectId))
+          ) {
+            setView(saved.view);
+            setSelected(saved.projectId || "");
+            setAreaFilter(
+              next.areas.some((a) => a.id === saved.area) ? saved.area : "all",
+            );
+          }
+        } catch {}
+      },
+      (e: Error) => setLoadingError(e.message),
+    );
     window.research.info().then(setInfo, () => {});
   }, [replace]);
   const ready = state !== null;
@@ -406,7 +442,7 @@ export default function App() {
           </nav>
           <button className="global-search" onClick={() => setSearchOpen(true)}>
             <Search size={14} />
-            <span>Find a project…</span>
+            <span>Search projects, files, PDFs…</span>
             <kbd>⌘ K</kbd>
           </button>
           <button
@@ -432,6 +468,7 @@ export default function App() {
               <Workbench
                 key={project.id}
                 project={project}
+                searchTarget={searchTarget}
                 update={updateSelected}
                 report={report}
                 clearError={clearError}
@@ -608,6 +645,29 @@ export default function App() {
         <ProjectSearch
           projects={ordered}
           areas={state.areas}
+          openResult={(hit) => {
+            setSearchOpen(false);
+            const go = () => {
+              try {
+                localStorage.setItem(
+                  "research-workbench.navigation",
+                  JSON.stringify({
+                    view: hit.kind === "project" ? "details" : "workbench",
+                    projectId: hit.projectId,
+                    area: areaFilter,
+                  }),
+                );
+              } catch {}
+              setSearchTarget({ ...hit, id: crypto.randomUUID() });
+              setView(hit.kind === "project" ? "details" : "workbench");
+              setSelected(hit.projectId);
+            };
+            const event = new CustomEvent("research:navigate", {
+              cancelable: true,
+              detail: { proceed: go },
+            });
+            if (window.dispatchEvent(event)) go();
+          }}
           open={(id) => {
             setSearchOpen(false);
             navigate("workbench", { projectId: id });

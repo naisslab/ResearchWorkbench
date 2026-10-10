@@ -36,6 +36,9 @@ if (!process.env.RESEARCH_TEST_DATA && !app.requestSingleInstanceLock())
   app.quit();
 let win;
 let ai;
+let maintenance = false;
+let backupAbort;
+let restoredPendingRestart = false;
 app.on("second-instance", () => {
   win?.show();
   win?.focus();
@@ -136,6 +139,8 @@ async function pdfDocument(id, url) {
   const document = pdfs.get(url);
   if (!document || document.projectId !== id)
     throw new Error("PDF session expired. Reopen the document.");
+  pdfs.delete(url);
+  pdfs.set(url, document);
   if (!document.bytes) {
     const metadata = await fs.stat(document.file);
     if (metadata.size > 64 * 1024 * 1024)
@@ -152,6 +157,13 @@ function handle(channel, fn) {
       event.senderFrame !== win.webContents.mainFrame
     )
       throw new Error("Unknown caller.");
+    if (
+      maintenance &&
+      !["backup:restart", "backup:cancel", "app:info"].includes(channel)
+    )
+      throw new Error(
+        "Workspace backup or restoration is in progress. Please wait.",
+      );
     return fn(...args);
   });
 }
@@ -264,6 +276,43 @@ app
         state: next,
         count: (next.trackedDeadlines?.length || 0) - before,
       };
+    });
+    const searchEngine = require("./search.cjs").createSearch({
+      directory: app.getPath("userData"),
+      workspace: () => state,
+      ai: () => ai,
+      emit: (packet) => send("search:progress", packet),
+    });
+    handle("search:query", (query, id) => searchEngine.search(query, id));
+    handle("search:cancel", () => searchEngine.cancel());
+    app.on("before-quit", () => void searchEngine.dispose());
+    handle("search:open-pdf", async (hit) => {
+      const p = project(hit.projectId);
+      let target, name, sourcePath;
+      if (hit.documentKey) {
+        const archived = await annotationStore.archived(p.id, hit.documentKey);
+        target = archived.file;
+        name = archived.name;
+        sourcePath = archived.sourcePath;
+      } else {
+        target = await core.safeFile(core.fileRoot(p, hit.rootId), hit.file);
+        if (!/\.pdf$/i.test(target)) throw new Error("Choose a PDF result.");
+        name = path.basename(target);
+        sourcePath = target;
+      }
+      if ((await fs.stat(target)).size > 64 * 1024 * 1024)
+        throw new Error("PDF exceeds 64 MB.");
+      if (
+        hit.version &&
+        crypto
+          .createHash("sha256")
+          .update(await fs.readFile(target))
+          .digest("hex") !== hit.version
+      )
+        throw new Error(
+          "This PDF changed since the search. Search again to find its current position.",
+        );
+      return { url: pdfUrl(target, p.id, name, sourcePath), name };
     });
     handle("workspace:load", () => state);
     handle("catalog:list", () => catalog.researchCatalog());
@@ -506,6 +555,131 @@ app
         limit,
       ]).finally(() => app.exit());
     });
+    const backup = require("./backup.cjs");
+    const backupStatus = path.join(
+      app.getPath("userData"),
+      "backup-status.json",
+    );
+    handle("backup:cancel", () =>
+      backupAbort?.abort(
+        new Error("Backup cancelled. Temporary copies were removed."),
+      ),
+    );
+    handle("backup:status", () =>
+      fs.readFile(backupStatus, "utf8").then(JSON.parse, () => null),
+    );
+    function checkIdle() {
+      if (
+        builds.size ||
+        gitOperations.size ||
+        state.projects.some((p) => ai?.isRunning(p.id))
+      )
+        throw new Error(
+          "Wait for agents, builds and Git operations to finish before backing up or restoring.",
+        );
+    }
+    handle("backup:create", async (options = {}) => {
+      checkIdle();
+      const choice = await dialog.showOpenDialog(win, {
+        title: "Choose a backup destination",
+        properties: ["openDirectory", "createDirectory"],
+      });
+      if (choice.canceled) return null;
+      checkIdle();
+      maintenance = true;
+      backupAbort = new AbortController();
+      let lastProgress = 0;
+      try {
+        await queue.settled();
+        await annotationStore.flush();
+        await ai.flush();
+        checkIdle();
+        const result = await backup.createBackup({
+          directory: app.getPath("userData"),
+          destination: choice.filePaths[0],
+          workspace: state,
+          includeProjects: options.includeProjects !== false,
+          ui: options.ui || {},
+          signal: backupAbort.signal,
+          progress: (value) => {
+            if (Date.now() - lastProgress > 150) {
+              send("backup:progress", value);
+              lastProgress = Date.now();
+            }
+          },
+        });
+        const status = {
+          path: result.path,
+          createdAt: result.createdAt,
+          bytes: result.bytes,
+          files: result.files.length,
+          skipped: result.skipped,
+        };
+        await writeJson(backupStatus, status);
+        return status;
+      } finally {
+        maintenance = false;
+        backupAbort = undefined;
+      }
+    });
+    handle("backup:restore", async (bindCurrentAccount = false) => {
+      checkIdle();
+      const choice = await dialog.showOpenDialog(win, {
+        title: "Choose a Research backup folder",
+        properties: ["openDirectory"],
+      });
+      if (choice.canceled) return null;
+      const info = await backup.inspectBackup(choice.filePaths[0]);
+      const profileId = bindCurrentAccount
+        ? (await ai.getState()).activeProfileId
+        : undefined;
+      if (bindCurrentAccount && !profileId)
+        throw new Error(
+          "Sign in before assigning restored conversations to the current account.",
+        );
+      const confirm = await dialog.showMessageBox(win, {
+        type: "question",
+        buttons: ["Cancel", "Restore and restart"],
+        defaultId: 0,
+        message: `Restore ${info.workspace.projects.length} projects from ${info.manifest.createdAt}?`,
+        detail: `The current workspace will be kept as a rollback copy. Project files will be copied into a new folder. ${bindCurrentAccount ? "All restored conversations will belong to the currently signed-in account. " : "Conversation account ownership will be preserved. "}The application will restart. Login credentials are not included in the backup.`,
+      });
+      if (confirm.response !== 1) return null;
+      const destination = await dialog.showOpenDialog(win, {
+        title: "Choose where to restore project folders",
+        properties: ["openDirectory", "createDirectory"],
+      });
+      if (destination.canceled) return null;
+      checkIdle();
+      maintenance = true;
+      try {
+        await queue.settled();
+        await annotationStore.flush();
+        await ai.flush();
+        checkIdle();
+        stopTerminals();
+        await searchEngine.dispose();
+        const result = await backup.restoreBackup({
+          bundle: choice.filePaths[0],
+          directory: app.getPath("userData"),
+          destination: destination.filePaths[0],
+          bindProfileId: profileId,
+        });
+        state = result.workspace;
+        pdfs.clear();
+        await ai.dispose();
+        restoredPendingRestart = true;
+        return result;
+      } finally {
+        if (!restoredPendingRestart) maintenance = false;
+      }
+    });
+    handle("backup:restart", () => {
+      if (!restoredPendingRestart)
+        throw new Error("No restored workspace is waiting to restart.");
+      app.relaunch();
+      app.exit(0);
+    });
     handle("pdf:read-annotations", async (id, url) => {
       const document = await pdfDocument(id, url);
       const metadata = await annotationStore.load(
@@ -516,6 +690,8 @@ app
       );
       return {
         key: metadata.key,
+        archived:
+          path.resolve(document.file) !== path.resolve(document.sourcePath),
         name: metadata.name,
         data: document.bytes,
         annotations: metadata.annotations,
@@ -536,6 +712,26 @@ app
     handle("pdf:annotation-library", (id) => {
       project(id);
       return annotationStore.library(id);
+    });
+    handle("pdf:restore", async (id, key, keepArchived) => {
+      project(id);
+      const archived = await annotationStore.archived(id, key);
+      if (
+        !keepArchived &&
+        typeof archived.sourcePath === "string" &&
+        /\.pdf$/i.test(archived.sourcePath)
+      ) {
+        const stat = await fs.stat(archived.sourcePath).catch(() => null);
+        if (stat?.isFile() && stat.size <= 64 * 1024 * 1024)
+          return {
+            url: pdfUrl(archived.sourcePath, id, archived.name),
+            name: archived.name,
+          };
+      }
+      return {
+        url: pdfUrl(archived.file, id, archived.name, archived.sourcePath),
+        name: archived.name,
+      };
     });
     handle("pdf:open-annotated", async (id, key) => {
       project(id);
@@ -795,7 +991,7 @@ app
       validateContext: async (id, context) => {
         if (
           !context ||
-          !["file", "selection"].includes(context.kind) ||
+          !["file", "selection", "pdf"].includes(context.kind) ||
           typeof context.file !== "string" ||
           typeof context.text !== "string" ||
           !context.text.trim() ||
@@ -805,6 +1001,12 @@ app
             "invalid_context",
             "Attach a text file or selection of up to 200 KB.",
           );
+        if (context.kind === "pdf") {
+          if (!Number.isInteger(context.page) || context.page < 1)
+            throw new AIError("invalid_context", "Choose a PDF page.");
+          await annotationStore.archived(id, context.documentKey);
+          return;
+        }
         const file = await core.safeFile(
           core.fileRoot(project(id), context.rootId),
           context.file,
@@ -827,6 +1029,9 @@ app
       "ai:skills": (id, rootId, forceReload) =>
         ai.skills(id, rootId, forceReload),
       "ai:conversation": (id) => ai.conversation(id),
+      "ai:chats": (id) => ai.chats(id),
+      "ai:manage-chat": (id, action, chatId, title) =>
+        ai.manageChat(id, action, chatId, title),
       "ai:review": (id, messageId) => ai.review(id, messageId),
       "ai:review-file": (id, messageId, fileId) =>
         ai.reviewFile(id, messageId, fileId),

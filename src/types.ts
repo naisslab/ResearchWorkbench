@@ -23,6 +23,8 @@ export interface Task {
   id: string;
   text: string;
   done: boolean;
+  pinned?: boolean;
+  blocked?: string;
 }
 export interface Deadline {
   id: string;
@@ -167,7 +169,67 @@ export interface Workspace {
   areas: Area[];
   projects: Project[];
 }
+export interface SearchHit {
+  id: string;
+  kind: "project" | "file" | "pdf" | "annotation" | "chat";
+  projectId: string;
+  projectName: string;
+  title: string;
+  snippet: string;
+  file?: string;
+  rootId?: string;
+  line?: number;
+  documentKey?: string;
+  page?: number;
+  x?: number;
+  y?: number;
+  version?: string;
+  query?: string;
+  chatId?: string;
+  messageId?: string;
+}
+export interface SearchPacket {
+  id?: string;
+  results: SearchHit[];
+  warnings: string[];
+  scanned: number;
+  cancelled?: boolean;
+}
+export interface BackupStatus {
+  path: string;
+  createdAt: string;
+  bytes: number;
+  files: number;
+  skipped: string[];
+}
 export interface ResearchAPI {
+  cancelBackup(): Promise<void>;
+  onBackupProgress(
+    callback: (value: {
+      files: number;
+      bytes: number;
+      current: string;
+    }) => void,
+  ): () => void;
+  backupStatus(): Promise<BackupStatus | null>;
+  createBackup(options: {
+    includeProjects: boolean;
+    ui: Record<string, string>;
+  }): Promise<BackupStatus | null>;
+  restoreBackup(bindCurrentAccount: boolean): Promise<{
+    workspace: Workspace;
+    ui: Record<string, string>;
+    rollback: string;
+    restored: string;
+    warnings: string[];
+  } | null>;
+  restartRestored(): Promise<void>;
+
+  search(query: string, id: string): Promise<SearchPacket>;
+  cancelSearch(): Promise<void>;
+  onSearchProgress(callback: (packet: SearchPacket) => void): () => void;
+  openSearchPdf(hit: SearchHit): Promise<{ url: string; name: string }>;
+
   aiState(): Promise<AIResult<AIState>>;
   aiSignIn(options?: {
     profileId?: string;
@@ -183,6 +245,13 @@ export interface ResearchAPI {
     rootId: string,
     forceReload?: boolean,
   ): Promise<AIResult<AISkillCatalog>>;
+  aiChats(projectId: string): Promise<AIResult<AIChatSummary[]>>;
+  aiManageChat(
+    projectId: string,
+    action: "new" | "select" | "rename" | "archive" | "unarchive",
+    chatId?: string,
+    title?: string,
+  ): Promise<AIResult<AIConversation>>;
   aiConversation(projectId: string): Promise<AIResult<AIConversation>>;
   aiReview(
     projectId: string,
@@ -327,6 +396,11 @@ export interface ResearchAPI {
     to: string,
   ): Promise<void>;
   trashFile(id: string, rootId: string, file: string): Promise<void>;
+  restorePdf(
+    id: string,
+    key: string,
+    keepArchived?: boolean,
+  ): Promise<{ url: string; name: string }>;
   lastPdf(id: string): Promise<{ url: string; name: string } | null>;
   choosePdf(id: string): Promise<{ url: string; name: string } | null>;
   /** `pdf` keeps the same URL while the PDF's size and mtime are unchanged. */
@@ -416,7 +490,9 @@ export interface AIState extends AISession {
   runtime: { available: boolean; version?: string; error?: AIErrorInfo };
 }
 export interface AIContext {
-  kind: "file" | "selection";
+  kind: "file" | "selection" | "pdf";
+  documentKey?: string;
+  page?: number;
   file: string;
   rootId: string;
   text: string;
@@ -530,7 +606,16 @@ export interface AIApproval {
     options?: { label: string; description?: string }[];
   }[];
 }
+export interface AIChatSummary {
+  id: string;
+  title: string;
+  archived: boolean;
+  updatedAt: string;
+  active: boolean;
+}
 export interface AIConversation {
+  chatId?: string;
+  title?: string;
   projectId: string;
   profileId: string | null;
   agentRootId?: string;

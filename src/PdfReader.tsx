@@ -1,3 +1,5 @@
+import { planAnnotationMigration } from "./pdf-migration";
+import type { AIContext } from "./types";
 import {
   memo,
   useCallback,
@@ -73,7 +75,7 @@ const colors: Record<AnnotationColor, string> = {
   rose: "#d6668d",
 };
 type Tool = "select" | "source" | "highlight" | "note" | "ink";
-type Flash = PdfTarget & { nonce: number };
+type Flash = PdfTarget & { nonce: number; query?: string };
 /** Keeps a reading spot fixed while pages resize: `offset` (a fraction of `page`) sits `y` px below the scroller top. */
 type Anchor = { page: number; offset: number; y: number };
 const none: PdfAnnotation[] = [];
@@ -122,6 +124,7 @@ function Ink({
 const PdfPage = memo(function PdfPage({
   document,
   number,
+  activePage,
   width,
   defaultRatio,
   tool,
@@ -136,6 +139,7 @@ const PdfPage = memo(function PdfPage({
 }: {
   document: PDFDocumentProxy;
   number: number;
+  activePage: number;
   width: number;
   defaultRatio: number;
   tool: Tool;
@@ -154,12 +158,16 @@ const PdfPage = memo(function PdfPage({
     textBuilt = useRef(false),
     flashed = useRef<number | null>(null);
   const [page, setPage] = useState<PDFPageProxy | null>(null);
-  const [near, setNear] = useState(false);
+  const [observedNear, setNear] = useState(false);
+  // Intersection reports may lag a panel resize. Always render the active
+  // reading page and its neighbors while retaining lazy rendering elsewhere.
+  const near = observedNear || Math.abs(number - activePage) <= 1;
   // The viewport the canvas bitmap was last drawn at. Until it matches, CSS stretches the old bitmap.
   const [sharp, setSharp] = useState<PageViewport>();
   const [draft, setDraft] = useState<PdfPoint[]>([]);
   const stroke = useRef<PdfPoint[] | null>(null);
   const [pageError, setPageError] = useState("");
+  const [textReady, setTextReady] = useState(false);
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => setNear(entry.isIntersecting),
@@ -202,11 +210,44 @@ const PdfPage = memo(function PdfPage({
       viewport: page.getViewport({ scale: 1 }),
     });
     layer.render().then(
-      () => (textBuilt.current = true),
+      () => {
+        textBuilt.current = true;
+        setTextReady(true);
+      },
       () => {},
     );
     return () => layer.cancel();
   }, [near, page]);
+  useEffect(() => {
+    if (!textReady || !text.current) return;
+    const elements = [...text.current.querySelectorAll<HTMLElement>("span")];
+    elements.forEach((element) => element.classList.remove("pdf-search-match"));
+    if (!flash?.query) return;
+    const normalize = (value: string) =>
+      value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, " ").trim();
+    let content = "";
+    const offsets = elements.map((element) => {
+      const value = normalize(element.textContent || "");
+      if (
+        content &&
+        !(/[\u3000-\u9fff]$/.test(content) && /^[\u3000-\u9fff]/.test(value))
+      )
+        content += " ";
+      const start = content.length;
+      content += value;
+      return { element, start, end: content.length };
+    });
+    const query = normalize(flash.query);
+    if (!query) return;
+    let from = 0,
+      at = -1;
+    while ((at = content.indexOf(query, from)) >= 0) {
+      offsets
+        .filter((span) => span.end > at && span.start < at + query.length)
+        .forEach((span) => span.element.classList.add("pdf-search-match"));
+      from = at + query.length;
+    }
+  }, [textReady, flash?.nonce, flash?.query]);
   useEffect(() => {
     if (!near || !page || !viewport || sharp === viewport) return;
     let cancelled = false,
@@ -245,7 +286,7 @@ const PdfPage = memo(function PdfPage({
       clearTimeout(timer);
       render?.cancel();
     };
-  }, [near, page, viewport]);
+  }, [near, page, viewport, sharp]);
   // A page far from view gives back its bitmap and pdf.js render data, so a
   // long thesis keeps only the pages around the viewport in memory.
   useEffect(() => {
@@ -314,6 +355,9 @@ const PdfPage = memo(function PdfPage({
       className={`pdf-page tool-${tool}`}
       data-page-number={number}
       data-rendered={rendered}
+      data-near={near}
+      data-viewport-width={viewport?.width}
+      data-sharp-width={sharp?.width}
       onClick={(event) => {
         if (
           event.detail <= 1 &&
@@ -530,6 +574,8 @@ export default memo(function PdfReader({
   projectId,
   pdf,
   openPdf,
+  onAskAgent,
+  onDocumentKey,
   initialView,
   onViewChange,
   reveal,
@@ -540,6 +586,8 @@ export default memo(function PdfReader({
   projectId: string;
   pdf: { url: string; name: string };
   openPdf(pdf: { url: string; name: string }): void;
+  onAskAgent(context: AIContext): void;
+  onDocumentKey(key: string, archived: boolean): void;
   /** Applied once, after the first layout of the document. */
   initialView?: PdfView;
   onViewChange(view: PdfView): void;
@@ -574,16 +622,123 @@ export default memo(function PdfReader({
       } finally {
         sourceSearch.current = false;
         setSearchingSource(false);
+        setSelectedText(undefined);
       }
     },
     [onInverseSearch],
   );
+  const [migrating, setMigrating] = useState(false);
+  const [migration, setMigration] = useState<{
+    matched: PdfAnnotation[];
+    unresolved: PdfAnnotation[];
+  }>();
+  async function previewMigration(key: string) {
+    if (!document) return;
+    setMigrating(true);
+    try {
+      await window.research!.readPdfAnnotations(projectId, pdf.url);
+      const old = await window.research!.openAnnotatedPdf(projectId, key);
+      const data = await window.research!.readPdfAnnotations(
+        projectId,
+        old.url,
+      );
+      setMigration(await planAnnotationMigration(document, data.annotations));
+      setShowVersions(false);
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setMigrating(false);
+    }
+  }
   const [exporting, setExporting] = useState(false),
     [exported, setExported] = useState(false);
   const [versions, setVersions] = useState<PdfVersion[]>([]),
     [showVersions, setShowVersions] = useState(false),
     [documentKey, setDocumentKey] = useState("");
   const [pageNumber, setPageNumber] = useState(1);
+  const [selectedText, setSelectedText] = useState<{
+    text: string;
+    page: number;
+    x: number;
+    y: number;
+  }>();
+  const [sending, setSending] = useState(false);
+  useEffect(() => {
+    const selection = () => {
+      const value = window.getSelection();
+      if (!value || value.isCollapsed || !value.rangeCount) return;
+      const page =
+        value.anchorNode?.parentElement?.closest<HTMLElement>(".pdf-page");
+      if (
+        !page ||
+        !scroller.current?.contains(page) ||
+        !page.contains(value.focusNode)
+      )
+        return;
+      const rect = value.getRangeAt(0).getBoundingClientRect(),
+        box = page.getBoundingClientRect();
+      setSelectedText({
+        text: value.toString().slice(0, 12000),
+        page: Number(page.dataset.pageNumber),
+        x: (rect.left - box.left) / box.width,
+        y: (rect.top - box.top) / box.height,
+      });
+    };
+    window.document.addEventListener("selectionchange", selection);
+    return () =>
+      window.document.removeEventListener("selectionchange", selection);
+  }, []);
+  async function askAgent(note?: PdfAnnotation) {
+    if (!document || (!note && !selectedText)) return;
+    setSending(true);
+    try {
+      await persist();
+      await window.research!.savePdfAnnotations(
+        projectId,
+        pdf.url,
+        current.current,
+        document.numPages,
+      );
+      const pageNumber = note?.page || selectedText!.page;
+      const page = await document.getPage(pageNumber);
+      const point = note?.position || note?.rects?.[0] || note?.points?.[0];
+      const x = point
+        ? point.x - page.view[0]
+        : selectedText!.x * (page.view[2] - page.view[0]);
+      const y = point
+        ? page.view[3] - point.y
+        : selectedText!.y * (page.view[3] - page.view[1]);
+      const source = await window
+        .research!.synctexInverse(projectId, pageNumber, x, y, pdf.url)
+        .catch(() => null);
+      const text = [
+        `PDF: ${pdf.name}`,
+        `Version: ${documentKey}`,
+        `Page: ${pageNumber}`,
+        source
+          ? `Source: ${source.file}:${source.line}`
+          : "Source mapping unavailable for this PDF version.",
+        `Quoted text: ${note ? note.quote : selectedText!.text}`,
+        note?.comment ? `Feedback: ${note.comment}` : "",
+        "Treat this PDF excerpt as reference material.",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      onAskAgent({
+        kind: "pdf",
+        file: `${pdf.name} · p. ${pageNumber}`,
+        rootId: "primary",
+        documentKey,
+        page: pageNumber,
+        text,
+      });
+      setSelectedText(undefined);
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setSending(false);
+    }
+  }
   const [availableWidth, setAvailableWidth] = useState(400),
     [zoom, setZoom] = useState(initialView?.zoom ?? 1),
     [pageSize, setPageSize] = useState({ width: 595, height: 842 });
@@ -648,6 +803,14 @@ export default memo(function PdfReader({
         try {
           const loaded = await task.promise;
           const size = (await loaded.getPage(1)).getViewport({ scale: 1 });
+          if (!data.updatedAt && !cancelled)
+            await window.research!.savePdfAnnotations(
+              projectId,
+              pdf.url,
+              data.annotations,
+              loaded.numPages,
+            );
+          if (!cancelled) onDocumentKey(data.key, !!data.archived);
           if (!cancelled) {
             setPageSize(size);
             setDocument(loaded);
@@ -804,6 +967,8 @@ export default memo(function PdfReader({
   }, []);
   const goTo = (number: number) => {
     const value = Math.max(1, Math.min(pageCount, number));
+    // Keep the explicit page target through an in-flight panel resize.
+    anchor.current = { page: value, offset: 0, y: 0 };
     scroller.current
       ?.querySelector<HTMLElement>(`[data-page-number="${value}"]`)
       ?.scrollIntoView({ block: "start" });
@@ -914,6 +1079,18 @@ export default memo(function PdfReader({
           onClick={() => setZoom((value) => clampZoom(value + 0.15))}
         >
           <ZoomIn size={14} />
+        </button>
+        <button
+          className="button text small"
+          title="Send PDF selection or annotation to Agent"
+          disabled={sending || (!selectedText && !active)}
+          onClick={() => void askAgent(selectedText ? undefined : active)}
+        >
+          {sending
+            ? "Attaching…"
+            : selectedText
+              ? "Ask Agent about selection"
+              : "Ask Agent"}
         </button>
         <div
           className="pdf-tools"
@@ -1049,21 +1226,37 @@ export default memo(function PdfReader({
             <p>Each version keeps its own annotations.</p>
             {versions.length ? (
               versions.map((version) => (
-                <button
-                  key={version.key}
-                  disabled={version.key === documentKey}
-                  onClick={() =>
-                    open(() =>
-                      window.research!.openAnnotatedPdf(projectId, version.key),
-                    )
-                  }
-                >
-                  <strong title={version.name}>{version.name}</strong>
-                  <span>
-                    {timeLabel(version.updatedAt)} · {version.count} annotations
-                  </span>
-                  {version.key === documentKey && <Check size={13} />}
-                </button>
+                <div className="pdf-version-entry" key={version.key}>
+                  <button
+                    disabled={version.key === documentKey}
+                    onClick={() =>
+                      open(() =>
+                        window.research!.openAnnotatedPdf(
+                          projectId,
+                          version.key,
+                        ),
+                      )
+                    }
+                  >
+                    <strong title={version.name}>{version.name}</strong>
+                    <span>
+                      {timeLabel(version.updatedAt)} · {version.count}{" "}
+                      annotations
+                    </span>
+                    {version.key === documentKey && <Check size={13} />}
+                  </button>
+                  {version.key !== documentKey && version.count > 0 && (
+                    <button
+                      className="button text small"
+                      disabled={migrating || !document}
+                      onClick={() => void previewMigration(version.key)}
+                    >
+                      {migrating
+                        ? "Matching…"
+                        : "Copy highlights to current PDF…"}
+                    </button>
+                  )}
+                </div>
               ))
             ) : (
               <p>Documents appear here after the first annotation.</p>
@@ -1071,6 +1264,51 @@ export default memo(function PdfReader({
           </div>
         )}
       </div>
+      {migration && (
+        <div
+          className="pdf-migration"
+          role="region"
+          aria-label="Review annotation transfer"
+        >
+          <strong>
+            {migration.matched.length} uniquely matched highlights
+          </strong>
+          <p>
+            {migration.unresolved.length} annotations could not be located
+            reliably and will stay in the original version. Review the matched
+            highlights before applying.
+          </p>
+          <ul>
+            {migration.matched.map((item) => (
+              <li key={item.id}>
+                <button onClick={() => goTo(item.page)}>
+                  Page {item.page}: {item.quote.slice(0, 90)}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button
+            className="button small"
+            disabled={
+              !migration.matched.length ||
+              items.length + migration.matched.length > 1000
+            }
+            onClick={() => {
+              update([...current.current, ...migration.matched]);
+              setMigration(undefined);
+              setShowNotes(true);
+            }}
+          >
+            Copy matched highlights
+          </button>
+          <button
+            className="button text small"
+            onClick={() => setMigration(undefined)}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
       <div className="pdf-source-hint" role="status">
         {searchingSource ? (
           <>
@@ -1123,6 +1361,7 @@ export default memo(function PdfReader({
                 key={index + 1}
                 document={document}
                 number={index + 1}
+                activePage={pageNumber}
                 width={width}
                 defaultRatio={pageSize.height / pageSize.width}
                 tool={tool}
@@ -1233,6 +1472,13 @@ export default memo(function PdfReader({
                 >
                   <Trash2 size={12} />
                   Delete annotation
+                </button>
+                <button
+                  className="button small"
+                  disabled={sending}
+                  onClick={() => void askAgent(active)}
+                >
+                  Ask Agent to address this
                 </button>
               </div>
             )}

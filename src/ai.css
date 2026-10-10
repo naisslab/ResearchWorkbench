@@ -1551,3 +1551,37 @@
     transition: none;
   }
 }
+
+.chat-rename {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0;
+}
+.chat-rename input {
+  flex: 1;
+  min-width: 0;
+}
+.chat-list {
+  max-height: 45vh;
+  overflow: auto;
+}
+.chat-row {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+.chat-row > button:first-child {
+  flex: 1;
+  text-align: left;
+  padding: 12px;
+  min-width: 0;
+}
+.chat-row strong,
+.chat-row small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.chat-row small {
+  opacity: 0.65;
+  margin-top: 5px;
+}
