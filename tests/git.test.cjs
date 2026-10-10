@@ -34,7 +34,7 @@ test("Git connects, commits, pushes and pulls real repositories, preserving dirt
     (await git.status(local)).changes.map((c) => c.file),
     ["main.tex"],
   );
-  await assert.rejects(git.sync(local), /Commit or stash/);
+  await assert.rejects(git.sync(local), /src refspec|does not match/);
   await git.commit(local, "Initial draft");
   await git.sync(local);
   assert.deepEqual((await git.status(local)).changes, []);
@@ -64,6 +64,73 @@ test("Git connects, commits, pushes and pulls real repositories, preserving dirt
   await command(local, ["checkout", "-b", "local-draft"]);
   await command(local, ["branch", "--set-upstream-to=origin/main"]);
   assert.equal((await git.status(local)).remoteBranch, "main");
+});
+
+test("Push and fast-forward sync preserve uncommitted edits, while overlapping pulls stop safely", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "research-git-dirty-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const local = path.join(root, "local"),
+    remote = path.join(root, "remote.git"),
+    peer = path.join(root, "peer");
+  await fs.mkdir(local);
+  await fs.mkdir(remote);
+  await command(remote, ["init", "--bare", "--initial-branch=main"]);
+  await git.connect(local, remote);
+  await command(local, ["config", "user.name", "Draft Test"]);
+  await command(local, ["config", "user.email", "draft@example.com"]);
+  await fs.writeFile(path.join(local, "paper.tex"), "Original draft\n");
+  await fs.writeFile(
+    path.join(local, "references.bib"),
+    "Original references\n",
+  );
+  await git.commit(local, "Initial draft");
+  await git.sync(local, "push");
+  await run("/usr/bin/git", ["clone", remote, peer]);
+  await command(peer, ["config", "user.name", "Peer"]);
+  await command(peer, ["config", "user.email", "peer@example.com"]);
+  await fs.writeFile(
+    path.join(local, "paper.tex"),
+    "Uncommitted local research\n",
+  );
+  await git.sync(local, "push");
+  assert.equal(
+    await command(remote, ["show", "main:paper.tex"]),
+    "Original draft",
+  );
+  await fs.writeFile(
+    path.join(peer, "references.bib"),
+    "Updated remote references\n",
+  );
+  await command(peer, ["commit", "-am", "Update references"]);
+  await command(peer, ["push"]);
+  await git.sync(local, "pull");
+  assert.equal(
+    await fs.readFile(path.join(local, "references.bib"), "utf8"),
+    "Updated remote references\n",
+  );
+  assert.equal(
+    await fs.readFile(path.join(local, "paper.tex"), "utf8"),
+    "Uncommitted local research\n",
+  );
+  assert.equal((await git.sync(local)).changes.length, 1);
+  await fs.writeFile(
+    path.join(peer, "paper.tex"),
+    "Overlapping remote research\n",
+  );
+  await command(peer, ["commit", "-am", "Revise paper"]);
+  await command(peer, ["push"]);
+  await assert.rejects(
+    git.sync(local, "pull"),
+    /would be overwritten by merge/,
+  );
+  assert.equal(
+    await fs.readFile(path.join(local, "paper.tex"), "utf8"),
+    "Uncommitted local research\n",
+  );
+  assert.equal(
+    await command(local, ["show", "HEAD:paper.tex"]),
+    "Original draft",
+  );
 });
 
 test("Selective commits preserve other staged changes and preview literal paths and renames", async (t) => {

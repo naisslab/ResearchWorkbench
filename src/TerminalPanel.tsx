@@ -54,9 +54,11 @@ const darkTerminalTheme = {
 export default memo(function TerminalPanel({
   project,
   report,
+  localRequest = 0,
 }: {
   project: Project;
   report(message: string): void;
+  localRequest?: number;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const dark = useDark();
@@ -65,6 +67,20 @@ export default memo(function TerminalPanel({
   const [revision, setRevision] = useState(0);
   const [connected, setConnected] = useState(false);
   const currentKey = useRef("");
+  const handledLocalRequest = useRef(0);
+  useEffect(() => {
+    if (localRequest) setMode("local");
+  }, [localRequest]);
+  useEffect(() => {
+    if (
+      localRequest !== handledLocalRequest.current &&
+      mode === "local" &&
+      connected
+    ) {
+      terminalRef.current?.focus();
+      handledLocalRequest.current = localRequest;
+    }
+  }, [localRequest, mode, connected]);
   useEffect(() => {
     if (terminalRef.current)
       terminalRef.current.options.theme = dark

@@ -121,7 +121,7 @@ Project Files 以可展开的目录树显示项目的 Manuscript、Code 和其�
 
 工作台顶部的 **Git** 显示当前仓库的分支、改动数量和待推送提交数。Source control 左侧显示文件改动、逐行差异和最近提交，右侧提供提交与远端操作。勾选要提交的文件，填写说明后点击 **Commit changes**；未选中的暂存改动会保留。可以切换项目内的文件夹，在本地初始化仓库，或连接已有的 HTTPS、SSH 远程仓库。GitHub 远端可直接打开仓库页面。
 
-**Check remote** 拉取远端状态，即使存在本地改动也可以使用。待推送和待拉取数量根据最近一次 fetch 显示。**Sync** 先拉取再推送，拉取只接受 fast-forward；存在未提交改动、冲突或分支分叉时，界面说明下一步并禁用相应操作。提交使用本机 Git 身份，远程访问使用已有的凭据和 SSH 配置。应用生成的 `.research-build` 文件不纳入提交。可用 `npm run test:git-ui` 在临时仓库验证差异、选择性提交、远端检查、推送，以及拉取和 Sync 后编辑器内容的刷新。改动文件可直接 **Open in editor**。
+**Check remote** 拉取远端状态，即使存在本地改动也可以使用。待推送和待拉取数量根据最近一次 fetch 显示。**Push** 发布已有提交，未提交的编辑保留在本地。**Pull** 和 **Sync** 只接受 fast-forward，允许不受远端更新影响的本地编辑；若会覆盖本地编辑，Git 会停止并说明原因。冲突、detached HEAD 或分支分叉时，界面说明下一步并禁用相应操作。提交使用本机 Git 身份；GitHub HTTPS 远端自动复用已登录的 GitHub CLI，其他连接沿用 Git 凭据和 SSH 配置。认证和网络错误可通过 **Open local terminal** 继续处理。应用生成的 `.research-build` 文件不纳入提交。可用 `npm run test:git-ui` 在临时仓库验证差异、选择性提交、远端检查、推送，以及拉取和 Sync 后编辑器内容的刷新。改动文件可直接 **Open in editor**。
 
 **⌘S** 和 **Ctrl+S** 都会将当前文件写入本地，并刷新 Git 改动状态。保存文件和 Git 提交是两个独立操作。在 Build log 栏勾选 **Compile on save** 后，保存主目录中的 `.tex` 或 `.bib` 会自动编译，此设置按项目保存，编译中再次保存只在结束后补编一次。
 

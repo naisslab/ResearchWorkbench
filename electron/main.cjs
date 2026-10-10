@@ -100,10 +100,7 @@ function stopTerminals(predicate = () => true) {
 }
 const pdfs = new Map();
 const builds = new Map();
-const environment = {
-  ...process.env,
-  PATH: `/Library/TeX/texbin:/opt/homebrew/bin:/usr/local/bin:${process.env.PATH || "/usr/bin:/bin"}`,
-};
+const environment = require("./environment.cjs");
 function project(id) {
   const p = state.projects.find((p) => p.id === id);
   if (!p) throw new Error("Project no longer exists.");

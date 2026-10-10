@@ -79,11 +79,24 @@ await smoke("git-workflow", async (root) => {
     .waitFor();
   assert.equal(
     await page.getByRole("button", { name: "Sync", exact: true }).isDisabled(),
-    true,
+    false,
   );
   await page.getByRole("button", { name: "Check remote", exact: true }).click();
   await page.getByText("Remote status updated.", { exact: true }).waitFor();
   assert.equal(await page.locator(".git-error").count(), 0);
+  // Publish the selected manuscript commit while bibliography edits stay local.
+  await page.getByRole("button", { name: "Push", exact: true }).click();
+  await page
+    .getByText("Commits pushed to the remote.", { exact: true })
+    .waitFor();
+  assert.match(
+    (await git(remote, "show", "main:references.bib")).stdout,
+    /Original study/,
+  );
+  assert.match(
+    await fs.readFile(path.join(folder, "references.bib"), "utf8"),
+    /Updated study/,
+  );
   await page.getByLabel("Commit message").fill("Update related work citations");
   await page
     .getByRole("button", { name: "Commit changes", exact: true })
@@ -135,9 +148,11 @@ await smoke("git-workflow", async (root) => {
     await page.getByLabel("Commit message").inputValue(),
     "Save updated results",
   );
-  await gitDialog(page)
-    .getByRole("button", { name: "Close", exact: true })
+  await page
+    .getByRole("button", { name: "Open local terminal", exact: true })
     .click();
+  await page.locator(".xterm").waitFor({ state: "visible" });
+  assert.equal(await gitDialog(page).count(), 0);
   await page.getByTitle("Switch to dark mode").click();
   await page.locator(".git-toggle").click();
   await page

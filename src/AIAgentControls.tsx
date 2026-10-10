@@ -249,25 +249,43 @@ export default function AIAgentControls({
         <span>{permission.label}</span>
         <ChevronDown size={11} />
       </button>
-      <button
-        type="button"
-        className="ai-setting-trigger ai-model-trigger"
-        ref={modelButton}
-        aria-label="AI model"
-        aria-haspopup="dialog"
-        aria-expanded={menu === "model"}
-        disabled={disabled || !models.length}
-        onClick={() => setMenu(menu === "model" ? null : "model")}
-      >
-        {tier && <Zap size={14} fill="currentColor" aria-label={tier.name} />}
-        <span>{model?.displayName || "Select model"}</span>
-        <small>
-          {model?.supportedReasoningEfforts?.length
-            ? effortLabel(settings.reasoningEffort)
-            : ""}
-        </small>
-        <ChevronDown size={11} />
-      </button>
+      <div className="ai-model-controls">
+        {!!model?.serviceTiers?.length && (
+          <button
+            type="button"
+            className="ai-setting-trigger ai-speed-trigger"
+            aria-label="Fast mode"
+            aria-pressed={!!tier}
+            disabled={disabled}
+            title={tier ? "Turn off fast mode" : "Turn on fast mode"}
+            onClick={() =>
+              update({
+                serviceTier: tier ? "default" : model.serviceTiers[0].id,
+              })
+            }
+          >
+            <Zap size={14} fill={tier ? "currentColor" : "none"} />
+          </button>
+        )}
+        <button
+          type="button"
+          className="ai-setting-trigger ai-model-trigger"
+          ref={modelButton}
+          aria-label="AI model"
+          aria-haspopup="dialog"
+          aria-expanded={menu === "model"}
+          disabled={disabled || !models.length}
+          onClick={() => setMenu(menu === "model" ? null : "model")}
+        >
+          <span>{model?.displayName || "Select model"}</span>
+          <small>
+            {model?.supportedReasoningEfforts?.length
+              ? effortLabel(settings.reasoningEffort)
+              : ""}
+          </small>
+          <ChevronDown size={11} />
+        </button>
+      </div>
       {menu &&
         createPortal(
           <div

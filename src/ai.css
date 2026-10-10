@@ -500,12 +500,27 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ai-model-trigger {
+.ai-model-controls {
+  display: inline-flex;
+  align-items: center;
   margin-left: auto;
+  min-width: 0;
   max-width: 100%;
   background: var(--surface-raised);
   border-radius: 999px;
+  padding-left: 4px;
+}
+.ai-model-trigger {
   padding: 6px 10px;
+  border-radius: 999px;
+}
+.ai-speed-trigger {
+  flex-shrink: 0;
+  border-radius: 999px;
+  color: var(--muted);
+}
+.ai-speed-trigger[aria-pressed="true"] {
+  color: var(--text);
 }
 .ai-setting-trigger > svg:last-child {
   transition: transform 180ms var(--ease-out);

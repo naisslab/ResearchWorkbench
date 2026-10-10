@@ -72,6 +72,7 @@ export default memo(function GitPanel({
   save,
   changed,
   onOpenFile,
+  onOpenTerminal,
 }: {
   projectId: string;
   roots: ProjectFileRoot[];
@@ -80,6 +81,7 @@ export default memo(function GitPanel({
   save(): Promise<string | void>;
   changed(): Promise<void>;
   onOpenFile(file: string, rootId: string): void;
+  onOpenTerminal(): void;
 }) {
   const [show, setShow] = useState(false);
   const [rootId, setRootId] = useState("primary");
@@ -207,7 +209,7 @@ export default memo(function GitPanel({
   const hasHistory = !!status?.history?.length;
   const hasConflict = changes.some((change) => conflicts.has(change.status));
   const locked = !!busy || checking;
-  const blocked = !clean || !!status?.detached;
+  const blocked = hasConflict || !!status?.detached;
   const divergent = !!status?.ahead && !!status?.behind;
   const remotePage = githubLink(status?.remote || "");
   const [syncTitle, syncHint] = hasConflict
@@ -217,24 +219,21 @@ export default memo(function GitPanel({
           "Detached HEAD",
           "Check out a branch in the terminal before publishing.",
         ]
-      : !clean
+      : divergent
         ? [
-            "Review local changes",
-            "Commit or stash your local changes before syncing.",
+            "Branches have diverged",
+            "Both branches have new commits. Reconcile them in the terminal before syncing.",
           ]
-        : divergent
-          ? [
-              "Branches have diverged",
-              "Both branches have new commits. Reconcile them in the terminal before syncing.",
-            ]
-          : [
-              status?.behind
-                ? "Remote changes available"
-                : status?.ahead
-                  ? "Ready to push"
-                  : "Up to date with fetched remote",
-              "Sync pulls remote changes, then pushes your local commits.",
-            ];
+        : [
+            status?.behind
+              ? "Remote changes available"
+              : status?.ahead
+                ? "Ready to push"
+                : "Up to date with fetched remote",
+            clean
+              ? "Sync pulls remote changes, then pushes your local commits."
+              : "Push publishes committed changes. Your edits stay local; Pull stops if remote changes would overwrite them.",
+          ];
   // Git paths start at the repository root, which can sit above this folder.
   const repository = status?.repository || "";
   const prefix = root?.folder.startsWith(`${repository}/`)
@@ -315,9 +314,18 @@ export default memo(function GitPanel({
             </button>
           </div>
           {error && (
-            <pre className="git-error" role="alert">
-              {error}
-            </pre>
+            <div className="git-error" role="alert">
+              <pre>{error}</pre>
+              <button
+                className="button small"
+                onClick={() => {
+                  setShow(false);
+                  onOpenTerminal();
+                }}
+              >
+                Open local terminal
+              </button>
+            </div>
           )}
           {notice && (
             <div className="git-notice" role="status">

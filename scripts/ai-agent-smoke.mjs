@@ -285,7 +285,7 @@ await smoke("ai", async (root) => {
           },
           {
             slug: "fixture-model-2",
-            displayName: "Fast Model",
+            displayName: "Code Model",
             defaultReasoningEffort: "low",
             supportedReasoningEfforts: [
               { reasoningEffort: "low", description: "Light" },
@@ -628,7 +628,7 @@ await smoke("ai", async (root) => {
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await page.getByRole("button", { name: "AI model", exact: true }).click();
-  await page.getByRole("radio", { name: "Fast Model", exact: true }).click();
+  await page.getByRole("radio", { name: "Code Model", exact: true }).click();
   const effortSlider = page.getByRole("slider", {
     name: "Reasoning effort",
     exact: true,
@@ -694,7 +694,7 @@ await smoke("ai", async (root) => {
       .getAttribute("aria-checked"),
     "true",
   );
-  await page.getByRole("radio", { name: "Fast Model", exact: true }).click();
+  await page.getByRole("radio", { name: "Code Model", exact: true }).click();
   assert.equal(
     await page
       .getByRole("radio", { name: "Extra High", exact: true })
@@ -714,6 +714,34 @@ await smoke("ai", async (root) => {
       .evaluate((node) => node === document.activeElement),
     true,
   );
+  const fastToggle = page.getByRole("button", {
+    name: "Fast mode",
+    exact: true,
+  });
+  assert.equal(
+    await fastToggle.innerText(),
+    "",
+    "Speed uses an icon without a Fast label",
+  );
+  assert.equal(await fastToggle.getAttribute("aria-pressed"), "true");
+  assert.equal(
+    await page
+      .locator(".ai-model-controls > button")
+      .first()
+      .getAttribute("aria-label"),
+    "Fast mode",
+  );
+  assert.match(
+    await page
+      .getByRole("button", { name: "AI model", exact: true })
+      .innerText(),
+    /^Code Model\s*Extra High/,
+  );
+  await fastToggle.click();
+  assert.equal(await fastToggle.getAttribute("aria-pressed"), "false");
+  await fastToggle.focus();
+  await fastToggle.press("Space");
+  assert.equal(await fastToggle.getAttribute("aria-pressed"), "true");
   await page
     .getByRole("button", { name: "Agent permissions", exact: true })
     .click();
@@ -737,7 +765,12 @@ await smoke("ai", async (root) => {
     await page
       .getByRole("button", { name: "AI model", exact: true })
       .innerText(),
-    /Fast Model.*Extra High/s,
+    /Code Model.*Extra High/s,
+  );
+  assert.equal(
+    await fastToggle.getAttribute("aria-pressed"),
+    "true",
+    "Fast mode persists after reload",
   );
   await page.getByRole("button", { name: "AI model", exact: true }).click();
   assert.equal(
@@ -1422,7 +1455,7 @@ await smoke("ai", async (root) => {
   await queue.getByText("Second queued request", { exact: true }).waitFor();
   assert.match(
     await queue.locator("li").first().innerText(),
-    /Fast Model · Extra High/,
+    /Code Model · Extra High/,
   );
   assert.match(
     await queue.locator("li").last().innerText(),

@@ -207,6 +207,7 @@ function Workbench({
   const [prompt, setPrompt] = useState<(() => void) | null>(null);
   const [diskConflict, setDiskConflict] = useState(false);
   const [terminalReady, setTerminalReady] = useState(false);
+  const [localTerminalRequest, setLocalTerminalRequest] = useState(0);
   const [agentRunning, setAgentRunning] = useState(false);
   const [selection, setSelection] = useState("");
   const [log, setLog] = useState("");
@@ -856,6 +857,11 @@ function Workbench({
             onOpenFile={openFile}
             save={gitSave}
             changed={filesChanged}
+            onOpenTerminal={() => {
+              showTab("terminal");
+              setExpandedAI(false);
+              setLocalTerminalRequest((request) => request + 1);
+            }}
           />
           {!agentMode && (
             <button
@@ -1243,7 +1249,13 @@ function Workbench({
         }}
       >
         <div className="bottom-tab-content" hidden={bottomTab !== "terminal"}>
-          {terminalReady && <TerminalPanel project={project} report={report} />}
+          {terminalReady && (
+            <TerminalPanel
+              project={project}
+              report={report}
+              localRequest={localTerminalRequest}
+            />
+          )}
         </div>
         <div className="bottom-tab-content" hidden={bottomTab !== "ai"}>
           <AIPanel

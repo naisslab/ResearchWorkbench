@@ -1,31 +1,7 @@
-const { execFile } = require("node:child_process");
-const { promisify } = require("node:util");
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const runFile = promisify(execFile);
-let binary;
-// /usr/bin/git is an xcrun shim; resolving the real binary once saves a process per call.
-const gitBinary = () =>
-  (binary ??= runFile("/usr/bin/xcrun", ["--find", "git"]).then(
-    (result) => result.stdout.trim() || "/usr/bin/git",
-    () => "/usr/bin/git",
-  ));
-async function run(folder, args) {
-  try {
-    const result = await runFile(
-      await gitBinary(),
-      ["-C", await fs.realpath(folder), ...args],
-      {
-        timeout: 60000,
-        maxBuffer: 4 * 1024 * 1024,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-      },
-    );
-    return result.stdout.trimEnd();
-  } catch (error) {
-    throw new Error((error.stderr || error.message).trim());
-  }
-}
+const { run, remote } = require("./git-runner.cjs").createGitRunner();
+const conflicts = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
 function displayRemote(remote) {
   try {
     const url = new URL(remote);
@@ -242,11 +218,7 @@ async function commit(folder, message, files) {
   if (!current.connected) throw new Error("Connect a Git repository first.");
   if (!current.changes.length)
     throw new Error("There are no file changes to commit.");
-  if (
-    current.changes.some((change) =>
-      ["DD", "AU", "UD", "UA", "DU", "AA", "UU"].includes(change.status),
-    )
-  )
+  if (current.changes.some((change) => conflicts.has(change.status)))
     throw new Error(
       "Resolve merge conflicts in the terminal before committing.",
     );
@@ -298,15 +270,15 @@ async function sync(folder, direction = "sync") {
   const current = await status(folder);
   if (!current.remote) throw new Error("Connect a Git remote first.");
   if (direction === "fetch") {
-    await run(folder, ["fetch", current.remoteName]);
+    await remote(folder, current.remoteName, ["fetch", current.remoteName]);
     return status(folder);
   }
-  if (current.changes.length)
-    throw new Error("Commit or stash local changes before syncing.");
+  if (current.changes.some((change) => conflicts.has(change.status)))
+    throw new Error("Resolve merge conflicts in the terminal before syncing.");
   if (current.branch.startsWith("HEAD"))
     throw new Error("Check out a branch before syncing.");
   if (direction !== "push") {
-    await run(folder, ["fetch", current.remoteName]);
+    await remote(folder, current.remoteName, ["fetch", current.remoteName]);
     if (
       await hasRef(
         folder,
@@ -314,14 +286,13 @@ async function sync(folder, direction = "sync") {
       )
     )
       await run(folder, [
-        "pull",
+        "merge",
         "--ff-only",
-        current.remoteName,
-        current.remoteBranch,
+        `refs/remotes/${current.remoteName}/${current.remoteBranch}`,
       ]);
   }
   if (direction !== "pull")
-    await run(folder, [
+    await remote(folder, current.remoteName, [
       "push",
       "--set-upstream",
       current.remoteName,

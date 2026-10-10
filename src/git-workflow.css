@@ -76,9 +76,14 @@
 }
 .git-modal > .git-error {
   flex-shrink: 0;
-  max-height: 100px;
+  max-height: 160px;
   margin: 10px 24px;
   overflow: auto;
+}
+.git-error pre {
+  margin: 0 0 8px;
+  font: inherit;
+  white-space: pre-wrap;
 }
 .git-body {
   display: grid;
