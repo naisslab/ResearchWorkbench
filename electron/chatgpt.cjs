@@ -2,6 +2,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const http = require("node:http");
+const { atomicWrite } = require("./core.cjs");
 
 const ISSUER = "https://auth.openai.com";
 const RESOURCE = "https://api.openai.com/v1";
@@ -100,16 +101,12 @@ function apiError(body, status, requestId) {
           : "other",
   });
 }
-async function protectedWrite(file, contents) {
-  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
-  const temporary = `${file}.${crypto.randomUUID()}.tmp`;
-  try {
-    await fs.writeFile(temporary, contents, { flag: "wx", mode: 0o600 });
-    await fs.rename(temporary, file);
-  } finally {
-    await fs.rm(temporary, { force: true });
-  }
-}
+const protectedWrite = (file, contents) =>
+  atomicWrite(file, contents, {
+    directoryMode: 0o700,
+    flag: "wx",
+    mode: 0o600,
+  });
 async function remote(fetcher, url, options = {}, timeout = 20000) {
   try {
     return await fetcher(url, {

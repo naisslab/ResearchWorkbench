@@ -192,11 +192,11 @@ function validateState(value) {
   }
   return value;
 }
-async function atomicWrite(file, contents) {
-  await fs.mkdir(path.dirname(file), { recursive: true });
+async function atomicWrite(file, contents, { directoryMode, ...options } = {}) {
+  await fs.mkdir(path.dirname(file), { recursive: true, mode: directoryMode });
   const temporary = `${file}.${crypto.randomUUID()}.tmp`;
   try {
-    await fs.writeFile(temporary, contents, "utf8");
+    await fs.writeFile(temporary, contents, { encoding: "utf8", ...options });
     await fs.rename(temporary, file);
   } finally {
     await fs.rm(temporary, { force: true });

@@ -87,30 +87,25 @@ const AIMarkdown = memo(function AIMarkdown({
         skipHtml
         urlTransform={linkUrl}
         components={{
-          a: ({ href, children }) =>
-            !href ? (
-              <span>{children}</span>
-            ) : (
+          a: ({ href, children }) => {
+            if (!href) return <span>{children}</span>;
+            const web = /^https?:/i.test(href);
+            return (
               <a
                 href={href}
-                title={/^https?:/i.test(href) ? href : `Open ${href}`}
-                className={
-                  /^https?:/i.test(href) ? "ai-web-link" : "ai-file-link"
-                }
+                title={web ? href : `Open ${href}`}
+                className={web ? "ai-web-link" : "ai-file-link"}
                 onClick={(event) => {
                   event.preventDefault();
                   openReference(href);
                 }}
               >
-                {!/^https?:/i.test(href) && (
-                  <FileText size={12} aria-hidden="true" />
-                )}
+                {!web && <FileText size={12} aria-hidden="true" />}
                 {children}
-                {/^https?:/i.test(href) && (
-                  <ExternalLink size={10} aria-hidden="true" />
-                )}
+                {web && <ExternalLink size={10} aria-hidden="true" />}
               </a>
-            ),
+            );
+          },
           pre: ({ node, children }) => {
             const code = node?.children.find(
               (child) => child.type === "element" && child.tagName === "code",

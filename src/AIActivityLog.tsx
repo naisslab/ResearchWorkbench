@@ -6,6 +6,7 @@ import {
   TerminalSquare,
 } from "lucide-react";
 import type { AIMessage } from "./types";
+import { plural } from "./components/ui";
 
 export default function AIActivityLog({
   message,
@@ -29,12 +30,8 @@ export default function AIActivityLog({
     .reverse()
     .find((activity) => activity.status === "inProgress");
   const counts = [
-    commands.length
-      ? `${commands.length} command${commands.length === 1 ? "" : "s"}`
-      : "",
-    files.size
-      ? `${files.size} file${files.size === 1 ? "" : "s"} changed`
-      : "",
+    commands.length ? plural(commands.length, "command") : "",
+    files.size ? `${plural(files.size, "file")} changed` : "",
   ]
     .filter(Boolean)
     .join(" · ");

@@ -1,33 +1,13 @@
-import { _electron as electron } from "playwright";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
+import { launchApp, resizeWindow, smoke } from "./smoke-harness.mjs";
 
-const root = await fs.mkdtemp(path.join(os.tmpdir(), "research-ai-ui-"));
-const folder = path.join(root, "manuscript");
-await fs.mkdir(folder);
-await fs.writeFile(path.join(folder, "main.tex"), "Original manuscript\n");
-await fs.mkdir("output/playwright", { recursive: true });
-let desktop, page;
-const failures = [];
-try {
-  desktop = await electron.launch({
-    executablePath: process.env.RESEARCH_APP_PATH || undefined,
-    args: process.env.RESEARCH_APP_PATH ? [] : ["."],
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      RESEARCH_TEST_DATA: root,
-      RESEARCH_DEV_URL: "",
-      RESEARCH_MAC_DDL_DIR: path.resolve("tests/fixtures/mac-ddl-count"),
-    },
-  });
-  page = await desktop.firstWindow();
-  page.on("pageerror", (e) => failures.push(e.message));
-  await page
-    .getByRole("heading", { name: "Research Overview", exact: true })
-    .waitFor();
+await smoke("ai", async (root) => {
+  const folder = path.join(root, "manuscript");
+  await fs.mkdir(folder);
+  await fs.writeFile(path.join(folder, "main.tex"), "Original manuscript\n");
+  const { app: desktop, page } = await launchApp({ dataDirectory: root });
   await page.evaluate(async (folder) => {
     const state = await window.research.load();
     const project = {
@@ -1218,9 +1198,7 @@ try {
   await page
     .getByRole("button", { name: "Switch to dark mode", exact: true })
     .click();
-  await desktop.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows()[0].setSize(1050, 760),
-  );
+  await resizeWindow(desktop, page, 1050, 760);
   await page.waitForTimeout(300);
   assert.ok(
     (await page.locator(".ai-transcript").boundingBox()).height >= 200,
@@ -1519,24 +1497,5 @@ try {
   );
   await page.getByTitle("New AI chat", { exact: true }).click();
   await page.getByText("What should we work on?", { exact: true }).waitFor();
-  assert.deepEqual(failures, []);
-  console.log(
-    "PASS: bundled Codex discovery, ChatGPT connection/cancel, slash skill filtering, keyboard/pointer selection, cursor and text preservation, duplicate prevention, IME/URL/path handling, skills in queued requests, permission/model/reasoning/speed selection and persistence, pointer and keyboard effort slider, reduced motion, queued submissions with captured models, queue reorder/remove/pause/restore/resume, saved drafts, save before run, editor lock, approvals, Markdown and code copy, file/PDF navigation, expandable work log, expanded AI view, IME-safe Enter/Shift+Enter, streaming snapshot consistency, scroll preservation, usage, stop, new chat, and compact dark layout.",
-  );
-} catch (error) {
-  console.error(error);
-  await page
-    ?.screenshot({ path: "output/playwright/ai-failure.png" })
-    .catch(() => {});
-  console.error(
-    await page
-      ?.locator("body")
-      .innerText()
-      .catch(() => ""),
-  );
-  throw error;
-} finally {
-  await desktop?.evaluate(({ app }) => app.exit()).catch(() => {});
-  await desktop?.close().catch(() => {});
-  await fs.rm(root, { recursive: true, force: true });
-}
+  return "PASS: bundled Codex discovery, ChatGPT connection/cancel, slash skill filtering, keyboard/pointer selection, cursor and text preservation, duplicate prevention, IME/URL/path handling, skills in queued requests, permission/model/reasoning/speed selection and persistence, pointer and keyboard effort slider, reduced motion, queued submissions with captured models, queue reorder/remove/pause/restore/resume, saved drafts, save before run, editor lock, approvals, Markdown and code copy, file/PDF navigation, expandable work log, expanded AI view, IME-safe Enter/Shift+Enter, streaming snapshot consistency, scroll preservation, usage, stop, new chat, and compact dark layout.";
+});

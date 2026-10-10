@@ -37,7 +37,6 @@
   padding: 1px 5px;
   border-radius: 4px;
 }
-.ai-toolbar select,
 .ai-context-bar select {
   border: 0;
   background: transparent;
@@ -350,6 +349,7 @@
 .ai-activity summary > small {
   font-size: 9px;
   color: var(--muted);
+  white-space: nowrap;
 }
 .ai-activity.inProgress summary > svg {
   color: var(--accent);
@@ -377,7 +377,13 @@
   user-select: text;
 }
 .ai-file-change > button {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+  color: var(--accent);
   font-size: 10px;
   padding: 7px 8px;
   border-top: 1px solid var(--border);
@@ -747,11 +753,6 @@
   display: flex;
   gap: 6px;
 }
-.ai-send {
-  transition:
-    background 160ms ease,
-    transform 160ms var(--ease-out);
-}
 .ai-send:not(:disabled):active {
   transform: scale(0.93);
 }
@@ -934,9 +935,6 @@
 .ai-skill-suggestions .ai-skills-footer > span:first-child {
   margin-top: 0;
 }
-.ai-skill-option {
-  transition: background 140ms ease;
-}
 .ai-skills-heading {
   display: flex;
   flex-shrink: 0;
@@ -1011,6 +1009,7 @@
   color: var(--danger);
 }
 .ai-skill-option {
+  transition: background 140ms ease;
   display: flex;
   align-items: flex-start;
   gap: 9px;
@@ -1170,6 +1169,9 @@
   outline: none;
 }
 .ai-send {
+  transition:
+    background 160ms ease,
+    transform 160ms var(--ease-out);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1197,9 +1199,6 @@
   }
   .ai-account-button span {
     max-width: 110px;
-  }
-  .ai-toolbar select {
-    max-width: 150px;
   }
   .ai-context-bar > small {
     display: none;
@@ -1440,20 +1439,8 @@
 .ai-work-log-content .ai-activity {
   background: var(--canvas);
 }
-.ai-activity summary > small {
-  white-space: nowrap;
-}
 .ai-activity summary > small.ai-exit-error {
   color: var(--danger, #c65050);
-}
-.ai-file-change > button {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  width: 100%;
-  text-align: left;
-  overflow-wrap: anywhere;
-  color: var(--accent);
 }
 .ai-changed-files {
   display: flex;

@@ -24,6 +24,26 @@ test("new workspace has research areas without placeholder projects or files", a
   assert.deepEqual(JSON.parse(await fs.readFile(file, "utf8")), state);
   assert.deepEqual(await fs.readdir(root), ["workspace.json"]);
 });
+test("atomic replacement preserves binary bytes and cleans up after a failed rename", async (t) => {
+  const root = await temporary(t);
+  const file = path.join(root, "document.pdf");
+  await core.atomicWrite(file, "previous contents");
+  const bytes = Buffer.from([0, 255, 128, 13, 10]);
+  await core.atomicWrite(file, bytes);
+  assert.deepEqual(await fs.readFile(file), bytes);
+  const blocked = path.join(root, "existing-folder");
+  await fs.mkdir(blocked);
+  await fs.writeFile(path.join(blocked, "manuscript.tex"), "Keep this source");
+  await assert.rejects(core.atomicWrite(blocked, "replacement"));
+  assert.equal(
+    await fs.readFile(path.join(blocked, "manuscript.tex"), "utf8"),
+    "Keep this source",
+  );
+  assert.deepEqual((await fs.readdir(root)).sort(), [
+    "document.pdf",
+    "existing-folder",
+  ]);
+});
 test("project file access rejects traversal and symlinks outside the project", async (t) => {
   const root = await temporary(t);
   const project = path.join(root, "project");

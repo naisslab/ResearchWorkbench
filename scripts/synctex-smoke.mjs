@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PDFDocument, degrees } from "pdf-lib";
-import { launchApp, smoke, stubDialogs, useProject } from "./smoke-harness.mjs";
+import {
+  launchApp,
+  resizeWindow,
+  smoke,
+  stubDialogs,
+  useProject,
+} from "./smoke-harness.mjs";
 
 const mainText = String.raw`\documentclass{article}
 \begin{document}
@@ -110,9 +116,7 @@ await smoke("synctex", async (root) => {
     .getByRole("button", { name: "Jump to source", exact: true })
     .click();
   await page.getByTitle("Zoom in PDF").click();
-  await app.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows()[0].setSize(1250, 900),
-  );
+  await resizeWindow(app, page, 1250, 900);
   await goTo(page, 1);
   await clickText(page, 1, "Overview sentence");
   await atSource(page, "main.tex", 4, "Overview sentence");

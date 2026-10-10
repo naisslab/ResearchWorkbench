@@ -8,6 +8,7 @@
 .workbench-header {
   display: flex;
   align-items: center;
+  gap: 8px;
   justify-content: flex-end;
   flex-shrink: 0;
   height: 40px;
@@ -631,9 +632,6 @@
 }
 
 /* Keep the same mounted document and conversation in every work mode. */
-.workbench-header {
-  gap: 8px;
-}
 .workbench-mode-switch {
   display: flex;
   align-items: center;

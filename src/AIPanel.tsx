@@ -44,7 +44,6 @@ import type {
 import AIMarkdown, { CopyAction } from "./AIMarkdown";
 import AIActivityLog from "./AIActivityLog";
 import AISkills from "./AISkills";
-import AISkillSuggestions from "./AISkillSuggestions";
 import {
   findSkillCommand,
   skillSuggestions,
@@ -1348,24 +1347,22 @@ export default function AIPanel({
                 {selectedSkills.length ? ` (${selectedSkills.length})` : ""}
               </button>
               {skillsOpen && (
-                <>
-                  <AISkills
-                    anchor={skillButton.current}
-                    catalog={skillCatalog}
-                    loading={skillsLoading}
-                    error={skillsError}
-                    selected={selectedSkills}
-                    toggle={(skill) =>
-                      setSelectedSkills((selected) =>
-                        selected.some((item) => item.id === skill.id)
-                          ? selected.filter((item) => item.id !== skill.id)
-                          : [...selected, skill],
-                      )
-                    }
-                    refresh={() => void loadSkills(true)}
-                    close={closeSkills}
-                  />
-                </>
+                <AISkills
+                  anchor={skillButton.current}
+                  catalog={skillCatalog}
+                  loading={skillsLoading}
+                  error={skillsError}
+                  selected={selectedSkills}
+                  select={(skill) =>
+                    setSelectedSkills((selected) =>
+                      selected.some((item) => item.id === skill.id)
+                        ? selected.filter((item) => item.id !== skill.id)
+                        : [...selected, skill],
+                    )
+                  }
+                  refresh={() => void loadSkills(true)}
+                  close={closeSkills}
+                />
               )}
             </div>
             <small>
@@ -1409,18 +1406,20 @@ export default function AIPanel({
           )}
           <div className="ai-input-row">
             {skillCommand && (
-              <AISkillSuggestions
-                id={suggestionsId}
+              <AISkills
                 anchor={input.current}
-                skills={suggestedSkills}
-                query={skillCommand.query}
-                activeId={activeSkill?.id}
+                catalog={skillCatalog}
+                suggestions={{
+                  id: suggestionsId,
+                  skills: suggestedSkills,
+                  query: skillCommand.query,
+                  activeId: activeSkill?.id,
+                  highlight: setActiveSkillId,
+                }}
                 selected={selectedSkills}
                 loading={skillsLoading}
                 error={skillsError}
-                warnings={skillCatalog?.warnings || 0}
-                choose={chooseSkillCommand}
-                highlight={setActiveSkillId}
+                select={chooseSkillCommand}
                 refresh={() => void loadSkills(true)}
                 close={closeSkillCommands}
               />
@@ -1510,23 +1509,12 @@ export default function AIPanel({
                   }
                   if (event.key === "Tab") closeSkillCommands();
                 }
-                if (
-                  event.key === "$" &&
-                  !draft &&
-                  !actionDisabled &&
-                  root &&
-                  !event.nativeEvent.isComposing
-                ) {
+                if (event.key === "$" && !draft && !actionDisabled && root) {
                   event.preventDefault();
                   setSkillsOpen(true);
                   return;
                 }
-                if (
-                  event.key === "Enter" &&
-                  !event.shiftKey &&
-                  !event.nativeEvent.isComposing &&
-                  event.nativeEvent.keyCode !== 229
-                ) {
+                if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   void send();
                 }

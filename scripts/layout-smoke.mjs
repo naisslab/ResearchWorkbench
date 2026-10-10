@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PDFDocument } from "pdf-lib";
-import { launchApp, smoke, stubDialogs, useProject } from "./smoke-harness.mjs";
+import {
+  dragDivider,
+  launchApp,
+  resizeWindow,
+  smoke,
+  stubDialogs,
+  useProject,
+} from "./smoke-harness.mjs";
 
 await smoke("layout", async (root) => {
   const folder = path.join(root, "manuscript");
@@ -28,15 +35,7 @@ Review the source, ask the agent, and read the manuscript side by side.
   const pdfPath = path.join(folder, "paper.pdf");
   await fs.writeFile(pdfPath, await document.save());
   let { app, page } = await launchApp();
-  const resize = async (width, height) => {
-    await app.evaluate(
-      ({ BrowserWindow }, { width, height }) => {
-        BrowserWindow.getAllWindows()[0].setSize(width, height);
-      },
-      { width, height },
-    );
-    await page.waitForFunction(({ width }) => innerWidth === width, { width });
-  };
+  const resize = (width, height) => resizeWindow(app, page, width, height);
   await useProject(page, "Layout Review", folder);
   await resize(2200, 1100);
   await page
@@ -165,16 +164,8 @@ Review the source, ask the agent, and read the manuscript side by side.
       sourceBefore + 49,
   );
   const agentBefore = Number(await agentDivider.getAttribute("aria-valuenow"));
-  const bounds = await agentDivider.boundingBox();
-  await page.mouse.move(bounds.x + 2, bounds.y + bounds.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(bounds.x + 52, bounds.y + bounds.height / 2, {
-    steps: 10,
-  });
-  await page.mouse.up();
   assert.ok(
-    Number(await agentDivider.getAttribute("aria-valuenow")) >=
-      agentBefore + 49,
+    (await dragDivider(page, "Resize agent and PDF", 50)) >= agentBefore + 49,
   );
   await checkColumns();
   const savedWidths = await page.evaluate(() =>

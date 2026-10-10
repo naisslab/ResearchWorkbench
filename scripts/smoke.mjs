@@ -1,21 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { launchApp, smoke, stubDialogs } from "./smoke-harness.mjs";
-
-async function dragDivider(page, name, dx, dy = 0) {
-  const divider = page.getByRole("separator", { name, exact: true });
-  const box = await divider.boundingBox();
-  assert.ok(box, `Missing divider: ${name}`);
-  const x = box.x + box.width / 2,
-    y = box.y + box.height / 2;
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.move(x + dx, y + dy, { steps: 12 });
-  await page.mouse.up();
-  await page.locator(".drag-shield").waitFor({ state: "detached" });
-  return Number(await divider.getAttribute("aria-valuenow"));
-}
+import {
+  dragDivider,
+  launchApp,
+  resizeWindow,
+  smoke,
+  stubDialogs,
+} from "./smoke-harness.mjs";
 await smoke("ui", async (root) => {
   let { app, page } = await launchApp();
   await page.screenshot({ path: "output/playwright/overview.png" });
@@ -94,13 +86,9 @@ await smoke("ui", async (root) => {
     .getByRole("heading", { name: "Project Board", exact: true })
     .waitFor();
   await page.getByRole("button", { name: "Overview", exact: false }).click();
-  await app.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows()[0].setSize(1100, 780),
-  );
+  await resizeWindow(app, page, 1100, 780);
   await page.screenshot({ path: "output/playwright/overview-compact.png" });
-  await app.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows()[0].setSize(1510, 980),
-  );
+  await resizeWindow(app, page, 1510, 980);
   await page.getByRole("button", { name: "New project", exact: true }).click();
   await page
     .getByLabel("Project name", { exact: true })
@@ -347,9 +335,7 @@ This manuscript exists only in the automated test workspace.
   await dragDivider(page, "Resize project files", 40);
   await dragDivider(page, "Resize editor and PDF", -55);
   await dragDivider(page, "Resize terminal panel", 0, -45);
-  await app.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows()[0].setSize(1050, 760),
-  );
+  await resizeWindow(app, page, 1050, 760);
   const narrow = await page.evaluate(() => {
     const boxes = [
       ".sidebar",
@@ -364,14 +350,15 @@ This manuscript exists only in the automated test workspace.
       viewport: window.innerWidth,
     };
   });
-  assert.ok(narrow.boxes[2].width >= 240 && narrow.boxes[3].width >= 260);
+  assert.ok(
+    narrow.boxes[2].width >= 240 && narrow.boxes[3].width >= 260,
+    JSON.stringify(narrow),
+  );
   assert.ok(narrow.boxes[3].right <= narrow.viewport + 1);
   // PDF pages repaint asynchronously after their viewport resizes.
   await page.waitForTimeout(800);
   await page.screenshot({ path: "output/playwright/workbench-compact.png" });
-  await app.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows()[0].setSize(1510, 980),
-  );
+  await resizeWindow(app, page, 1510, 980);
   await page.waitForTimeout(800);
   await page.screenshot({ path: "output/playwright/workbench-resized.png" });
   const original = await page.locator(".cm-content").innerText();
