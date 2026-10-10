@@ -14,6 +14,7 @@ const {
   USAGE_URL,
 } = require("./chatgpt.cjs");
 const { createCodexAgent, codexExecutable } = require("./codex-agent.cjs");
+const { createResponseGateway } = require("./response-gateway.cjs");
 const {
   createChangeStore,
   reviewKey,
@@ -189,10 +190,11 @@ function createAI({
     );
   }
   async function closeAgents() {
-    await Promise.allSettled(
-      [...agents.values()].map((entry) => entry.agent.close()),
-    );
+    await Promise.allSettled([...agents.values()].map(closeAgent));
     agents.clear();
+  }
+  function closeAgent(entry) {
+    return Promise.allSettled([entry.agent.close(), entry.gateway.close()]);
   }
   async function availableSkills(projectId, rootId, forceReload = false) {
     project(projectId);
@@ -893,17 +895,28 @@ function createAI({
       const token = await auth.accessToken(value.profileId);
       signal.throwIfAborted();
       let entry = agents.get(id);
-      if (!entry || entry.token !== token || entry.agent.isClosed()) {
-        entry?.agent.close();
-        entry = {
-          token,
-          agent: agentFactory({
-            accessToken: token,
-            home: path.join(directory, "codex", value.profileId),
-            environment,
-            skillRoots,
-          }),
-        };
+      if (!entry || entry.agent.isClosed()) {
+        if (entry) await closeAgent(entry);
+        const gateway = await createResponseGateway({
+          accessToken: (options) => auth.accessToken(value.profileId, options),
+          fetcher,
+        });
+        try {
+          signal.throwIfAborted();
+          entry = {
+            gateway,
+            agent: agentFactory({
+              accessToken: gateway.token,
+              baseUrl: gateway.baseUrl,
+              home: path.join(directory, "codex", value.profileId),
+              environment,
+              skillRoots,
+            }),
+          };
+        } catch (error) {
+          await gateway.close();
+          throw error;
+        }
         agents.set(id, entry);
       }
       value.agentCwd = projectScope.cwd;
@@ -949,6 +962,8 @@ function createAI({
       else {
         const detail = safeText(turn.error?.message, 2000)
           .split(token)
+          .join("[redacted]")
+          .split(entry.gateway.token)
           .join("[redacted]");
         throw new AIError(
           "agent_turn_failed",
@@ -1046,7 +1061,8 @@ function createAI({
     delete value.agentCwd;
     delete value.agentRootId;
     const id = key(value.profileId, projectId);
-    agents.get(id)?.agent.close();
+    const entry = agents.get(id);
+    if (entry) await closeAgent(entry);
     agents.delete(id);
     await saveConversation(value);
     publishConversation(value);
@@ -1241,7 +1257,7 @@ function createAI({
       for (const job of running.values()) job.controller.abort();
       return Promise.allSettled([
         ...[...running.values()].map((job) => job.done),
-        ...[...agents.values()].map((entry) => entry.agent.close()),
+        ...[...agents.values()].map(closeAgent),
         ...(skillAgent ? [skillAgent.close()] : []),
       ]);
     },

@@ -3,6 +3,7 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { createCodexAgent } = require("../electron/codex-agent.cjs");
+const { createResponseGateway } = require("../electron/response-gateway.cjs");
 const { runCodeModeFixture } = require("./code-mode-fixture.cjs");
 
 test(
@@ -13,7 +14,11 @@ test(
       path.join(os.tmpdir(), "research-code-mode-"),
     );
     try {
-      await runCodeModeFixture({ createCodexAgent, root });
+      await runCodeModeFixture({
+        createCodexAgent,
+        createResponseGateway,
+        root,
+      });
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

@@ -3,11 +3,15 @@ const http = require("node:http");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const zlib = require("node:zlib");
-const { spawn } = require("node:child_process");
 
 // Fake only the model's Responses stream. The bundled app-server, Code Mode
 // host, shell, patch tool, sandbox, and LaTeX compiler all run for real.
-async function runCodeModeFixture({ createCodexAgent, root }) {
+async function runCodeModeFixture({
+  createCodexAgent,
+  createResponseGateway,
+  fetcher = fetch,
+  root,
+}) {
   const cwd = path.join(root, "manuscript");
   await fs.mkdir(cwd, { recursive: true });
   await fs.writeFile(
@@ -28,7 +32,10 @@ async function runCodeModeFixture({ createCodexAgent, root }) {
   );
   const requests = [],
     events = [];
-  let serverError, agent;
+  let serverError, agent, gateway;
+  let credential = "unused-code-mode-fixture",
+    refreshes = 0,
+    rejectedBody;
   const compile =
     "latexmk -pdf -interaction=nonstopmode -halt-on-error -no-shell-escape -outdir=.research-build main.tex";
   const patch =
@@ -37,16 +44,25 @@ async function runCodeModeFixture({ createCodexAgent, root }) {
   const server = http.createServer(async (request, response) => {
     try {
       assert.equal(request.url, "/v1/responses");
-      assert.equal(
-        request.headers.authorization,
-        "Bearer unused-code-mode-fixture",
-      );
+      assert.equal(request.headers.authorization, `Bearer ${credential}`);
       const chunks = [];
       for await (const chunk of request) chunks.push(chunk);
       let data = Buffer.concat(chunks);
       if (request.headers["content-encoding"] === "gzip")
         data = zlib.gunzipSync(data);
       const body = JSON.parse(data.toString());
+      // Renew after Code Mode has repaired the manuscript, before recompiling.
+      if (requests.length === 2 && !rejectedBody) {
+        assert.match(
+          await fs.readFile(path.join(cwd, "main.tex"), "utf8"),
+          /Compiled through Code Mode/,
+        );
+        rejectedBody = body;
+        response.writeHead(401, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: { code: "token_expired" } }));
+        return;
+      }
+      if (requests.length === 2) assert.deepEqual(body, rejectedBody);
       requests.push(body);
       if (requests.length === 1)
         assert.ok(
@@ -148,8 +164,21 @@ async function runCodeModeFixture({ createCodexAgent, root }) {
       server.listen(0, "127.0.0.1", resolve);
     });
     const local = `http://127.0.0.1:${server.address().port}/v1`;
+    gateway = await createResponseGateway({
+      accessToken: async ({ rejectedToken } = {}) => {
+        if (rejectedToken) {
+          assert.equal(rejectedToken, credential);
+          credential = "renewed-code-mode-fixture";
+          refreshes++;
+        }
+        return credential;
+      },
+      fetcher: (url, options) =>
+        fetcher(url.replace("https://api.openai.com/v1", local), options),
+    });
     agent = createCodexAgent({
-      accessToken: "unused-code-mode-fixture",
+      accessToken: gateway.token,
+      baseUrl: gateway.baseUrl,
       home: path.join(root, "agent-home"),
       skillRoots: [skillRoot],
       environment: {
@@ -161,12 +190,6 @@ async function runCodeModeFixture({ createCodexAgent, root }) {
         PATH: `/Library/TeX/texbin:${process.env.PATH || ""}`,
         NO_PROXY: "127.0.0.1,localhost",
       },
-      spawnProcess: (file, args, config) =>
-        spawn(
-          file,
-          args.map((arg) => arg.replace("https://api.openai.com/v1", local)),
-          config,
-        ),
     });
     const catalog = await agent.listSkills(cwd, true);
     const skill = catalog.data
@@ -218,15 +241,18 @@ async function runCodeModeFixture({ createCodexAgent, root }) {
     );
     assert.equal(pdf.subarray(0, 5).toString(), "%PDF-");
     assert.equal(requests.length, 4);
+    assert.equal(refreshes, 1);
     return {
       model: "gpt-6-astra",
       requests: requests.length,
       commands: executions.length,
       pdfBytes: pdf.length,
       nativeSkill: skill.name,
+      refreshes,
     };
   } finally {
     await agent?.close();
+    await gateway?.close();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }

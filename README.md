@@ -70,6 +70,8 @@ Agent 回复支持 Markdown、列表、表格和带复制按钮的代码块。�
 
 登录凭据由 Electron safeStorage 加密，保存在 Application Support 的 `Research Workbench/ai/`，不会传给界面或纳入工作区导出。对话、附加的文本快照、执行记录及 Codex 会话也保存在该目录。Agent 使用本机环境中的编译器与脚本工具，LaTeX 仍需下面的环境配置。
 
+长任务的每次 Responses 请求都会检查 access token 并在到期前自动续期。如果服务器明确返回 `401 token_expired`，应用会串行刷新同一账户的凭据，并仅重试该次被拒绝的请求一次；当前 agent 和任务继续运行，已执行的命令不会重放。请求通过仅监听 `127.0.0.1`、需要随机凭据的本地转发服务，最终仍发往 OpenAI Responses API；上下文压缩请求使用同样的续期流程。Compact 负责压缩上下文，与 OAuth 凭据过期分别处理。刷新授权本身失效时仍需重新登录，已完成的文件修改和审阅记录会保留。
+
 ## LaTeX 环境
 
 安装 MacTeX 或确保 `latexmk`、`pdflatex` 在 PATH 中。应用会加入 `/Library/TeX/texbin`、`/opt/homebrew/bin` 和 `/usr/local/bin`。

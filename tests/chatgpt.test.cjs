@@ -91,6 +91,7 @@ test("token refresh is serialized and a rotating response survives a temporary J
   assert.equal(tokens[0], "fixture-access-1-1");
   assert.equal(tokens[1], tokens[0]);
   assert.equal(f.control.refreshes, 1);
+  assert.equal((await auth.getSession()).error, undefined);
 });
 test("terminal refresh failure requires reconnection; temporary errors preserve credentials", async (t) => {
   const f = await fixture(t);
@@ -108,6 +109,29 @@ test("terminal refresh failure requires reconnection; temporary errors preserve 
   );
   assert.equal(stored.profiles[0].credentials, undefined);
   assert.equal(stored.profiles[0].clientId, "fixture-client-1");
+});
+test("a rejected access token renews once even before local expiry and concurrent rejections reuse its replacement", async (t) => {
+  const f = await fixture(t),
+    auth = f.auth();
+  f.cleanup(() => auth.dispose());
+  const session = await signIn(auth);
+  const token = await auth.accessToken();
+  const replacements = await Promise.all(
+    Array.from({ length: 8 }, () =>
+      auth.accessToken(session.activeProfileId, { rejectedToken: token }),
+    ),
+  );
+  assert.ok(replacements.every((value) => value === "fixture-access-1-1"));
+  assert.equal(f.control.refreshes, 1);
+  assert.equal(
+    await auth.accessToken(session.activeProfileId, { rejectedToken: token }),
+    replacements[0],
+  );
+  const reopened = f.auth();
+  f.cleanup(() => reopened.dispose());
+  assert.equal(await reopened.accessToken(), replacements[0]);
+  assert.equal(f.control.refreshes, 1);
+  assert.equal((await auth.getSession()).status, "connected");
 });
 test("registrations remain distinct even with the same email and subject", async (t) => {
   const f = await fixture(t),

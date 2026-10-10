@@ -5,11 +5,11 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const zlib = require("node:zlib");
-const { spawn } = require("node:child_process");
 const { createCodexAgent } = require("../electron/codex-agent.cjs");
+const { createResponseGateway } = require("../electron/response-gateway.cjs");
 
 test(
-  "the bundled native app-server edits two files and executes a check through streamed Responses",
+  "the bundled native app-server survives mid-turn token expiry without replaying file edits or commands",
   { timeout: 30000 },
   async () => {
     const root = await fs.mkdtemp(
@@ -19,13 +19,16 @@ test(
     await fs.mkdir(cwd);
     const requests = [],
       events = [];
-    let serverError, agent, savedThreadId;
+    let serverError, agent, gateway, savedThreadId;
+    let accepted = 0,
+      refreshes = 0,
+      credential = "unused-native-fixture-token";
     const server = http.createServer(async (request, response) => {
       try {
         assert.equal(request.url, "/v1/responses");
         assert.equal(
           request.headers.authorization,
-          "Bearer unused-native-fixture-token",
+          `Bearer ${requests.length < 2 ? "unused-native-fixture-token" : "renewed-native-fixture-token"}`,
         );
         const chunks = [];
         for await (const chunk of request) chunks.push(chunk);
@@ -36,6 +39,25 @@ test(
         requests.push(body);
         assert.equal(body.store, false);
         assert.equal(body.stream, true);
+        if (requests.length === 2) {
+          // Expiry occurs after a real tool has already changed the filesystem.
+          assert.equal(
+            await fs.readFile(path.join(cwd, "one.txt"), "utf8"),
+            "First file\n",
+          );
+          response.writeHead(401, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({
+              error: {
+                code: "token_expired",
+                message: "Provided authentication token is expired.",
+              },
+            }),
+          );
+          return;
+        }
+        if (requests.length === 3) assert.deepEqual(body, requests[1]);
+        accepted++;
         response.writeHead(200, {
           "content-type": "text/event-stream",
           "cache-control": "no-cache",
@@ -49,7 +71,7 @@ test(
           response: { id, status: "in_progress", output: [] },
         });
         let item;
-        if (requests.length === 1) {
+        if (accepted === 1) {
           const tool = body.tools.find((t) => t.name === "apply_patch");
           const patch =
             "*** Begin Patch\n*** Add File: one.txt\n+First file\n*** Add File: two.txt\n+Second file\n*** End Patch";
@@ -84,12 +106,12 @@ test(
                     name: tool.name,
                     arguments: JSON.stringify({ patch }),
                   };
-        } else if (requests.length === 2) {
+        } else if (accepted === 2) {
           const tool = body.tools.find((t) =>
             ["exec_command", "shell_command", "shell"].includes(t.name),
           );
           assert.ok(tool, "Native agent must expose a local shell tool");
-          const command = `${JSON.stringify(process.execPath)} -e "const f=require('fs');if(!f.readFileSync('one.txt','utf8').includes('First')||!f.readFileSync('two.txt','utf8').includes('Second'))process.exit(1);console.log('native checks passed')"`;
+          const command = `${JSON.stringify(process.execPath)} -e "const f=require('fs');f.appendFileSync('executions.txt','once\\n');if(!f.readFileSync('one.txt','utf8').includes('First')||!f.readFileSync('two.txt','utf8').includes('Second'))process.exit(1);console.log('native checks passed')"`;
           const args =
             tool.name === "shell"
               ? { command: ["/bin/zsh", "-c", command], workdir: cwd }
@@ -110,7 +132,7 @@ test(
           };
         } else {
           assert.ok(
-            requests.length <= 4,
+            accepted <= 4,
             "Fixture tools should finish without retries",
           );
           item = {
@@ -162,10 +184,22 @@ test(
         server.once("error", reject);
         server.listen(0, "127.0.0.1", resolve);
       });
-      const endpoint = `https://api.openai.com/v1`;
       const local = `http://127.0.0.1:${server.address().port}/v1`;
+      gateway = await createResponseGateway({
+        accessToken: async ({ rejectedToken } = {}) => {
+          if (rejectedToken) {
+            assert.equal(rejectedToken, credential);
+            credential = "renewed-native-fixture-token";
+            refreshes++;
+          }
+          return credential;
+        },
+        fetcher: (url, options) =>
+          fetch(url.replace("https://api.openai.com/v1", local), options),
+      });
       agent = createCodexAgent({
-        accessToken: "unused-native-fixture-token",
+        accessToken: gateway.token,
+        baseUrl: gateway.baseUrl,
         home: path.join(root, "agent-home"),
         environment: {
           ...Object.fromEntries(
@@ -175,12 +209,6 @@ test(
           ),
           NO_PROXY: "127.0.0.1,localhost",
         },
-        spawnProcess: (file, args, config) =>
-          spawn(
-            file,
-            args.map((a) => a.replace(endpoint, local)),
-            config,
-          ),
       });
       const result = await agent.run({
         model: "gpt-5.5",
@@ -230,7 +258,16 @@ test(
             e.params.item.type === "fileChange",
         ),
       );
-      assert.equal(requests.length, 3);
+      assert.equal(requests.length, 4);
+      assert.equal(refreshes, 1);
+      assert.equal(
+        await fs.readFile(path.join(cwd, "executions.txt"), "utf8"),
+        "once\n",
+      );
+      assert.equal(
+        events.filter((event) => event.method === "turn/started").length,
+        1,
+      );
       for (const request of requests) {
         assert.equal(request.reasoning.effort, "high");
         assert.equal(request.service_tier, "priority");
@@ -258,6 +295,7 @@ test(
       );
     } finally {
       await agent?.close();
+      await gateway?.close();
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
       await fs.rm(root, { recursive: true, force: true });

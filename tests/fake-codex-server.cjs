@@ -1,4 +1,4 @@
-// Test-only RPC fixture. No model inference or network requests occur.
+// Test-only RPC fixture. Model requests use isolated HTTP fixtures only.
 const readline = require("node:readline");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -106,6 +106,31 @@ async function work(params) {
   notification("turn/diff/updated", {
     diff: "--- draft.tex\n+++ draft.tex\n-Old manuscript\n+Revised manuscript",
   });
+  if (text.includes("fixture-auth-expiry")) {
+    const prefix = "model_providers.openai_chatgpt_plan.base_url=";
+    const baseUrl = JSON.parse(
+      process.argv.find((arg) => arg.startsWith(prefix)).slice(prefix.length),
+    );
+    const response = await fetch(`${baseUrl}/responses`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${process.env.ACCESS_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ input: "fixture-after-tools", stream: false }),
+    });
+    if (!response.ok) {
+      notification("turn/completed", {
+        turn: {
+          id: current,
+          status: "failed",
+          error: { message: await response.text() },
+        },
+      });
+      return;
+    }
+    await response.text();
+  }
   const encoded = Buffer.from(
     JSON.stringify({
       method: "item/agentMessage/delta",

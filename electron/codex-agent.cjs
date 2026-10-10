@@ -51,11 +51,11 @@ function codexExecutable() {
     );
   return binary;
 }
-function agentArguments() {
+function agentArguments(baseUrl = "https://api.openai.com/v1") {
   const config = {
     model_provider: "openai_chatgpt_plan",
     "model_providers.openai_chatgpt_plan.name": "ChatGPT plan",
-    "model_providers.openai_chatgpt_plan.base_url": "https://api.openai.com/v1",
+    "model_providers.openai_chatgpt_plan.base_url": baseUrl,
     "model_providers.openai_chatgpt_plan.env_key": "ACCESS_TOKEN",
     "model_providers.openai_chatgpt_plan.wire_api": "responses",
     "model_providers.openai_chatgpt_plan.requires_openai_auth": false,
@@ -92,6 +92,7 @@ function agentArguments() {
 }
 function createCodexAgent({
   accessToken,
+  baseUrl,
   home,
   environment = process.env,
   skillRoots = [],
@@ -109,7 +110,14 @@ function createCodexAgent({
     "OPENAI_LOG",
   ])
     delete env[name];
-  const proc = spawnProcess(executable, agentArguments(), {
+  if (baseUrl?.startsWith("http://127.0.0.1:")) {
+    // The local credential gateway must bypass system proxy settings.
+    for (const name of ["NO_PROXY", "no_proxy"])
+      env[name] = [env[name], "127.0.0.1", "localhost"]
+        .filter(Boolean)
+        .join(",");
+  }
+  const proc = spawnProcess(executable, agentArguments(baseUrl), {
     env,
     stdio: ["pipe", "pipe", "pipe"],
     detached: process.platform !== "win32",

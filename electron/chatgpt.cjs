@@ -642,15 +642,26 @@ function createChatGPT({
     changed();
     return snapshot();
   }
-  async function accessToken(profileId = saved.activeProfileId) {
+  async function accessToken(profileId, { rejectedToken } = {}) {
     await initialize();
-    const p = saved.profiles.find((p) => p.id === profileId);
+    const p = saved.profiles.find(
+      (p) =>
+        p.id === (profileId === undefined ? saved.activeProfileId : profileId),
+    );
     if (!sharing(p))
       throw new AIError(
         "plan_usage_disabled",
         "Connect ChatGPT and enable ChatGPT plan usage to send a message.",
       );
-    if (!p.pendingRefresh && p.credentials.expiresAt > Date.now() + 60000)
+    // A Responses request can report expiry before our local clock does.
+    // Refresh only the rejected credential; concurrent requests may already
+    // have replaced it using the same rotating refresh token.
+    if (
+      !refreshing.has(p.id) &&
+      !p.pendingRefresh &&
+      rejectedToken !== p.credentials.accessToken &&
+      p.credentials.expiresAt > Date.now() + 60000
+    )
       return p.credentials.accessToken;
     if (!refreshing.has(p.id))
       refreshing.set(
@@ -699,6 +710,8 @@ function createChatGPT({
                 "plan_usage_disabled",
                 "ChatGPT plan usage is no longer enabled for this account.",
               );
+            lastError = undefined;
+            changed();
             return p.credentials.accessToken;
           } catch (error) {
             if (terminalRefreshErrors.has(error.code)) {

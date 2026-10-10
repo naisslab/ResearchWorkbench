@@ -10,7 +10,7 @@ const {
 } = require("../electron/codex-agent.cjs");
 const { fixture, signIn, waitFor } = require("./ai-fixtures.cjs");
 
-async function clientFixture(t) {
+async function clientFixture(t, inference) {
   const f = await fixture(t);
   const projectFolder = path.join(f.directory, "project");
   await fs.mkdir(projectFolder);
@@ -27,6 +27,10 @@ async function clientFixture(t) {
   const make = () =>
     createAI({
       ...f,
+      fetcher: (url, options) =>
+        String(url).endsWith("/responses") && inference
+          ? inference(f, url, options)
+          : f.fetcher(url, options),
       skillRoots: [skillRoot],
       project: (id) => {
         if (!["one", "two"].includes(id)) throw new Error("Unknown project");
@@ -47,7 +51,7 @@ async function clientFixture(t) {
             launched.push({ args, env: config.env });
             return spawn(
               process.execPath,
-              [path.join(__dirname, "fake-codex-server.cjs")],
+              [path.join(__dirname, "fake-codex-server.cjs"), ...args],
               config,
             );
           },
@@ -59,6 +63,109 @@ async function clientFixture(t) {
   await client.refreshModels();
   return { ...f, client, make, projectFolder, skillPath, launched, events };
 }
+test("a mid-turn expired token recovers transparently and preserves review, history, and queued work in the same agent", async (t) => {
+  const requests = [];
+  const f = await clientFixture(t, async (_fixture, _url, options) => {
+    const token = options.headers.get("authorization");
+    requests.push({ token, body: Buffer.from(options.body) });
+    // The edit must already be on disk before the model's expired-token failure.
+    assert.equal(
+      await fs.readFile(path.join(f.projectFolder, "draft.tex"), "utf8"),
+      "Revised manuscript\n",
+    );
+    return requests.length === 1
+      ? Response.json({ error: { code: "token_expired" } }, { status: 401 })
+      : Response.json({ ok: true });
+  });
+  for (const message of [
+    "fixture-auth-expiry first",
+    "fixture-auth-expiry queued",
+  ])
+    await f.client.send({
+      projectId: "one",
+      message,
+      model: "fixture-model",
+      rootId: "primary",
+    });
+  const finished = await waitFor(async () => {
+    const value = await f.client.conversation("one");
+    return value.messages.length === 4 &&
+      value.messages.at(-1).status === "completed" &&
+      !f.client.isRunning("one")
+      ? value
+      : false;
+  });
+  assert.equal(f.control.refreshes, 1);
+  assert.deepEqual(
+    requests.map((request) => request.token),
+    [
+      "Bearer fixture-access-1-0",
+      "Bearer fixture-access-1-1",
+      "Bearer fixture-access-1-1",
+    ],
+  );
+  assert.deepEqual(requests[0].body, requests[1].body);
+  assert.equal(f.launched.length, 2); // Catalog plus one agent for both turns.
+  assert.equal(finished.messages[1].status, "completed");
+  assert.equal(finished.messages[1].review.files, 4);
+  assert.equal(finished.queuePaused, false);
+  assert.equal(finished.queue.length, 0);
+  assert.equal((await f.client.getState()).usage.requests, 2);
+  assert.equal(
+    (
+      await fs.readFile(
+        path.join(f.projectFolder, "received-turns.jsonl"),
+        "utf8",
+      )
+    )
+      .trim()
+      .split("\n").length,
+    2,
+  );
+  await f.client.dispose();
+  const reopened = f.make();
+  f.cleanup(() => reopened.dispose());
+  const restored = await reopened.conversation("one");
+  assert.equal(restored.messages[1].status, "completed");
+  const review = await reopened.review("one", restored.messages[1].id);
+  const draft = review.files.find((file) => file.path === "draft.tex");
+  assert.equal(
+    (await reopened.reviewFile("one", restored.messages[1].id, draft.id)).after,
+    "Revised manuscript\n",
+  );
+});
+test("a genuine refresh rejection stops the turn while preserving completed edits for review and revert", async (t) => {
+  const f = await clientFixture(t, () =>
+    Response.json({ error: { code: "token_expired" } }, { status: 401 }),
+  );
+  f.control.refreshError = "invalid_grant";
+  await f.client.send({
+    projectId: "one",
+    message: "fixture-auth-expiry",
+    model: "fixture-model",
+    rootId: "primary",
+  });
+  const finished = await waitFor(async () => {
+    const value = await f.client.conversation("one");
+    return value.messages.at(-1)?.status === "failed" &&
+      !f.client.isRunning("one")
+      ? value
+      : false;
+  });
+  assert.equal((await f.client.getState()).status, "reauth_required");
+  assert.match(
+    finished.messages.at(-1).error.message,
+    /Reconnect your account/,
+  );
+  assert.equal(finished.messages.at(-1).review.files, 4);
+  const review = await f.client.review("one", finished.messages.at(-1).id);
+  assert.equal(review.canRevert, true);
+  await f.client.revert("one", finished.messages.at(-1).id);
+  assert.equal(
+    await fs.readFile(path.join(f.projectFolder, "draft.tex"), "utf8"),
+    "Old manuscript\n",
+  );
+});
 test("completed agent runs expose real file versions and revert after restart without altering chat history", async (t) => {
   const f = await clientFixture(t);
   await f.client.send({
@@ -312,7 +419,11 @@ test("the subscribed agent modifies multiple files, executes a script, streams U
   const state = await f.client.getState();
   assert.equal(state.usage.requests, 1);
   assert.equal(state.usage.inputTokens, 100);
-  assert.equal(f.launched[1].env.ACCESS_TOKEN, "fixture-access-1-0");
+  assert.match(f.launched[1].env.ACCESS_TOKEN, /^[a-f0-9]{64}$/);
+  assert.ok(
+    f.launched[1].args.some((arg) => arg.includes("http://127.0.0.1:")),
+  );
+  assert.match(f.launched[1].env.NO_PROXY, /127\.0\.0\.1/);
   assert.equal(
     JSON.stringify(f.launched[1].args).includes("fixture-access"),
     false,

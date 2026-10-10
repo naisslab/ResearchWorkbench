@@ -151,14 +151,19 @@ await smoke("ai", async (root) => {
     "PASS: native app-server discovered installed scale-writing without logging in or consuming model usage.",
   );
   const codeMode = await desktop.evaluate(
-    async ({ app }, { root, fixture }) => {
+    async ({ app, net }, { root, fixture }) => {
       const requireApp = process
         .getBuiltinModule("node:module")
         .createRequire(`${app.getAppPath()}/package.json`);
       const { createCodexAgent } = requireApp("./electron/codex-agent.cjs");
+      const { createResponseGateway } = requireApp(
+        "./electron/response-gateway.cjs",
+      );
       const { runCodeModeFixture } = requireApp(fixture);
       return runCodeModeFixture({
         createCodexAgent,
+        createResponseGateway,
+        fetcher: (url, options) => net.fetch(url, options),
         root: `${root}/code-mode-check`,
       });
     },
@@ -167,8 +172,9 @@ await smoke("ai", async (root) => {
   assert.equal(codeMode.model, "gpt-6-astra");
   assert.equal(codeMode.nativeSkill, "workbench-fixture-writing");
   assert.ok(codeMode.pdfBytes > 0);
+  assert.equal(codeMode.refreshes, 1);
   console.log(
-    "PASS: bundled gpt-6-astra Code Mode host executed real LaTeX compilation, repaired two files, and produced a PDF using local model-response fixtures.",
+    "PASS: bundled gpt-6-astra Code Mode compiled, repaired two files, renewed an expired token through Electron's Responses gateway, and produced a PDF without replaying tools.",
   );
   await page.screenshot({ path: "output/playwright/ai-sign-in.png" });
 
