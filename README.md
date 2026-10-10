@@ -52,6 +52,10 @@ Project board 按研究时间线排列阶段：Idea Exploration → Experiments 
 
 模型菜单读取该账户实时返回的可用模型。选择项目目录后，可要求 Agent 修改多个文件、运行脚本或修复 LaTeX 编译。**Current file** 和 **Selection** 附加文本快照；发送前保存当前编辑文件，运行时暂停编辑，结束后刷新文件、PDF 和 Git 状态。执行记录可展开查看命令输出及文件 diff，需要额外访问时在 AI 页审批。**Stop** 中断当前任务，已完成的文件修改会保留。
 
+每次请求结束后，**Review changes** 打开逐文件审阅窗口。**Diff** 显示增删颜色和修改前后的行号，点击行号跳回 source；**Before & after** 并排显示完整文件的预览。比较基于请求开始前的文件，包含通过命令改动的文件，并保留原有未提交编辑。停止的请求也能审阅其部分修改。
+
+点击 **Revert this run** 可一次还原该请求修改、新增或删除的文件。还原前保存当前编辑器内容，并核对所有文件；后续编辑、未结束的请求、正在执行的 Git 操作或编译会阻止还原。还原结束后刷新编辑器和文件树，历史 diff 仍可查看。备份保存在 Application Support 的 `Research Workbench/ai/changes/`，重启后仍可使用；工作区 JSON 导出不包含这些备份。旧历史没有原始文件备份，只提供只读审阅。生成目录、依赖目录和 Git 历史不纳入还原；单文件快照最多 8 MiB，每个版本最多 128 MiB，超出限制的修改会明确禁用自动还原。
+
 输入框底部使用 Codex 风格的权限和模型菜单。**Default permissions** 允许在项目目录内工作，额外访问由用户审批；**Approve for me** 保留项目目录限制，由 Codex 自动审查额外访问请求；**Read only** 用于检查文件，修改或额外访问需审批；**Full access** 允许访问本机文件和网络，无需逐次审批。模型菜单提供 **Reasoning Effort** 和 **Standard / Fast**，选项来自随应用打包的 Codex `model/list` 能力目录。推理强度支持拖动滑块、点击选项和键盘调整；重置按钮恢复模型默认值。菜单、选中标记和滑块具有过渡动画，并遵守系统减少动态效果设置。Fast 的速度和用量说明采用目录返回的文本；不支持 Fast 的模型仅显示 Standard。权限按账户和项目保存，推理强度与速度再按模型保存，重启后恢复。运行期间可以调整下一条指令的设置。
 
 Agent 运行期间，按 Enter 或点击 **Queue message** 可继续提交指令，最多等待 20 条。队列按顺序执行；每条指令保留提交时的模型、权限、推理强度、速度、附件快照和 Skills。输入框上方显示等待队列，可调整顺序、删除或 **Pause / Resume**。Pause 让当前任务继续完成；Stop 中断当前任务并暂停队列。任务失败、切换账户或关闭应用后，等待指令会保留并暂停，点击 Resume 继续。开始执行前会重新检查模型、项目目录和 Skills；不可用时暂停并显示原因。队列按账户和项目保存，New AI chat 同时清空等待指令。
@@ -89,6 +93,7 @@ npm test
 npm run build
 npm run test:e2e
 npm run test:ai-ui
+npm run test:review-ui
 ```
 
 `test:e2e` 依次运行 `test:ui`、`test:git-ui`、`test:deadlines`、`test:pdf-ui`、`test:synctex-ui` 和 `test:layout-ui`。核心测试验证数据保存、导入校验、目录边界、SSH 参数和实际 LaTeX 成功／失败编译。桌面集成测试在隔离数据目录启动 Electron，验证项目创建、任务、日期、阶段、PTY shell、PDF 响应、编译错误、文件保存及重启后的数据恢复；它们通过 `RESEARCH_MAC_DDL_DIR` 读取 `tests/fixtures/mac-ddl-count` 下的合成日期，不读取本机 `mac-ddl-count`。

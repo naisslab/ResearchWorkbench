@@ -35,7 +35,6 @@ import type {
   AIContext,
   AIConversation,
   AIMessage,
-  AIResult,
   AIState,
   AISkill,
   AISkillCatalog,
@@ -43,6 +42,8 @@ import type {
 } from "./types";
 import AIMarkdown, { CopyAction } from "./AIMarkdown";
 import AIActivityLog from "./AIActivityLog";
+import AIChangeReview from "./AIChangeReview";
+import { unwrap } from "./ai-result";
 import AISkills from "./AISkills";
 import {
   findSkillCommand,
@@ -55,11 +56,6 @@ import AIAgentControls, {
 } from "./AIAgentControls";
 import "./ai.css";
 
-async function unwrap<T>(promise: Promise<AIResult<T>>) {
-  const result = await promise;
-  if (!result.ok) throw new Error(result.error.message);
-  return result.value;
-}
 const number = (value: number) => value.toLocaleString("en-US");
 
 function Approval({
@@ -191,6 +187,7 @@ const Message = memo(function Message({
   answering,
   answer,
   openReference,
+  review,
 }: {
   message: AIMessage;
   modelLabel?: string;
@@ -201,6 +198,7 @@ const Message = memo(function Message({
     answers?: Record<string, { answers: string[] }>,
   ): void;
   openReference(reference: string): void;
+  review(messageId: string): void;
 }) {
   const changedFiles = [
     ...new Set(
@@ -275,15 +273,31 @@ const Message = memo(function Message({
           ))}
         </div>
       )}
-      {message.diff && (
-        <details className="ai-turn-diff">
-          <summary>
-            <FileText size={12} /> Review changes
-            <ChevronRight size={12} className="ai-disclosure" />
-          </summary>
-          <pre>{message.diff}</pre>
-        </details>
-      )}
+      {message.role === "assistant" &&
+        message.status !== "running" &&
+        (message.review || message.diff || changedFiles.length > 0) && (
+          <button
+            type="button"
+            className="ai-review-button"
+            onClick={() => review(message.id)}
+          >
+            <FileText size={13} />
+            Review changes
+            {message.review && !message.review.unavailable && (
+              <span>
+                {message.review.files}{" "}
+                {message.review.files === 1 ? "file" : "files"}
+              </span>
+            )}
+            {message.review?.revertedAt ? (
+              <span className="ai-reverted">
+                <Check size={12} /> Reverted
+              </span>
+            ) : (
+              <ChevronRight size={12} />
+            )}
+          </button>
+        )}
       {message.error && (
         <p className="ai-message-error" role="alert">
           {message.error.message}
@@ -347,6 +361,7 @@ export default function AIPanel({
   const [agentRoot, setAgentRoot] = useState("primary");
   const [context, setContext] = useState<AIContext>();
   const [operation, setOperation] = useState("");
+  const [reviewMessage, setReviewMessage] = useState<string>();
   const [error, setError] = useState("");
   const [popover, setPopover] = useState<"account" | "usage" | null>(null);
   const [skillsOpen, setSkillsOpen] = useState(false);
@@ -378,6 +393,7 @@ export default function AIPanel({
   const busy =
     running ||
     operation === "send" ||
+    operation === "revert" ||
     (!!queued.length && !conversation.queuePaused);
   const profile = state?.profiles.find((p) => p.id === state.activeProfileId);
   const selectedModel = state?.models.find((m) => m.slug === model);
@@ -695,6 +711,21 @@ export default function AIPanel({
     },
     [perform, project.id],
   );
+  useEffect(() => {
+    setReviewMessage(undefined);
+  }, [state?.activeProfileId]);
+  async function revert(messageId: string) {
+    // Flush the editor first so the backend guard sees unsaved user changes.
+    await prepare();
+    setOperation("revert");
+    try {
+      setConversation(
+        await unwrap(window.research!.aiRevert(project.id, messageId)),
+      );
+    } finally {
+      setOperation("");
+    }
+  }
   function accountAction(name: string, fn: () => Promise<unknown>) {
     setPopover(null);
     void perform(name, async () => {
@@ -1129,6 +1160,7 @@ export default function AIPanel({
                   answering={operation === "answer"}
                   answer={answer}
                   openReference={openReference}
+                  review={setReviewMessage}
                 />
               ))
             ) : (
@@ -1596,6 +1628,20 @@ export default function AIPanel({
           </div>
         </div>
       </form>
+      {reviewMessage && (
+        <AIChangeReview
+          key={reviewMessage}
+          projectId={project.id}
+          messageId={reviewMessage}
+          agentBusy={running || (!!queued.length && !conversation.queuePaused)}
+          onClose={() => setReviewMessage(undefined)}
+          onRevert={revert}
+          openReference={(reference) => {
+            setReviewMessage(undefined);
+            openReference(reference);
+          }}
+        />
+      )}
     </section>
   );
 }

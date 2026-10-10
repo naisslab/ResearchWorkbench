@@ -231,7 +231,11 @@ await smoke("ai", async (root) => {
 
   // Replace only this isolated process's AI handlers. Production has no fixture mode.
   // Backend tests exercise OAuth validation and the real JSON-RPC adapter separately.
-  await desktop.evaluate(async ({ ipcMain, BrowserWindow }, folder) => {
+  await desktop.evaluate(async ({ app, ipcMain, BrowserWindow }, folder) => {
+    const requireApp = process
+      .getBuiltinModule("node:module")
+      .createRequire(app.getAppPath() + "/package.json");
+    const { legacyReview } = requireApp("./electron/ai-changes.cjs");
     const { writeFile, mkdir, copyFile } =
       process.getBuiltinModule("node:fs/promises");
     const state = {
@@ -307,6 +311,18 @@ await smoke("ai", async (root) => {
     const handlers = {
       "ai:state": () => ok(state),
       "ai:conversation": () => ok(conversation),
+      "ai:review": (_, _id, messageId) =>
+        ok(
+          legacyReview(
+            conversation.messages.find((message) => message.id === messageId),
+          ).review,
+        ),
+      "ai:review-file": (_, _id, messageId, fileId) =>
+        ok(
+          legacyReview(
+            conversation.messages.find((message) => message.id === messageId),
+          ).files.find((file) => file.id === fileId),
+        ),
       "ai:models": () => ok(state),
       "ai:skills": () =>
         ok({
@@ -1156,13 +1172,20 @@ await smoke("ai", async (root) => {
   await page.locator(".ai-work-log > summary").click();
   await page.locator(".ai-activity").first().locator("summary").click();
   await page.getByText("checks passed", { exact: true }).waitFor();
-  await page.locator(".ai-turn-diff summary").click();
+  await page.locator(".ai-review-button").first().click();
+  await page.locator(".ai-saved-patch").waitFor();
   assert.match(
-    await page.locator(".ai-turn-diff pre").innerText(),
+    await page.locator(".ai-saved-patch").innerText(),
     /Revised manuscript from agent/,
   );
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Revert this run", exact: true })
+      .isDisabled(),
+    true,
+  );
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await page.locator(".ai-work-log > summary").click();
-  await page.locator(".ai-turn-diff summary").click();
   await page.getByTitle("Expand AI panel", { exact: true }).click();
   assert.equal(await page.locator(".workbench-panes").isVisible(), false);
   await page.locator(".ai-transcript").evaluate((node) => (node.scrollTop = 0));

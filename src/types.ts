@@ -178,6 +178,19 @@ export interface ResearchAPI {
     forceReload?: boolean,
   ): Promise<AIResult<AISkillCatalog>>;
   aiConversation(projectId: string): Promise<AIResult<AIConversation>>;
+  aiReview(
+    projectId: string,
+    messageId: string,
+  ): Promise<AIResult<AIChangeReview>>;
+  aiReviewFile(
+    projectId: string,
+    messageId: string,
+    fileId: string,
+  ): Promise<AIResult<AIReviewedFile>>;
+  aiRevert(
+    projectId: string,
+    messageId: string,
+  ): Promise<AIResult<AIConversation>>;
   aiSend(request: {
     projectId: string;
     message: string;
@@ -423,7 +436,34 @@ export interface AIMessage {
   activities?: AIActivity[];
   approvals?: AIApproval[];
   diff?: string;
+  review?: { files: number; revertedAt?: string; unavailable?: string };
   plan?: { step: string; status: string }[];
+}
+export interface AIChangedFile {
+  id: string;
+  path: string;
+  absolutePath?: string;
+  folder: string;
+  kind: "added" | "deleted" | "modified";
+  binary: boolean;
+  beforeBytes: number;
+  afterBytes: number;
+  beforeMode?: number;
+  afterMode?: number;
+  snapshot?: false;
+}
+export interface AIChangeReview {
+  files: AIChangedFile[];
+  canRevert: boolean;
+  reason?: string;
+  revertedAt?: string;
+  warnings: string[];
+}
+export interface AIReviewedFile extends AIChangedFile {
+  before?: string;
+  after?: string;
+  diff: string;
+  truncated?: boolean;
 }
 export interface AIActivity {
   id: string;

@@ -322,15 +322,13 @@
   display: block;
   margin-top: 4px;
 }
-.ai-activity,
-.ai-turn-diff {
+.ai-activity {
   margin-top: 7px;
   border: 1px solid var(--border);
   background: var(--surface-subtle);
   border-radius: 5px;
 }
-.ai-activity summary,
-.ai-turn-diff summary {
+.ai-activity summary {
   display: flex;
   cursor: pointer;
   align-items: center;
@@ -362,7 +360,6 @@
   overflow-wrap: anywhere;
 }
 .ai-activity pre,
-.ai-turn-diff pre,
 .ai-approval pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1443,8 +1440,7 @@
   transition: transform 120ms ease;
 }
 .ai-work-log[open] > summary .ai-disclosure,
-.ai-activity[open] > summary .ai-disclosure,
-.ai-turn-diff[open] > summary .ai-disclosure {
+.ai-activity[open] > summary .ai-disclosure {
   transform: rotate(90deg);
 }
 .ai-work-log-content {
@@ -1482,20 +1478,6 @@
 .ai-changed-files > button:hover {
   color: var(--accent);
   background: var(--selection);
-}
-.ai-turn-diff {
-  border: 0;
-  background: transparent;
-}
-.ai-turn-diff summary {
-  padding: 5px 0;
-  color: var(--text-secondary);
-  width: fit-content;
-}
-.ai-turn-diff pre {
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--surface-subtle);
 }
 .ai-jump-latest {
   position: absolute;

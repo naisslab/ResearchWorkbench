@@ -59,6 +59,141 @@ async function clientFixture(t) {
   await client.refreshModels();
   return { ...f, client, make, projectFolder, skillPath, launched, events };
 }
+test("completed agent runs expose real file versions and revert after restart without altering chat history", async (t) => {
+  const f = await clientFixture(t);
+  await f.client.send({
+    projectId: "one",
+    message: "Edit and check",
+    model: "fixture-model",
+    rootId: "primary",
+  });
+  const finished = await waitFor(async () => {
+    const value = await f.client.conversation("one");
+    return value.messages.at(-1)?.status === "completed" &&
+      !f.client.isRunning("one")
+      ? value
+      : false;
+  });
+  const message = finished.messages.at(-1);
+  assert.equal(message.review.files, 4);
+  const review = await f.client.review("one", message.id);
+  assert.equal(review.canRevert, true);
+  // Command output files are captured even without fileChange notifications.
+  assert.ok(review.files.some((file) => file.path === "received-turns.jsonl"));
+  const draft = review.files.find((file) => file.path === "draft.tex");
+  assert.equal(
+    (await f.client.reviewFile("one", message.id, draft.id)).before,
+    "Old manuscript\n",
+  );
+  await assert.rejects(f.client.review("two", message.id), {
+    code: "review_unavailable",
+  });
+  await assert.rejects(
+    f.client.reviewFile("one", message.id, "../other"),
+    /not part/,
+  );
+  await f.client.dispose();
+  const restarted = f.make();
+  f.cleanup(() => restarted.dispose());
+  const reverted = await restarted.revert("one", message.id);
+  assert.equal(reverted.messages.length, finished.messages.length);
+  assert.ok(reverted.messages.at(-1).review.revertedAt);
+  assert.equal(
+    await fs.readFile(path.join(f.projectFolder, "draft.tex"), "utf8"),
+    "Old manuscript\n",
+  );
+  await assert.rejects(fs.access(path.join(f.projectFolder, "check.cjs")), {
+    code: "ENOENT",
+  });
+  assert.equal((await restarted.review("one", message.id)).canRevert, false);
+  await restarted.refreshModels();
+  await restarted.send({
+    projectId: "one",
+    message: "Check again",
+    model: "fixture-model",
+    rootId: "primary",
+  });
+  await waitFor(
+    async () =>
+      (await restarted.conversation("one")).messages.at(-1)?.status ===
+      "completed",
+  );
+  const input = await fs.readFile(
+    path.join(f.projectFolder, "received-turns.jsonl"),
+    "utf8",
+  );
+  assert.match(input, /Earlier agent changes were reverted/);
+});
+test("revert refuses subsequent user edits, active jobs, and access from a different account", async (t) => {
+  const f = await clientFixture(t);
+  const request = {
+    projectId: "one",
+    message: "Edit",
+    model: "fixture-model",
+    rootId: "primary",
+  };
+  await f.client.send(request);
+  const finished = await waitFor(async () => {
+    const value = await f.client.conversation("one");
+    return value.messages.at(-1)?.status === "completed" &&
+      !f.client.isRunning("one")
+      ? value
+      : false;
+  });
+  const messageId = finished.messages.at(-1).id;
+  await fs.writeFile(
+    path.join(f.projectFolder, "draft.tex"),
+    "User's later edit\n",
+  );
+  await assert.rejects(f.client.revert("one", messageId), {
+    code: "revert_blocked",
+  });
+  assert.equal(
+    await fs.readFile(path.join(f.projectFolder, "draft.tex"), "utf8"),
+    "User's later edit\n",
+  );
+  await f.client.send({ ...request, message: "wait-for-stop" });
+  await assert.rejects(f.client.revert("one", messageId), {
+    code: "project_busy",
+  });
+  await assert.rejects(f.client.send({ ...request, projectId: "two" }), {
+    code: "project_busy",
+  });
+  await f.client.stop("one");
+  f.control.subject = "different-person";
+  await signIn(f.client, { newProfile: true });
+  await assert.rejects(f.client.revert("one", messageId), {
+    code: "review_unavailable",
+  });
+});
+test("stopped runs retain snapshots of partial edits and remain revertible", async (t) => {
+  const f = await clientFixture(t);
+  await f.client.send({
+    projectId: "one",
+    message: "wait-for-stop",
+    model: "fixture-model",
+    rootId: "primary",
+  });
+  await waitFor(() =>
+    fs.access(path.join(f.projectFolder, "received-turns.jsonl")).then(
+      () => true,
+      () => false,
+    ),
+  );
+  await fs.writeFile(
+    path.join(f.projectFolder, "draft.tex"),
+    "Partial command edit\n",
+  );
+  const stopped = await f.client.stop("one");
+  const message = stopped.messages.at(-1);
+  assert.equal(message.status, "cancelled");
+  assert.ok(message.review.files);
+  await f.client.revert("one", message.id);
+  assert.equal(
+    await fs.readFile(path.join(f.projectFolder, "draft.tex"), "utf8"),
+    "Old manuscript\n",
+  );
+});
 test("installed skills are discovered locally, invoked as native skill inputs, and recorded without private paths", async (t) => {
   const f = await clientFixture(t);
   const catalog = await f.client.skills("one", "primary", true);

@@ -1,6 +1,7 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { realpathSync } = require("node:fs");
 const {
   createChatGPT,
   AIError,
@@ -13,6 +14,11 @@ const {
   USAGE_URL,
 } = require("./chatgpt.cjs");
 const { createCodexAgent, codexExecutable } = require("./codex-agent.cjs");
+const {
+  createChangeStore,
+  reviewKey,
+  legacyReview,
+} = require("./ai-changes.cjs");
 
 function createAI({
   directory,
@@ -43,6 +49,42 @@ function createAI({
     mutations = new Map(),
     loads = new Map(),
     agents = new Map();
+  const changes = createChangeStore(path.join(directory, "changes"));
+  const restoring = new Map();
+  const canonicalRoot = (root) => {
+    try {
+      return realpathSync(root);
+    } catch {
+      return root;
+    }
+  };
+  const overlaps = (left, right) =>
+    left.some((a) =>
+      right.some(
+        (b) =>
+          a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep),
+      ),
+    );
+  function isRunning(projectId) {
+    const p = project(projectId);
+    const roots = [
+      p.folder,
+      ...(p.localFolders || []).map((root) => root.folder),
+    ]
+      .filter(Boolean)
+      .map(canonicalRoot);
+    return (
+      [...running.values(), ...restoring.values()].some(
+        (job) => job.projectId === projectId || overlaps(job.roots, roots),
+      ) ||
+      [...conversations.values()].some(
+        (value) =>
+          value.projectId === projectId &&
+          value.queue?.length &&
+          !value.queuePaused,
+      )
+    );
+  }
   const auth = createChatGPT({
     directory,
     encryption,
@@ -578,6 +620,15 @@ function createAI({
         "The active account changed. Submit this request again.",
       );
     const id = key(value.profileId, value.projectId);
+    if (
+      [...running.values(), ...restoring.values()].some((job) =>
+        overlaps(job.roots, projectScope.writableRoots),
+      )
+    )
+      throw new AIError(
+        "project_busy",
+        "Wait for the agent or restore in these project folders to finish.",
+      );
     const controller = new AbortController();
     if (queuedItem) {
       value.queue.shift();
@@ -585,7 +636,12 @@ function createAI({
       user.createdAt = queuedItem.createdAt;
     }
     value.agentRootId = request.rootId;
-    const job = { controller, projectId: value.projectId, done: undefined };
+    const job = {
+      controller,
+      projectId: value.projectId,
+      roots: projectScope.writableRoots,
+      done: undefined,
+    };
     running.set(id, job);
     value.messages.push(user, assistant);
     try {
@@ -717,6 +773,12 @@ function createAI({
     let lastCheckpoint = Date.now();
     let totalUsage;
     let turnFinished = false;
+    let snapshotStarted = false;
+    const snapshotId = reviewKey(
+      value.profileId,
+      value.projectId,
+      assistant.id,
+    );
     function updated() {
       publishConversation(value);
       if (Date.now() - lastCheckpoint > 1000) {
@@ -818,6 +880,16 @@ function createAI({
     }
     try {
       signal.throwIfAborted();
+      try {
+        await changes.begin(snapshotId, projectScope.writableRoots);
+      } catch {
+        throw new AIError(
+          "snapshot_storage_error",
+          "Project files could not be saved for review. No agent changes were made. Check available disk space and file access.",
+        );
+      }
+      snapshotStarted = true;
+      signal.throwIfAborted();
       const token = await auth.accessToken(value.profileId);
       signal.throwIfAborted();
       let entry = agents.get(id);
@@ -842,7 +914,10 @@ function createAI({
         reasoningEffort: assistant.reasoningEffort,
         serviceTier: assistant.serviceTier,
         ...projectScope,
-        text: value.messages.at(-2).inputText,
+        text:
+          (value.messages.some((message) => message.review?.revertedAt)
+            ? "Earlier agent changes were reverted. Read the current project files before editing.\n\n"
+            : "") + value.messages.at(-2).inputText,
         skills: value.messages.at(-2).skills || [],
         signal,
         onThread: async (threadId) => {
@@ -892,6 +967,17 @@ function createAI({
         : publicError(error);
     } finally {
       assistant.approvals = [];
+      if (snapshotStarted) {
+        try {
+          assistant.review = await changes.finish(snapshotId);
+        } catch {
+          assistant.review = {
+            files: 0,
+            unavailable:
+              "The final file versions could not be saved. This run cannot be reverted automatically.",
+          };
+        }
+      }
       if (turnFinished) {
         try {
           await loadUsage();
@@ -966,16 +1052,112 @@ function createAI({
     publishConversation(value);
     return publicConversation(value);
   }
+  async function reviewTarget(projectId, messageId) {
+    const value = await conversation(projectId);
+    const message = value.messages.find(
+      (item) => item.id === messageId && item.role === "assistant",
+    );
+    if (!message)
+      throw new AIError(
+        "review_unavailable",
+        "This agent run is no longer in the current chat.",
+      );
+    if (message.status === "running")
+      throw new AIError(
+        "project_busy",
+        "Wait for the agent to finish or stop it before reviewing changes.",
+      );
+    const p = project(projectId);
+    const roots = [
+      p.folder,
+      ...(p.localFolders || []).map((root) => root.folder),
+    ].filter(Boolean);
+    return {
+      value,
+      message,
+      roots,
+      id: reviewKey(value.profileId, projectId, messageId),
+    };
+  }
+  async function review(projectId, messageId) {
+    const target = await reviewTarget(projectId, messageId);
+    if (!target.message.review || target.message.review.unavailable)
+      return legacyReview(target.message).review;
+    const result = await changes.review(target.id, target.roots);
+    if (isRunning(projectId)) {
+      result.canRevert = false;
+      result.reason =
+        "Stop the agent and pause its queue before reverting changes.";
+    }
+    return result;
+  }
+  async function reviewFile(projectId, messageId, fileId) {
+    const target = await reviewTarget(projectId, messageId);
+    if (!target.message.review || target.message.review.unavailable) {
+      const file = legacyReview(target.message).files.find(
+        (item) => item.id === fileId,
+      );
+      if (!file)
+        throw new AIError(
+          "review_unavailable",
+          "This file is not part of the selected run.",
+        );
+      return file;
+    }
+    return changes.file(target.id, fileId);
+  }
+  async function revert(projectId, messageId) {
+    const { activeProfileId } = await auth.getSession();
+    return mutate(key(activeProfileId, projectId), async () => {
+      if (
+        disposed ||
+        accountChanges ||
+        (await auth.getSession()).activeProfileId !== activeProfileId
+      )
+        throw new AIError(
+          "account_changed",
+          "The active account changed. Open Review changes again.",
+        );
+      const target = await reviewTarget(projectId, messageId);
+      if (isRunning(projectId))
+        throw new AIError(
+          "project_busy",
+          "Stop the agent and pause its queue before reverting changes.",
+        );
+      if (!target.message.review || target.message.review.unavailable)
+        throw new AIError(
+          "revert_unavailable",
+          "This run has no saved file versions and cannot be reverted automatically.",
+        );
+      const lockId = key(activeProfileId, projectId);
+      restoring.set(lockId, {
+        projectId,
+        roots: target.roots.map(canonicalRoot),
+      });
+      try {
+        const projectScope = await scope(
+          projectId,
+          target.value.agentRootId || "primary",
+        );
+        const result = await changes.revert(
+          target.id,
+          projectScope.writableRoots,
+        );
+        target.message.review.revertedAt = result.revertedAt;
+        await saveConversation(target.value);
+        publishConversation(target.value);
+        return publicConversation(target.value);
+      } finally {
+        restoring.delete(lockId);
+      }
+    });
+  }
   return {
     getState,
-    isRunning: (projectId) =>
-      [...running.values()].some((job) => job.projectId === projectId) ||
-      [...conversations.values()].some(
-        (value) =>
-          value.projectId === projectId &&
-          value.queue?.length &&
-          !value.queuePaused,
-      ),
+    isRunning,
+    review,
+    reviewFile,
+    revert,
     refreshModels,
     skills: async (projectId, rootId, forceReload) =>
       publicSkills(await availableSkills(projectId, rootId, forceReload)),

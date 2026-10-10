@@ -344,6 +344,10 @@ app
       handle(`git:${operation}`, async (id, rootId, argument, files) => {
         const folder = core.fileRoot(project(id), rootId);
         const key = await git.toplevel(folder);
+        if (ai?.isRunning(id))
+          throw new Error(
+            "Wait for the project agent or restore to finish before changing Git files.",
+          );
         if (gitOperations.has(key))
           throw new Error(
             "A Git operation is already running for this repository.",
@@ -710,6 +714,11 @@ app
             "project_build_running",
             "Wait for the current LaTeX build to finish before starting the agent.",
           );
+        if (gitOperations.size)
+          throw new AIError(
+            "project_git_running",
+            "Wait for the current Git operation to finish before starting the agent or restoring files.",
+          );
         const p = project(id);
         const folder = core.fileRoot(p, rootId);
         if (!folder)
@@ -767,6 +776,10 @@ app
       "ai:skills": (id, rootId, forceReload) =>
         ai.skills(id, rootId, forceReload),
       "ai:conversation": (id) => ai.conversation(id),
+      "ai:review": (id, messageId) => ai.review(id, messageId),
+      "ai:review-file": (id, messageId, fileId) =>
+        ai.reviewFile(id, messageId, fileId),
+      "ai:revert": (id, messageId) => ai.revert(id, messageId),
       "ai:send": (request) => ai.send(request),
       "ai:queue": (request) => ai.queue(request),
       "ai:stop": (id) => ai.stop(id),

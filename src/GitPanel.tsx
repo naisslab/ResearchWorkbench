@@ -15,6 +15,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import Modal from "./Modal";
+import { diffRows } from "./diff";
 import { monthDay, timeLabel } from "./dates";
 import { plural } from "./components/ui";
 import type { GitDiff, GitStatus, ProjectFileRoot } from "./types";
@@ -43,27 +44,6 @@ function githubLink(remote: string) {
     /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/,
   );
   return match ? `https://github.com/${match[1]}` : "";
-}
-type DiffRow = { line: string; kind?: string; left?: number; right?: number };
-// Drops the patch header and numbers each row with its old (left) and new
-// (right) file line, counted from the @@ hunk headers.
-function diffRows(text: string) {
-  const lines = text.split("\n");
-  const start = lines.findIndex((line) => line.startsWith("@@"));
-  if (start < 0) return null;
-  let left = 0,
-    right = 0;
-  return lines.slice(start).map((line): DiffRow => {
-    if (line.startsWith("@@")) {
-      const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(line);
-      [left, right] = hunk ? [+hunk[1], +hunk[2]] : [0, 1];
-      return { line, kind: "hunk" };
-    }
-    if (line.startsWith("+")) return { line, kind: "addition", right: right++ };
-    if (line.startsWith("-")) return { line, kind: "deletion", left: left++ };
-    if (line.startsWith("\\")) return { line };
-    return { line, left: left++, right: right++ };
-  });
 }
 export default memo(function GitPanel({
   projectId,
