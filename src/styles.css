@@ -1656,8 +1656,11 @@ button.stat-card:hover {
 }
 
 /* Settings */
+.page-content.settings-page {
+  max-width: 918px;
+}
 .settings-layout {
-  max-width: 870px;
+  width: 100%;
 }
 .appearance-options {
   display: flex;

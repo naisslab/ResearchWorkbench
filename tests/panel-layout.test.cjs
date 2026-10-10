@@ -6,6 +6,7 @@ const {
   fitWorkbench,
   fitBottomPanel,
   fitAgentColumns,
+  fitThreeColumns,
 } = require("../src/panel-layout.ts");
 test("panel preferences recover from corrupt or older storage and reject invalid values", () => {
   assert.deepEqual(parsePanelLayout("broken"), defaultPanelLayout);
@@ -98,7 +99,7 @@ test("work modes migrate to PDF + Agent and column widths fit the workspace", ()
     parsePanelLayout(JSON.stringify({ workMode: "invalid" })).workMode,
     "agent",
   );
-  for (const workMode of ["agent", "edit", "combined"]) {
+  for (const workMode of ["agent", "edit", "combined", "columns"]) {
     const saved = parsePanelLayout(
       JSON.stringify({ workMode, agentWidth: 500 }),
     );
@@ -112,4 +113,53 @@ test("work modes migrate to PDF + Agent and column widths fit the workspace", ()
       assert.ok(width - result.width - 4 >= 320);
     }
   }
+});
+
+test("three columns fit large screens, retain readable widths on small screens and reclaim hidden panels", () => {
+  const preferred = parsePanelLayout(
+    JSON.stringify({
+      workMode: "columns",
+      files: 260,
+      sourceWidth: 640,
+      columnsAgentWidth: 520,
+    }),
+  );
+  assert.equal(preferred.sourceWidth, 640);
+  assert.equal(preferred.columnsAgentWidth, 520);
+  const large = fitThreeColumns(2200, preferred, true, true);
+  assert.equal(large.source, 640);
+  assert.equal(large.agent, 520);
+  for (const width of [700, 1050, 1250, 1900, 2800]) {
+    for (const showPdf of [true, false]) {
+      for (const showTools of [true, false]) {
+        const panes = fitThreeColumns(width, preferred, showPdf, showTools);
+        assert.ok(panes.files >= 140 && panes.files <= 420);
+        assert.ok(panes.source >= 240);
+        assert.ok(showPdf ? panes.pdf >= 260 : panes.pdf === 0);
+        assert.ok(showTools ? panes.agent >= 360 : panes.agent === 0);
+        const separators =
+          4 + (showPdf || showTools ? 4 : 0) + (showPdf && showTools ? 4 : 0);
+        const minimum =
+          140 + 240 + (showPdf ? 260 : 0) + (showTools ? 360 : 0) + separators;
+        assert.ok(
+          Math.abs(
+            panes.files +
+              panes.source +
+              panes.agent +
+              panes.pdf +
+              separators -
+              Math.max(width, minimum),
+          ) < 0.01,
+        );
+      }
+    }
+  }
+  const defaults = fitThreeColumns(2000, defaultPanelLayout, true, true);
+  assert.ok(Math.abs(defaults.source - defaults.agent) < 1);
+  assert.ok(Math.abs(defaults.source - defaults.pdf) < 1);
+  const invalid = parsePanelLayout(
+    JSON.stringify({ sourceWidth: -20, columnsAgentWidth: 9999 }),
+  );
+  assert.equal(invalid.sourceWidth, 240);
+  assert.equal(invalid.columnsAgentWidth, 1600);
 });

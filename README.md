@@ -46,7 +46,7 @@ npm run package
 
 ## ChatGPT Agent
 
-工作台默认进入 **Agent + PDF**：左侧使用完整高度的 Agent，右侧阅读 PDF。顶部可切换 **Source + PDF** 手动编辑，或 **All panels** 同时显示源码、PDF 和底部工具。切换保留对话草稿、编辑内容与 PDF 阅读位置；点击 Agent 中的源码链接会自动显示编辑器。模式与分栏宽度会记住，拖动 PDF 与 Agent 之间的分隔线可调整比例。**AI** 与 **Terminal**、**Build log** 共用工具栏。点击 **Continue with ChatGPT**，在系统浏览器登录并允许应用使用 ChatGPT plan。应用使用 [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source/) 和 [Codex app-server](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server) 执行本地 Agent 任务；Codex runtime 与 Code Mode host 随应用打包。`gpt-6-astra` 等模型通过 Code Mode host 调用本地文件与执行工具。
+工作台默认进入 **Agent + PDF**：左侧使用完整高度的 Agent，右侧阅读 PDF。顶部可切换 **Source + PDF** 手动编辑，或 **Source + Agent + PDF** 从左到右以完整高度并排显示源码、Agent 和 PDF，文件树保留在源码旁。三栏宽度在重启后保留；拖动竖直分隔线调整，双击恢复默认。窗口较窄时可水平滚动查看各栏。**All panels** 保留源码与 PDF 在上、工具在下的布局。切换保留对话草稿、编辑内容与 PDF 阅读位置；点击 Agent 中的源码链接会自动显示编辑器。模式与分栏宽度会记住，拖动 PDF 与 Agent 之间的分隔线可调整比例。**AI** 与 **Terminal**、**Build log** 共用工具栏。点击 **Continue with ChatGPT**，在系统浏览器登录并允许应用使用 ChatGPT plan。应用使用 [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source/) 和 [Codex app-server](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server) 执行本地 Agent 任务；Codex runtime 与 Code Mode host 随应用打包。`gpt-6-astra` 等模型通过 Code Mode host 调用本地文件与执行工具。
 
 模型菜单读取该账户实时返回的可用模型。选择项目目录后，可要求 Agent 修改多个文件、运行脚本或修复 LaTeX 编译。**Current file** 和 **Selection** 附加文本快照；发送前保存当前编辑文件，运行时暂停编辑，结束后刷新文件、PDF 和 Git 状态。执行记录可展开查看命令输出及文件 diff，需要额外访问时在 AI 页审批。**Stop** 中断当前任务，已完成的文件修改会保留。
 
@@ -85,9 +85,11 @@ npm run test:e2e
 npm run test:ai-ui
 ```
 
-`test:e2e` 依次运行 `test:ui`、`test:git-ui`、`test:deadlines` 和 `test:pdf-ui`。核心测试验证数据保存、导入校验、目录边界、SSH 参数和实际 LaTeX 成功／失败编译。桌面集成测试在隔离数据目录启动 Electron，验证项目创建、任务、日期、阶段、PTY shell、PDF 响应、编译错误、文件保存及重启后的数据恢复；它们通过 `RESEARCH_MAC_DDL_DIR` 读取 `tests/fixtures/mac-ddl-count` 下的合成日期，不读取本机 `mac-ddl-count`。
+`test:e2e` 依次运行 `test:ui`、`test:git-ui`、`test:deadlines`、`test:pdf-ui` 和 `test:layout-ui`。核心测试验证数据保存、导入校验、目录边界、SSH 参数和实际 LaTeX 成功／失败编译。桌面集成测试在隔离数据目录启动 Electron，验证项目创建、任务、日期、阶段、PTY shell、PDF 响应、编译错误、文件保存及重启后的数据恢复；它们通过 `RESEARCH_MAC_DDL_DIR` 读取 `tests/fixtures/mac-ddl-count` 下的合成日期，不读取本机 `mac-ddl-count`。
 
 AI 测试验证签名身份、PKCE 回调、加密凭据、刷新令牌恢复、账户隔离、Agent JSON-RPC、真实样例文件修改、脚本执行和审批。AI 界面测试使用隔离的模拟账户，不调用真实模型或消耗订阅；真实登录需在系统浏览器完成。
+
+`test:layout-ui` 验证 Settings 居中、三栏排列、拖动调宽、模式切换时的内容保留、面板展开与收起、窄窗口滚动和重启后的布局恢复。
 
 截图存于 `output/playwright/`。桌面集成测试需要可启动 GUI 的 macOS 会话以及 LaTeX 环境。
 

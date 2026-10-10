@@ -741,31 +741,120 @@
 .mode-agent.agent-hidden > .bottom-tabs {
   grid-area: 3 / 1 / 4 / 2;
 }
-.mode-agent:not(.ai-focused) .ai-toolbar {
+:is(.mode-agent, .mode-columns):not(.ai-focused) .ai-toolbar {
   flex-wrap: wrap;
   padding: 6px 10px;
   gap: 4px;
 }
-.mode-agent:not(.ai-focused) .ai-agent-label > span,
-.mode-agent:not(.ai-focused) .ai-account-button span {
+:is(.mode-agent, .mode-columns):not(.ai-focused) .ai-agent-label > span,
+:is(.mode-agent, .mode-columns):not(.ai-focused) .ai-account-button span {
   display: none;
 }
-.mode-agent:not(.ai-focused) .ai-toolbar select {
+:is(.mode-agent, .mode-columns):not(.ai-focused) .ai-toolbar select {
   max-width: 140px;
 }
-.mode-agent:not(.ai-focused) .ai-toolbar-button {
+:is(.mode-agent, .mode-columns):not(.ai-focused) .ai-toolbar-button {
   padding: 4px;
 }
-.mode-agent:not(.ai-focused) .ai-transcript {
+:is(.mode-agent, .mode-columns):not(.ai-focused) .ai-transcript {
   padding: 18px 18px 12px;
 }
-.mode-agent:not(.ai-focused) .ai-composer {
+:is(.mode-agent, .mode-columns):not(.ai-focused) .ai-composer {
   padding: 8px 12px;
 }
-.mode-agent:not(.ai-focused) .ai-empty {
+:is(.mode-agent, .mode-columns):not(.ai-focused) .ai-empty {
   flex-direction: column;
   align-items: flex-start;
   padding: 24px 4px;
+}
+
+/* The existing source, PDF and tool nodes stay mounted while CSS places them
+   into full-height columns. The file tree remains beside the source editor. */
+.workbench.mode-columns {
+  display: grid;
+  grid-template-rows: 40px 32px minmax(0, 1fr);
+  min-width: 0;
+  overflow: auto;
+}
+.mode-columns > .workbench-header {
+  grid-area: 1 / 1 / 2 / -1;
+}
+.mode-columns > .workbench-panes {
+  display: contents;
+}
+.mode-columns
+  > .workbench-panes
+  > :is(.file-sidebar, .editor-pane, .pdf-pane, .panel-divider) {
+  grid-row: 2 / 4;
+  min-height: 0;
+}
+.mode-columns > .workbench-panes > .file-sidebar {
+  grid-column: 1;
+}
+.mode-columns > .workbench-panes > [aria-label="Resize project files"] {
+  grid-column: 2;
+}
+.mode-columns > .workbench-panes > .editor-pane {
+  grid-column: 3;
+}
+.mode-columns > .workbench-panes > [aria-label="Resize source column"] {
+  grid-column: 4;
+}
+.mode-columns > .workbench-panes > .pdf-pane {
+  grid-column: 7;
+}
+.mode-columns > .three-column-divider {
+  grid-area: 2 / 6 / 4 / 7;
+}
+.mode-columns > .bottom-tabs {
+  grid-area: 2 / 5 / 3 / 6;
+  gap: 8px;
+  padding: 0 8px;
+  min-width: 0;
+  overflow-x: auto;
+}
+.mode-columns > .bottom-tabs > button {
+  flex-shrink: 0;
+  gap: 4px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.mode-columns > .bottom-tabs > .hide-panel {
+  margin-left: 0;
+}
+.mode-columns > .bottom-panel {
+  grid-area: 3 / 5 / 4 / 6;
+  min-height: 0;
+  min-width: 0;
+}
+.workbench.mode-columns:is(.ai-focused, .pdf-focused) {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+.mode-columns.ai-focused > .bottom-tabs {
+  grid-area: 2 / 1 / 3 / 2;
+}
+.mode-columns.ai-focused > .bottom-panel {
+  grid-area: 3 / 1 / 4 / 2;
+}
+.workbench.mode-columns.pdf-focused {
+  grid-template-rows: 40px minmax(0, 1fr);
+}
+.mode-columns.pdf-focused > .workbench-panes > .pdf-pane {
+  grid-area: 2 / 1 / 3 / 2;
+}
+.mode-columns.pdf-focused > :is(.bottom-tabs, .bottom-panel) {
+  display: none;
+}
+.workbench.mode-columns.tools-hidden {
+  grid-template-rows: 40px minmax(0, 1fr) 32px;
+}
+.mode-columns.tools-hidden
+  > .workbench-panes
+  > :is(.file-sidebar, .editor-pane, .pdf-pane, .panel-divider) {
+  grid-row: 2 / 3;
+}
+.mode-columns.tools-hidden > .bottom-tabs {
+  grid-area: 3 / 1 / 4 / -1;
 }
 @media (max-width: 1300px) {
   .workbench-header {

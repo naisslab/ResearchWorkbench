@@ -4,8 +4,10 @@ export interface PanelLayout {
   editorFraction: number;
   terminal: number;
   ai: number;
-  workMode: "agent" | "edit" | "combined";
+  workMode: "agent" | "edit" | "combined" | "columns";
   agentWidth: number;
+  sourceWidth: number;
+  columnsAgentWidth: number;
   sidebarCollapsed: boolean;
   bottomOpen: boolean;
   bottomTab: string;
@@ -18,6 +20,8 @@ export const defaultPanelLayout: PanelLayout = {
   ai: 0,
   workMode: "agent",
   agentWidth: 0,
+  sourceWidth: 0,
+  columnsAgentWidth: 0,
   sidebarCollapsed: false,
   bottomOpen: true,
   bottomTab: "ai",
@@ -48,10 +52,59 @@ export function parsePanelLayout(value: string | null): PanelLayout {
     editorFraction: clamp(next.editorFraction, 0.01, 0.99),
     terminal: clamp(next.terminal, 120, 600),
     ai: next.ai === 0 ? 0 : clamp(next.ai, 340, 1200),
-    workMode: ["agent", "edit", "combined"].includes(next.workMode)
+    workMode: ["agent", "edit", "combined", "columns"].includes(next.workMode)
       ? next.workMode
       : "agent",
     agentWidth: next.agentWidth === 0 ? 0 : clamp(next.agentWidth, 360, 900),
+    sourceWidth:
+      next.sourceWidth === 0 ? 0 : clamp(next.sourceWidth, 240, 2400),
+    columnsAgentWidth:
+      next.columnsAgentWidth === 0
+        ? 0
+        : clamp(next.columnsAgentWidth, 360, 1600),
+  };
+}
+// Keep each column readable. Compact windows can scroll horizontally while
+// retaining all three panels and the user's preferred sizes for a larger screen.
+export function fitThreeColumns(
+  width: number,
+  layout: PanelLayout,
+  showPdf: boolean,
+  showTools: boolean,
+) {
+  const separators =
+    4 + (showPdf || showTools ? 4 : 0) + (showPdf && showTools ? 4 : 0);
+  const minAgent = showTools ? 360 : 0;
+  const minPdf = showPdf ? 260 : 0;
+  const fittedWidth = Math.max(
+    width,
+    140 + 240 + minAgent + minPdf + separators,
+  );
+  const maxFiles = Math.min(
+    420,
+    fittedWidth - 240 - minAgent - minPdf - separators,
+  );
+  const files = clamp(layout.files, 140, maxFiles);
+  const available = fittedWidth - files - separators;
+  const initial = available / (1 + Number(showPdf) + Number(showTools));
+  const source =
+    showPdf || showTools
+      ? clamp(layout.sourceWidth || initial, 240, available - minAgent - minPdf)
+      : available;
+  const maxAgent = Math.min(1600, available - source - minPdf);
+  const agent = showTools
+    ? showPdf
+      ? clamp(layout.columnsAgentWidth || initial, 360, maxAgent)
+      : available - source
+    : 0;
+  return {
+    files,
+    source,
+    agent,
+    pdf: showPdf ? available - source - agent : 0,
+    maxFiles,
+    maxSource: Math.min(2400, available - agent - minPdf),
+    maxAgent,
   };
 }
 export function fitAgentColumns(width: number, preferred: number) {

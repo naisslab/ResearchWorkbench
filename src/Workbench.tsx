@@ -55,6 +55,7 @@ import {
   fitWorkbench,
   fitBottomPanel,
   fitAgentColumns,
+  fitThreeColumns,
   type PanelLayout,
 } from "./panel-layout";
 import { usePanelSize } from "./usePanelLayout";
@@ -197,6 +198,8 @@ function Workbench({
   >();
   const [showPdf, setShowPdf] = useState(true);
   const agentMode = layout.workMode === "agent";
+  const columnsMode = layout.workMode === "columns";
+  const sideTools = agentMode || columnsMode;
   const showTerminal = layout.bottomOpen;
   const bottomTab = layout.bottomTab as BottomTab;
   const showTab = (tab: BottomTab) =>
@@ -237,7 +240,19 @@ function Workbench({
   const mtime = useRef(0);
   const pdfOnly = agentMode || (expandedPdf && showPdf);
   const agentColumns = fitAgentColumns(workbenchSize.width, layout.agentWidth);
-  const fitted = fitWorkbench(panesSize.width, layout, showPdf);
+  const columns = fitThreeColumns(
+    workbenchSize.width,
+    layout,
+    showPdf,
+    showTerminal,
+  );
+  const fitted = columnsMode
+    ? {
+        ...columns,
+        editor: columns.source,
+        available: columns.source + columns.pdf,
+      }
+    : fitWorkbench(panesSize.width, layout, showPdf);
   const bottomPanel = fitBottomPanel(workbenchSize.height, layout);
   const bottomSizeKey = bottomTab === "ai" ? "ai" : "terminal";
   const dirty = text !== savedText;
@@ -599,7 +614,7 @@ function Workbench({
     setBusy(true);
     setLog("");
     setBuildState("idle");
-    if (showTerminal && !agentMode && !fromSave)
+    if (showTerminal && !sideTools && !fromSave)
       changeLayout({ bottomTab: "build" });
     try {
       if (dirty) await save();
@@ -741,14 +756,18 @@ function Workbench({
   );
   return (
     <div
-      className={`workbench mode-${layout.workMode} ${aiFocused ? "ai-focused" : ""} ${agentMode && expandedPdf ? "pdf-focused" : ""} ${agentMode && !showTerminal ? "agent-hidden" : ""}`}
+      className={`workbench mode-${layout.workMode} ${aiFocused ? "ai-focused" : ""} ${sideTools && expandedPdf && showPdf ? "pdf-focused" : ""} ${agentMode && !showTerminal ? "agent-hidden" : ""} ${columnsMode && !showTerminal ? "tools-hidden" : ""}`}
       ref={workbenchRef}
       style={
         agentMode
           ? {
               gridTemplateColumns: `${agentColumns.width}px 4px minmax(0, 1fr)`,
             }
-          : undefined
+          : columnsMode
+            ? {
+                gridTemplateColumns: `${columns.files}px 4px ${columns.source}px ${showTerminal || showPdf ? 4 : 0}px ${columns.agent}px ${showTerminal && showPdf ? 4 : 0}px ${columns.pdf}px`,
+              }
+            : undefined
       }
     >
       <div className="workbench-header">
@@ -778,8 +797,17 @@ function Workbench({
           </button>
           <button
             type="button"
+            aria-pressed={columnsMode}
+            title="Source, agent, and PDF in full-height columns"
+            onClick={() => switchMode("columns")}
+          >
+            <PanelsTopLeft size={13} />
+            Source + Agent + PDF
+          </button>
+          <button
+            type="button"
             aria-pressed={layout.workMode === "combined"}
-            title="Source, PDF, and agent together"
+            title="Source and PDF above the agent and tools"
             onClick={() => switchMode("combined")}
           >
             <PanelsTopLeft size={13} />
@@ -801,6 +829,8 @@ function Workbench({
                 terminal,
                 ai,
                 agentWidth: 0,
+                sourceWidth: 0,
+                columnsAgentWidth: 0,
               });
               setShowPdf(true);
               setExpandedPdf(false);
@@ -820,7 +850,11 @@ function Workbench({
           {!agentMode && (
             <button
               className="button small"
-              onClick={() => setShowPdf((x) => !x)}
+              aria-pressed={showPdf}
+              onClick={() => {
+                setShowPdf((x) => !x);
+                setExpandedPdf(false);
+              }}
             >
               {showPdf ? (
                 <PanelRightClose size={15} />
@@ -1020,7 +1054,17 @@ function Workbench({
             </span>
           </div>
         </section>
-        {showPdf && !pdfOnly && (
+        {columnsMode && !pdfOnly && (showTerminal || showPdf) && (
+          <PanelDivider
+            label="Resize source column"
+            value={columns.source}
+            min={240}
+            max={columns.maxSource}
+            change={(sourceWidth) => changeLayout({ sourceWidth })}
+            reset={() => changeLayout({ sourceWidth: 0 })}
+          />
+        )}
+        {showPdf && !pdfOnly && !columnsMode && (
           <PanelDivider
             label="Resize editor and PDF"
             value={fitted.editor}
@@ -1077,19 +1121,31 @@ function Workbench({
           </section>
         )}
       </div>
-      {agentMode && showTerminal && !aiFocused && !expandedPdf && (
-        <div className="agent-column-divider">
+      {sideTools && showTerminal && showPdf && !aiFocused && !expandedPdf && (
+        <div
+          className={`agent-column-divider ${columnsMode ? "three-column-divider" : ""}`}
+        >
           <PanelDivider
             label="Resize agent and PDF"
-            value={agentColumns.width}
+            value={columnsMode ? columns.agent : agentColumns.width}
             min={360}
-            max={agentColumns.max}
-            change={(agentWidth) => changeLayout({ agentWidth })}
-            reset={() => changeLayout({ agentWidth: 0 })}
+            max={columnsMode ? columns.maxAgent : agentColumns.max}
+            change={(width) =>
+              changeLayout(
+                columnsMode
+                  ? { columnsAgentWidth: width }
+                  : { agentWidth: width },
+              )
+            }
+            reset={() =>
+              changeLayout(
+                columnsMode ? { columnsAgentWidth: 0 } : { agentWidth: 0 },
+              )
+            }
           />
         </div>
       )}
-      {showTerminal && !aiFocused && !agentMode && (
+      {showTerminal && !aiFocused && !sideTools && (
         <PanelDivider
           label={
             bottomTab === "ai" ? "Resize AI panel" : "Resize terminal panel"
@@ -1172,7 +1228,7 @@ function Workbench({
         className="bottom-panel"
         hidden={!showTerminal}
         style={{
-          height: aiFocused || agentMode ? undefined : bottomPanel.height,
+          height: aiFocused || sideTools ? undefined : bottomPanel.height,
         }}
       >
         <div className="bottom-tab-content" hidden={bottomTab !== "terminal"}>
@@ -1194,7 +1250,9 @@ function Workbench({
             onFilesChanged={refreshAfterAgent}
             onOpenReference={openReference}
             visible={
-              showTerminal && bottomTab === "ai" && !(agentMode && expandedPdf)
+              showTerminal &&
+              bottomTab === "ai" &&
+              !(sideTools && expandedPdf && showPdf)
             }
           />
         </div>

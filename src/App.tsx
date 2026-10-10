@@ -437,7 +437,9 @@ export default function App() {
           </DarkContext.Provider>
         ) : (
           <div className="page-scroll" key={`${view}:${selected}`}>
-            <div className="page-content">
+            <div
+              className={`page-content ${view === "settings" ? "settings-page" : ""}`}
+            >
               <div className="page-heading">
                 <div>
                   <h1>{title}</h1>
