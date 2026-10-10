@@ -34,10 +34,14 @@ function createAI({
   let loadedUsage;
   let usageQueue = Promise.resolve();
   let accountQueue = Promise.resolve();
+  let accountChanges = 0;
   let skillAgent;
+  let disposed = false;
   const conversations = new Map(),
     running = new Map(),
     writes = new Map(),
+    mutations = new Map(),
+    loads = new Map(),
     agents = new Map();
   const auth = createChatGPT({
     directory,
@@ -109,10 +113,32 @@ function createAI({
     emit("state", await getState());
   }
   function queuedAccount(operation) {
-    accountQueue = accountQueue.catch(() => {}).then(operation);
+    accountChanges++;
+    accountQueue = accountQueue
+      .catch(() => {})
+      .then(operation)
+      .finally(() => {
+        accountChanges--;
+      });
     return accountQueue;
   }
+  function mutate(id, operation) {
+    const next = (mutations.get(id) || Promise.resolve())
+      .catch(() => {})
+      .then(operation);
+    mutations.set(id, next);
+    return next;
+  }
   async function stopAll() {
+    await Promise.all(
+      [...conversations.entries()].map(([id, value]) =>
+        mutate(id, async () => {
+          value.queuePaused = true;
+          await saveConversation(value);
+          publishConversation(value);
+        }),
+      ),
+    );
     await Promise.all(
       [...running.values()].map(async (job) => {
         job.controller.abort();
@@ -129,14 +155,7 @@ function createAI({
   async function availableSkills(projectId, rootId, forceReload = false) {
     project(projectId);
     const { cwd } = await scope(projectId, rootId);
-    if (!skillAgent || skillAgent.isClosed())
-      skillAgent = agentFactory({
-        accessToken: "",
-        home: path.join(directory, "codex", "skill-catalog"),
-        environment,
-        skillRoots,
-      });
-    const result = await skillAgent.listSkills(cwd, forceReload);
+    const result = await catalogAgent().listSkills(cwd, forceReload);
     const entry = result.data?.find((entry) => entry.cwd === cwd);
     return {
       skills: (entry?.skills || []).map((skill) => ({
@@ -146,6 +165,16 @@ function createAI({
       })),
       errors: entry?.errors || [],
     };
+  }
+  function catalogAgent() {
+    if (!skillAgent || skillAgent.isClosed())
+      skillAgent = agentFactory({
+        accessToken: "",
+        home: path.join(directory, "codex", "skill-catalog"),
+        environment,
+        skillRoots,
+      });
+    return skillAgent;
   }
   const publicSkills = ({ skills, errors }) => ({
     skills: skills.map(
@@ -184,6 +213,11 @@ function createAI({
           "ChatGPT returned an unexpected model catalog. Refresh models to try again.",
         );
       const next = [];
+      // The authenticated listing controls which models appear. The bundled
+      // runtime supplies their supported effort and service-tier options.
+      const catalog = await catalogAgent()
+        .listModels()
+        .catch(() => []);
       for (const model of body.models) {
         if (model?.visibility !== "list") continue;
         if (
@@ -198,7 +232,15 @@ function createAI({
             "invalid_model_catalog",
             "ChatGPT returned an incomplete model listing. Try again.",
           );
-        next.push({ slug: model.slug, displayName: model.display_name });
+        const capabilities = catalog.find((m) => m.model === model.slug);
+        next.push({
+          slug: model.slug,
+          displayName: model.display_name,
+          supportedReasoningEfforts:
+            capabilities?.supportedReasoningEfforts || [],
+          defaultReasoningEffort: capabilities?.defaultReasoningEffort,
+          serviceTiers: capabilities?.serviceTiers || [],
+        });
       }
       if ((await auth.getSession()).activeProfileId !== profileId)
         return getState();
@@ -221,47 +263,57 @@ function createAI({
     const { activeProfileId } = await auth.getSession();
     if (!activeProfileId) return { projectId, profileId: null, messages: [] };
     const id = key(activeProfileId, projectId);
-    if (!conversations.has(id)) {
-      let value = { projectId, profileId: activeProfileId, messages: [] };
-      try {
-        const data = JSON.parse(
-          await fs.readFile(
-            path.join(directory, "conversations", `${id}.json`),
-            "utf8",
-          ),
-        );
-        if (
-          !Array.isArray(data.messages) ||
-          data.projectId !== projectId ||
-          data.profileId !== activeProfileId
-        )
-          throw new Error("Invalid history");
-        value = data;
-        for (const m of value.messages)
-          if (m.status === "running") {
-            m.status = "interrupted";
-            m.approvals = [];
-            m.error = {
-              code: "app_closed",
-              message:
-                "Generation stopped when the app closed. Partial text was preserved.",
-            };
+    if (!conversations.has(id) && !loads.has(id))
+      loads.set(
+        id,
+        (async () => {
+          let value = { projectId, profileId: activeProfileId, messages: [] };
+          try {
+            const data = JSON.parse(
+              await fs.readFile(
+                path.join(directory, "conversations", `${id}.json`),
+                "utf8",
+              ),
+            );
+            if (
+              !Array.isArray(data.messages) ||
+              data.projectId !== projectId ||
+              data.profileId !== activeProfileId
+            )
+              throw new Error("Invalid history");
+            value = data;
+            value.queue ||= [];
+            if (!Array.isArray(value.queue)) throw new Error("Invalid queue");
+            // Restored requests wait for an explicit resume after restart.
+            value.queuePaused = value.queue.length > 0;
+            for (const m of value.messages)
+              if (m.status === "running") {
+                m.status = "interrupted";
+                m.approvals = [];
+                m.error = {
+                  code: "app_closed",
+                  message:
+                    "Generation stopped when the app closed. Partial text was preserved.",
+                };
+              }
+          } catch (error) {
+            if (error.code !== "ENOENT")
+              throw new AIError(
+                "history_storage_error",
+                "This project's AI history could not be read. Its data has been preserved.",
+              );
           }
-      } catch (error) {
-        if (error.code !== "ENOENT")
-          throw new AIError(
-            "history_storage_error",
-            "This project's AI history could not be read. Its data has been preserved.",
-          );
-      }
-      conversations.set(id, value);
-    }
+          conversations.set(id, value);
+        })().finally(() => loads.delete(id)),
+      );
+    await loads.get(id);
     return conversations.get(id);
   }
   function publicConversation(value) {
     const finalizing = running.has(key(value.profileId, value.projectId));
     return {
       ...value,
+      queue: (value.queue || []).map(({ request, ...item }) => item),
       messages: value.messages.map(({ inputText, skills, ...rest }, index) => {
         const message = {
           ...rest,
@@ -295,15 +347,30 @@ function createAI({
   function publishConversation(value) {
     emit("conversation", publicConversation(value));
   }
-  async function send({
-    projectId,
-    message,
-    model,
-    context,
-    rootId,
-    skillIds = [],
-  }) {
+  async function prepareRequest(
+    {
+      projectId,
+      message,
+      model,
+      permissionMode = "default",
+      reasoningEffort,
+      serviceTier = "default",
+      context,
+      rootId,
+      skillIds = [],
+    },
+    expectedProfileId,
+  ) {
     const session = await auth.getSession();
+    if (
+      disposed ||
+      accountChanges ||
+      session.activeProfileId !== expectedProfileId
+    )
+      throw new AIError(
+        "account_changed",
+        "The active account changed. Submit this request again.",
+      );
     if (session.status === "connecting")
       throw new AIError(
         "sign_in_running",
@@ -328,19 +395,47 @@ function createAI({
         "invalid_model",
         "Refresh models and choose one available to your account.",
       );
+    const selectedModel = models.find((m) => m.slug === model);
+    if (
+      !["default", "auto-review", "read-only", "full-access"].includes(
+        permissionMode,
+      )
+    )
+      throw new AIError(
+        "invalid_permissions",
+        "Choose an available permission mode.",
+      );
+    const effort = reasoningEffort ?? selectedModel.defaultReasoningEffort;
+    if (
+      effort !== undefined &&
+      !selectedModel.supportedReasoningEfforts.some(
+        (option) => option.reasoningEffort === effort,
+      )
+    )
+      throw new AIError(
+        "invalid_reasoning_effort",
+        "Choose a reasoning effort supported by this model.",
+      );
+    if (
+      serviceTier !== "default" &&
+      !selectedModel.serviceTiers.some((tier) => tier.id === serviceTier)
+    )
+      throw new AIError(
+        "invalid_service_tier",
+        "Choose a speed supported by this model.",
+      );
     const p = project(projectId);
     const projectScope = await scope(projectId, rootId);
     const value = await conversation(projectId);
-    const id = key(value.profileId, projectId);
-    if (value.agentCwd && value.agentCwd !== projectScope.cwd)
+    if (
+      (value.agentCwd && value.agentCwd !== projectScope.cwd) ||
+      ((value.messages.length || value.queue?.length) &&
+        value.agentRootId &&
+        value.agentRootId !== (rootId || "primary"))
+    )
       throw new AIError(
         "agent_folder_changed",
         "Start a new chat before switching the agent folder.",
-      );
-    if (running.has(id))
-      throw new AIError(
-        "request_running",
-        "A response is already running for this project.",
       );
     if (
       !Array.isArray(skillIds) ||
@@ -397,26 +492,107 @@ function createAI({
       role: "assistant",
       text: "",
       model,
+      permissionMode,
+      reasoningEffort: effort,
+      serviceTier,
       createdAt,
       status: "running",
       activities: [],
       approvals: [],
       skills: skills.map(({ name, displayName }) => ({ name, displayName })),
     };
-    const controller = new AbortController();
-    if (running.has(id))
+    if (
+      disposed ||
+      accountChanges ||
+      (await auth.getSession()).activeProfileId !== expectedProfileId
+    )
       throw new AIError(
-        "request_running",
-        "A response is already running for this project.",
+        "account_changed",
+        "The active account changed. Submit this request again.",
       );
-    value.agentRootId = rootId || "primary";
-    const job = { controller, projectId, done: undefined };
+    return {
+      value,
+      user,
+      assistant,
+      projectScope,
+      request: {
+        projectId,
+        message: message.trim(),
+        model,
+        permissionMode,
+        reasoningEffort: effort,
+        serviceTier,
+        rootId: rootId || "primary",
+        context: context ? structuredClone(context) : undefined,
+        skillIds: [...skillIds],
+      },
+    };
+  }
+  async function send(request) {
+    const { activeProfileId } = await auth.getSession();
+    return mutate(key(activeProfileId, request.projectId), async () => {
+      const prepared = await prepareRequest(request, activeProfileId);
+      const { value, user, assistant } = prepared;
+      const id = key(value.profileId, value.projectId);
+      if (running.has(id) || value.queue?.length) {
+        if (value.queue?.length >= 20)
+          throw new AIError(
+            "queue_full",
+            "The queue holds up to 20 requests. Wait for a request to finish or remove one.",
+          );
+        const item = {
+          id: assistant.id,
+          text: user.text,
+          createdAt: user.createdAt,
+          model: assistant.model,
+          permissionMode: assistant.permissionMode,
+          reasoningEffort: assistant.reasoningEffort,
+          serviceTier: assistant.serviceTier,
+          attachments: user.attachments,
+          skills: assistant.skills,
+          request: prepared.request,
+        };
+        (value.queue ||= []).push(item);
+        value.agentRootId = prepared.request.rootId;
+        try {
+          await saveConversation(value);
+        } catch (error) {
+          value.queue.pop();
+          throw error;
+        }
+        publishConversation(value);
+        return publicConversation(value);
+      }
+      value.queuePaused = false;
+      delete value.queueError;
+      return startPrepared(prepared);
+    });
+  }
+  async function startPrepared(
+    { value, user, assistant, projectScope, request },
+    queuedItem,
+  ) {
+    if (disposed || accountChanges)
+      throw new AIError(
+        "account_changed",
+        "The active account changed. Submit this request again.",
+      );
+    const id = key(value.profileId, value.projectId);
+    const controller = new AbortController();
+    if (queuedItem) {
+      value.queue.shift();
+      assistant.id = queuedItem.id;
+      user.createdAt = queuedItem.createdAt;
+    }
+    value.agentRootId = request.rootId;
+    const job = { controller, projectId: value.projectId, done: undefined };
     running.set(id, job);
     value.messages.push(user, assistant);
     try {
       await saveConversation(value);
     } catch (error) {
       value.messages.splice(-2);
+      if (queuedItem) value.queue.unshift(queuedItem);
       running.delete(id);
       throw error;
     }
@@ -424,13 +600,116 @@ function createAI({
     job.done = generate(
       value,
       assistant,
-      model,
+      request.model,
       projectScope,
       controller.signal,
-    ).finally(() => {
-      if (running.get(id) === job) running.delete(id);
-    });
+    )
+      .catch((error) => {
+        assistant.status = "failed";
+        assistant.error = publicError(error);
+      })
+      .then(() =>
+        mutate(id, async () => {
+          if (running.get(id) === job) running.delete(id);
+          if (assistant.status !== "completed" || assistant.error)
+            value.queuePaused = true;
+          try {
+            await saveConversation(value);
+          } catch (error) {
+            value.queuePaused = true;
+            value.queueError = publicError(error);
+          }
+          publishConversation(value);
+          // The active job finishes independently of the next queued turn.
+          if (!disposed && !value.queuePaused && value.queue?.length)
+            void drain(value);
+        }),
+      );
     return publicConversation(value);
+  }
+  function drain(value) {
+    const id = key(value.profileId, value.projectId);
+    return mutate(id, async () => {
+      if (
+        disposed ||
+        value.queuePaused ||
+        running.has(id) ||
+        !value.queue?.length
+      )
+        return;
+      try {
+        const prepared = await prepareRequest(
+          value.queue[0].request,
+          value.profileId,
+        );
+        delete value.queueError;
+        await startPrepared(prepared, value.queue[0]);
+      } catch (error) {
+        value.queuePaused = true;
+        value.queueError = publicError(error);
+        await saveConversation(value);
+        publishConversation(value);
+      }
+    }).catch(() => {});
+  }
+  async function queue({ projectId, action, id: itemId, direction }) {
+    const { activeProfileId } = await auth.getSession();
+    const id = key(activeProfileId, projectId);
+    const result = await mutate(id, async () => {
+      const value = await conversation(projectId);
+      if (!value.profileId || value.profileId !== activeProfileId)
+        throw new AIError(
+          "account_changed",
+          "Connect the original account to manage this queue.",
+        );
+      const previous = {
+        queue: [...(value.queue || [])],
+        queuePaused: value.queuePaused,
+        queueError: value.queueError,
+      };
+      value.queue ||= [];
+      if (action === "pause") value.queuePaused = true;
+      else if (action === "resume") {
+        value.queuePaused = false;
+        delete value.queueError;
+      } else if (action === "remove" || action === "move") {
+        const index = value.queue.findIndex((item) => item.id === itemId);
+        if (index < 0)
+          throw new AIError(
+            "queue_item_expired",
+            "This request has already started or was removed.",
+          );
+        if (action === "remove") value.queue.splice(index, 1);
+        else {
+          if (direction !== -1 && direction !== 1)
+            throw new AIError(
+              "invalid_queue_action",
+              "Choose a queue direction.",
+            );
+          const target = index + direction;
+          if (target >= 0 && target < value.queue.length)
+            [value.queue[index], value.queue[target]] = [
+              value.queue[target],
+              value.queue[index],
+            ];
+        }
+      } else
+        throw new AIError(
+          "invalid_queue_action",
+          "Choose an available queue action.",
+        );
+      if (!value.queue.length) delete value.queueError;
+      try {
+        await saveConversation(value);
+      } catch (error) {
+        Object.assign(value, previous);
+        throw error;
+      }
+      publishConversation(value);
+      return { value, snapshot: publicConversation(value) };
+    });
+    if (action === "resume") void drain(result.value);
+    return result.snapshot;
   }
   async function generate(value, assistant, model, projectScope, signal) {
     const id = key(value.profileId, value.projectId);
@@ -559,6 +838,9 @@ function createAI({
       const turn = await entry.agent.run({
         savedThreadId: value.threadId,
         model,
+        permissionMode: assistant.permissionMode,
+        reasoningEffort: assistant.reasoningEffort,
+        serviceTier: assistant.serviceTier,
         ...projectScope,
         text: value.messages.at(-2).inputText,
         skills: value.messages.at(-2).skills || [],
@@ -643,22 +925,36 @@ function createAI({
         };
       }
       await publishState();
-      running.delete(id);
-      publishConversation(value);
     }
   }
   async function stop(projectId) {
-    const value = await conversation(projectId);
-    const job = running.get(key(value.profileId, projectId));
-    job?.controller.abort();
-    await job?.done;
-    return publicConversation(value);
+    const { activeProfileId } = await auth.getSession();
+    const result = await mutate(key(activeProfileId, projectId), async () => {
+      const value = await conversation(projectId);
+      value.queuePaused = true;
+      if (value.profileId) {
+        try {
+          await saveConversation(value);
+        } catch (error) {
+          value.queueError = publicError(error);
+        }
+      }
+      const job = running.get(key(value.profileId, projectId));
+      job?.controller.abort();
+      publishConversation(value);
+      return { value, job };
+    });
+    await result.job?.done;
+    return publicConversation(result.value);
   }
   async function clear(projectId) {
     const value = await conversation(projectId);
     if (!value.profileId) return value;
     await stop(projectId);
     value.messages = [];
+    value.queue = [];
+    value.queuePaused = false;
+    delete value.queueError;
     delete value.threadId;
     delete value.threadUsage;
     delete value.agentCwd;
@@ -673,7 +969,13 @@ function createAI({
   return {
     getState,
     isRunning: (projectId) =>
-      [...running.values()].some((job) => job.projectId === projectId),
+      [...running.values()].some((job) => job.projectId === projectId) ||
+      [...conversations.values()].some(
+        (value) =>
+          value.projectId === projectId &&
+          value.queue?.length &&
+          !value.queuePaused,
+      ),
     refreshModels,
     skills: async (projectId, rootId, forceReload) =>
       publicSkills(await availableSkills(projectId, rootId, forceReload)),
@@ -725,6 +1027,7 @@ function createAI({
     conversation: async (projectId) =>
       publicConversation(await conversation(projectId)),
     send,
+    queue,
     stop,
     clear,
     signIn: (options) =>
@@ -751,6 +1054,7 @@ function createAI({
       }),
     openUsage: () => openBrowser(USAGE_URL),
     dispose: () => {
+      disposed = true;
       auth.dispose();
       for (const job of running.values()) job.controller.abort();
       return Promise.allSettled([

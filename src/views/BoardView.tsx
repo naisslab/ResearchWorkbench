@@ -8,7 +8,6 @@ import type {
   Workspace,
 } from "../types";
 import { stageName, stages } from "../types";
-import { priorityStages } from "../project-order";
 import { AreaIcon } from "../ResearchIcons";
 import { Options } from "../components/ui";
 
@@ -33,7 +32,7 @@ export default memo(function BoardView({
   };
   return (
     <div className="board">
-      {priorityStages.map((stage) => {
+      {stages.map(({ id: stage }) => {
         const list = visible.filter((p) => p.stage === stage);
         return (
           <section

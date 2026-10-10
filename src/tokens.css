@@ -1,6 +1,5 @@
-/* Design tokens. Light is the default; theme blocks change colours only.
-   An ink-blue accent and low-chroma tones keep colour for meaning. Light syntax
-   is a calmer Snazzy Light; dark keeps the VS Code Dark Modern neutrals and syntax. */
+/* Neutral white/gray surfaces with vivid semantic colors. Light source text
+   uses near-black ink; dark source colors stay legible on charcoal surfaces. */
 :root {
   color-scheme: light;
   --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, sans-serif;
@@ -18,101 +17,98 @@
   --radius-lg: 8px;
   --ease-out: cubic-bezier(0.2, 0, 0, 1);
 
-  --canvas: #f6f7f9;
-  --sidebar: #f0f3f6;
-  --pane: #fafbfc;
+  --canvas: #f7f7f7;
+  --shell-bg: var(--canvas);
+  --sidebar: #f1f1f1;
+  --pane: #fafafa;
   --surface: #ffffff;
-  --surface-subtle: #f3f4f5;
-  --surface-raised: #e9eaeb;
-  --input: #fafbfc;
-  --border: #d9dee5;
-  --input-border: #cdd4dd;
-  --text: #414454;
-  --text-secondary: #565869;
-  --muted: #666874;
-  --accent: #2f5d8a;
-  --accent-dark: #264d73;
-  --accent-hover: #264d73;
-  --selection: #e6ecf2;
-  --hover: #e9eaeb;
-  --link: #2f5d8a;
-  --tone-indigo: #564e8d;
-  --tone-coral: #924d3f;
-  --tone-violet: #725786;
-  --tone-amber: #785d2f;
-  --tone-rose: #8a4f6c;
-  --tone-blue: #3b648e;
-  --tone-cyan: #37696f;
-  --tone-positive: #486a49;
+  --surface-subtle: #f3f3f3;
+  --surface-raised: #ececec;
+  --input: #ffffff;
+  --border: #dddddd;
+  --input-border: #cecece;
+  --text: #242424;
+  --text-secondary: #444444;
+  --muted: #626262;
+  --accent: #007acc;
+  --accent-fill: #007acc;
+  --accent-dark: #005a9e;
+  --accent-hover: #0066b8;
+  --selection: #e1effb;
+  --hover: #e9e9e9;
+  --link: #0066b8;
+  --tone-indigo: #514acb;
+  --tone-coral: #c43830;
+  --tone-violet: #8050b5;
+  --tone-amber: #986800;
+  --tone-rose: #b33477;
+  --tone-blue: #006fc4;
+  --tone-cyan: #007e87;
+  --tone-positive: #16804a;
   --danger: var(--tone-coral);
   --warning: var(--tone-amber);
   --success: var(--tone-positive);
-  /* Area colours are user data, drawn mixed toward a neutral so any choice stays calm. */
-  --area-mix: 65%;
+  /* Keep user-selected area colors recognizable against neutral surfaces. */
+  --area-mix: 80%;
   --area-neutral: var(--text);
   --diff-tint: 14%;
-  --backdrop: rgb(94 110 129 / 14%);
+  --backdrop: rgb(0 0 0 / 14%);
   --backdrop-blur: blur(4px);
-  --shadow-popover: 0 6px 24px rgb(42 57 76 / 12%);
-  --shadow-modal: 0 16px 52px rgb(42 57 76 / 13%), 0 1px 4px rgb(42 57 76 / 7%);
+  --shadow-popover: 0 6px 24px rgb(0 0 0 / 12%);
+  --shadow-modal: 0 16px 52px rgb(0 0 0 / 13%), 0 1px 4px rgb(0 0 0 / 7%);
 
-  --stage-exploration: #426d71;
-  --stage-experiments: #7d6528;
-  --stage-writing: #375f8d;
-  --stage-submitted: #7a5577;
-  --stage-revision: #8f5638;
-  --stage-accepted: #44704e;
-  --stage-published: #63636a;
+  --stage-exploration: #007e87;
+  --stage-experiments: #986800;
+  --stage-writing: #006fc4;
+  --stage-submitted: #8050b5;
+  --stage-revision: #bb5420;
+  --stage-accepted: #16804a;
+  --stage-published: #626262;
 
-  --editor-bg: #fafbfc;
-  --editor-fg: #565869;
-  --editor-caret: #565869;
-  --editor-selection: #dceef8;
-  --editor-gutter-fg: #9194a2;
+  --editor-bg: #ffffff;
+  --editor-fg: #202020;
+  --editor-caret: #111111;
+  --editor-selection: #cce5ff;
+  --editor-gutter-fg: #6e6e6e;
   --editor-active-line: var(--surface-subtle);
-  --editor-bracket: #e3eff7;
-  --syn-comment: #6c6e78;
-  --syn-keyword: #a45280;
-  --syn-function: #3174a1;
-  --syn-string: #866a2a;
-  --syn-reference: #8a6833;
-  --syn-variable: #306483;
-  --syn-number: #b2504b;
-  --syn-constant: #b2504b;
-  --syn-heading: #3a7b4b;
-  --syn-type: #297a76;
-  --syn-math: #297a76;
-  --syn-operator: #a45280;
-  --syn-delimiter: #74568c;
-  --syn-punctuation: #61636b;
-  --syn-invalid: #b2504b;
+  --editor-bracket: #d8ecff;
+  --syn-comment: #008000;
+  --syn-keyword: #af00db;
+  --syn-function: #006fc4;
+  --syn-string: #a31515;
+  --syn-reference: #986800;
+  --syn-variable: #005a9e;
+  --syn-number: #098658;
+  --syn-constant: #0070c1;
+  --syn-heading: #16804a;
+  --syn-type: #267f99;
+  --syn-math: #007f83;
+  --syn-operator: #af00db;
+  --syn-delimiter: #7045b5;
+  --syn-punctuation: #333333;
+  --syn-invalid: #d02a2a;
 }
 
-/* Light chrome is a translucent material over a soft gradient. Overlays blur
-   what is behind them; source and PDF surfaces stay opaque. Dark leaves these
-   unset, so each surface falls back to its plain token. */
+/* Light chrome stays neutral and solid. Only floating overlays use translucency. */
 :root[data-theme="light"] {
-  --shell-bg:
-    radial-gradient(ellipse at 0% 0%, #dfe7ef 0%, transparent 54%),
-    radial-gradient(ellipse at 100% 100%, #e8ebf0 0%, transparent 52%), #f6f7f9;
-  --glass-chrome: rgb(255 255 255 / 56%);
-  --glass-panel: rgb(255 255 255 / 76%);
-  --glass-bar: rgb(249 250 252 / 88%);
-  --glass-field: rgb(255 255 255 / 40%);
-  --glass-field-border: rgb(151 166 183 / 24%);
+  --glass-chrome: var(--sidebar);
+  --glass-panel: var(--surface);
+  --glass-bar: var(--surface-subtle);
+  --glass-field: var(--input);
+  --glass-field-border: var(--input-border);
   --glass-edge: rgb(255 255 255 / 85%);
-  --glass-overlay: rgb(255 255 255 / 88%);
-  --glass-overlay-border: rgb(255 255 255 / 90%);
+  --glass-overlay: rgb(255 255 255 / 96%);
+  --glass-overlay-border: var(--border);
   --overlay-blur: blur(24px);
   --backdrop-blur: blur(12px) saturate(85%);
   --shadow-modal:
-    0 16px 52px rgb(42 57 76 / 13%), 0 1px 4px rgb(42 57 76 / 7%),
+    0 16px 52px rgb(0 0 0 / 13%), 0 1px 4px rgb(0 0 0 / 7%),
     inset 0 1px var(--glass-edge);
 }
 @media (prefers-reduced-transparency: reduce) {
   :root[data-theme="light"] {
     --shell-bg: var(--canvas);
-    --glass-chrome: #f0f3f6;
+    --glass-chrome: var(--sidebar);
     --glass-panel: #ffffff;
     --glass-overlay: #ffffff;
     --overlay-blur: none;
@@ -134,21 +130,22 @@
   --text: #d7d7d7;
   --text-secondary: #b4b4b4;
   --muted: #999999;
-  --accent: #4377ae;
-  --accent-dark: #8fb3d9;
-  --accent-hover: #3a6ea5;
-  --selection: #264f783d;
+  --accent: #3794ff;
+  --accent-fill: #0078d4;
+  --accent-dark: #66b1ff;
+  --accent-hover: #006bbd;
+  --selection: #264f7866;
   --hover: #2b2b2b;
-  --link: #8fb3d9;
-  --tone-indigo: #9f99d6;
-  --tone-coral: #d79f92;
-  --tone-violet: #b0a0bc;
-  --tone-amber: #d1ba94;
-  --tone-rose: #b98ea1;
-  --tone-blue: #8fb2d7;
-  --tone-cyan: #7fb2b8;
-  --tone-positive: #91b091;
-  --area-mix: 60%;
+  --link: #3794ff;
+  --tone-indigo: #a399ff;
+  --tone-coral: #ff8178;
+  --tone-violet: #c197ff;
+  --tone-amber: #e9bd5f;
+  --tone-rose: #f38abd;
+  --tone-blue: #62adff;
+  --tone-cyan: #50cedb;
+  --tone-positive: #58cb8c;
+  --area-mix: 85%;
   --area-neutral: #cccccc;
   --diff-tint: 24%;
   --icon-filter: brightness(1.1);
@@ -158,12 +155,12 @@
     0 6px 24px rgb(0 0 0 / 40%), 0 0 0 1px rgb(255 255 255 / 5%);
   --shadow-modal: 0 16px 48px rgb(0 0 0 / 55%), 0 0 0 1px rgb(255 255 255 / 7%);
 
-  --stage-exploration: #6eb2b8;
-  --stage-experiments: #cfb983;
-  --stage-writing: #90bae4;
-  --stage-submitted: #c898bc;
-  --stage-revision: #d7a186;
-  --stage-accepted: #9bbfa1;
+  --stage-exploration: #50cedb;
+  --stage-experiments: #e9bd5f;
+  --stage-writing: #62adff;
+  --stage-submitted: #c197ff;
+  --stage-revision: #f4a16b;
+  --stage-accepted: #58cb8c;
   --stage-published: #a0a1a7;
 
   --editor-bg: #1f1f1f;
@@ -172,21 +169,21 @@
   --editor-selection: #264f78;
   --editor-gutter-fg: #6e7681;
   --editor-bracket: #313131;
-  --syn-comment: #6a9955;
-  --syn-keyword: #c586c0;
-  --syn-function: #dcdcaa;
-  --syn-string: #ce9178;
-  --syn-reference: #d7ba7d;
-  --syn-variable: #9cdcfe;
-  --syn-number: #b5cea8;
-  --syn-constant: #569cd6;
-  --syn-heading: #4ec9b0;
-  --syn-type: #4ec9b0;
-  --syn-math: #9cdcfe;
+  --syn-comment: #80b96b;
+  --syn-keyword: #d891d3;
+  --syn-function: #e8e8b3;
+  --syn-string: #e5a27e;
+  --syn-reference: #e8c485;
+  --syn-variable: #a6dcff;
+  --syn-number: #b9d99c;
+  --syn-constant: #6cb6ff;
+  --syn-heading: #54d7b8;
+  --syn-type: #54d7b8;
+  --syn-math: #a6dcff;
   --syn-operator: #d4d4d4;
-  --syn-delimiter: #e2c08d;
-  --syn-punctuation: #b4b4b4;
-  --syn-invalid: #f85149;
+  --syn-delimiter: #f0ce91;
+  --syn-punctuation: #c4c4c4;
+  --syn-invalid: #ff6b68;
 }
 
 [data-stage="exploration"] {

@@ -272,6 +272,8 @@ try {
       projectId: "ai-ui-project",
       profileId: null,
       messages: [],
+      queue: [],
+      queuePaused: false,
     };
     let attempts = 0,
       turns = 0;
@@ -292,8 +294,31 @@ try {
           },
         ],
         models: [
-          { slug: "fixture-model", displayName: "Research Model" },
-          { slug: "fixture-model-2", displayName: "Fast Model" },
+          {
+            slug: "fixture-model",
+            displayName: "Research Model",
+            defaultReasoningEffort: "medium",
+            supportedReasoningEfforts: [
+              { reasoningEffort: "medium", description: "Balanced" },
+            ],
+            serviceTiers: [],
+          },
+          {
+            slug: "fixture-model-2",
+            displayName: "Fast Model",
+            defaultReasoningEffort: "low",
+            supportedReasoningEfforts: [
+              { reasoningEffort: "low", description: "Light" },
+              { reasoningEffort: "xhigh", description: "Deep reasoning" },
+            ],
+            serviceTiers: [
+              {
+                id: "priority",
+                name: "Fast",
+                description: "Faster responses, increased usage",
+              },
+            ],
+          },
         ],
       });
       conversation.profileId = state.activeProfileId;
@@ -313,6 +338,14 @@ try {
               description:
                 "Revise research drafts using relevant Best Paper and Test of Time exemplars while preserving supported claims.",
               scope: "user",
+              enabled: true,
+            },
+            {
+              id: "c".repeat(64),
+              name: "system-checks",
+              displayName: "Project checks",
+              description: "Run local project checks and report results.",
+              scope: "repo",
               enabled: true,
             },
             {
@@ -443,6 +476,7 @@ try {
         return ok();
       },
       "ai:stop": () => {
+        conversation.queuePaused = true;
         Object.assign(conversation.messages.at(-1), {
           status: "cancelled",
           approvals: [],
@@ -456,7 +490,13 @@ try {
         return ok(conversation);
       },
       "ai:clear": () => {
-        conversation = { ...conversation, messages: [] };
+        conversation = {
+          ...conversation,
+          messages: [],
+          queue: [],
+          queuePaused: false,
+        };
+        pendingRequests.clear();
         emit("conversation", conversation);
         return ok(conversation);
       },
@@ -465,11 +505,77 @@ try {
         return ok();
       },
     };
+    const pendingRequests = new Map();
+    const startRequest = handlers["ai:send"];
+    let queuedId = 0;
+    const startNext = () => {
+      if (
+        conversation.queuePaused ||
+        conversation.messages.at(-1)?.status === "running" ||
+        !conversation.queue.length
+      )
+        return;
+      const item = conversation.queue.shift();
+      const request = pendingRequests.get(item.id);
+      pendingRequests.delete(item.id);
+      startRequest(null, request);
+    };
+    handlers["ai:send"] = (_, request) => {
+      if (
+        conversation.messages.at(-1)?.status !== "running" &&
+        !conversation.queue.length
+      ) {
+        conversation.queuePaused = false;
+        return startRequest(null, request);
+      }
+      const item = {
+        id: `queued-${++queuedId}`,
+        text: request.message,
+        model: request.model,
+        reasoningEffort: request.reasoningEffort,
+        serviceTier: request.serviceTier,
+        permissionMode: request.permissionMode,
+        createdAt: new Date().toISOString(),
+        attachments: request.context
+          ? [{ name: request.context.file, kind: request.context.kind }]
+          : [],
+        skills: request.skillIds?.includes("a".repeat(64))
+          ? [{ name: "scale-writing", displayName: "scale-writing" }]
+          : [],
+      };
+      globalThis.__workbenchAITest.lastQueuedRequest = request;
+      pendingRequests.set(item.id, request);
+      conversation.queue.push(item);
+      emit("conversation", conversation);
+      return ok(conversation);
+    };
+    handlers["ai:queue"] = (_, { action, id, direction }) => {
+      if (action === "pause") conversation.queuePaused = true;
+      if (action === "resume") conversation.queuePaused = false;
+      const index = conversation.queue.findIndex((item) => item.id === id);
+      if (action === "remove") {
+        conversation.queue.splice(index, 1);
+        pendingRequests.delete(id);
+      }
+      if (action === "move")
+        [conversation.queue[index], conversation.queue[index + direction]] = [
+          conversation.queue[index + direction],
+          conversation.queue[index],
+        ];
+      startNext();
+      emit("conversation", conversation);
+      return ok(conversation);
+    };
     function assertDecision(request) {
       if (request.id !== "approval-fixture" || request.decision !== "accept")
         throw new Error("Unexpected UI approval decision");
     }
     globalThis.__workbenchAITest = { lastRequest: null, usageOpened: false };
+    globalThis.__workbenchAITest.finish = () => {
+      conversation.messages.at(-1).status = "completed";
+      startNext();
+      emit("conversation", conversation);
+    };
     globalThis.__workbenchAITest.delta = (delta, snapshot = false) => {
       const message = conversation.messages.at(-1);
       message.text += delta;
@@ -505,7 +611,168 @@ try {
   await page
     .getByRole("button", { name: "Continue with ChatGPT", exact: false })
     .click();
-  await page.getByLabel("AI model").selectOption("fixture-model-2");
+  await page
+    .getByRole("button", { name: "Agent permissions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitemradio", { name: "Full access", exact: false })
+    .click();
+  assert.match(
+    await page
+      .getByRole("button", { name: "Agent permissions", exact: true })
+      .innerText(),
+    /Full access/,
+  );
+  await page
+    .getByRole("button", { name: "Agent permissions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitemradio", { name: "Read only", exact: false })
+    .click();
+  await page
+    .getByRole("button", { name: "Agent permissions", exact: true })
+    .click();
+  await page
+    .getByRole("menuitemradio", { name: "Approve for me", exact: false })
+    .click();
+  await page
+    .getByRole("button", { name: "Agent permissions", exact: true })
+    .click();
+  await page.keyboard.press("ArrowUp");
+  assert.equal(
+    await page
+      .getByRole("menuitemradio", { name: "Default permissions", exact: false })
+      .evaluate((node) => node === document.activeElement),
+    true,
+  );
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await page.getByRole("button", { name: "AI model", exact: true }).click();
+  await page.getByRole("radio", { name: "Fast Model", exact: true }).click();
+  const effortSlider = page.getByRole("slider", {
+    name: "Reasoning effort",
+    exact: true,
+  });
+  await effortSlider.focus();
+  await effortSlider.press("End");
+  assert.equal(await effortSlider.getAttribute("aria-valuetext"), "Extra High");
+  await page
+    .getByRole("button", { name: "Reset reasoning effort", exact: true })
+    .click();
+  assert.equal(await effortSlider.getAttribute("aria-valuetext"), "Low");
+  await effortSlider.focus();
+  await effortSlider.press("ArrowRight");
+  assert.equal(await effortSlider.getAttribute("aria-valuetext"), "Extra High");
+  const sliderBox = await effortSlider.boundingBox();
+  await page.mouse.click(sliderBox.x + 3, sliderBox.y + sliderBox.height / 2);
+  assert.equal(await effortSlider.getAttribute("aria-valuetext"), "Low");
+  await page.mouse.move(sliderBox.x + 10, sliderBox.y + sliderBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    sliderBox.x + sliderBox.width - 10,
+    sliderBox.y + sliderBox.height / 2,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  assert.equal(await effortSlider.getAttribute("aria-valuetext"), "Extra High");
+  await page.getByRole("radio", { name: "Extra High", exact: true }).click();
+  await page.getByRole("radio", { name: "Fast", exact: true }).click();
+  await page.waitForFunction(() => {
+    const thumb = document
+      .querySelector(".ai-effort-thumb")
+      ?.getBoundingClientRect();
+    const track = document
+      .querySelector(".ai-effort-track")
+      ?.getBoundingClientRect();
+    return thumb && track && Math.abs(thumb.right - track.right) < 1;
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  assert.equal(
+    await page
+      .locator(".ai-effort-thumb")
+      .evaluate((node) => getComputedStyle(node).transitionDuration),
+    "0s",
+  );
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.screenshot({ path: "output/playwright/ai-model-settings.png" });
+  await page
+    .getByRole("radio", { name: "Research Model", exact: true })
+    .click();
+  assert.equal(
+    await page
+      .getByRole("radio", { name: "Medium", exact: true })
+      .getAttribute("aria-checked"),
+    "true",
+  );
+  assert.equal(
+    await page.getByRole("radio", { name: "Fast", exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await page
+      .getByRole("radio", { name: "Standard", exact: true })
+      .getAttribute("aria-checked"),
+    "true",
+  );
+  await page.getByRole("radio", { name: "Fast Model", exact: true }).click();
+  assert.equal(
+    await page
+      .getByRole("radio", { name: "Extra High", exact: true })
+      .getAttribute("aria-checked"),
+    "true",
+  );
+  assert.equal(
+    await page
+      .getByRole("radio", { name: "Fast", exact: true })
+      .getAttribute("aria-checked"),
+    "true",
+  );
+  await page.keyboard.press("Escape");
+  assert.equal(
+    await page
+      .getByRole("button", { name: "AI model", exact: true })
+      .evaluate((node) => node === document.activeElement),
+    true,
+  );
+  await page
+    .getByRole("button", { name: "Agent permissions", exact: true })
+    .click();
+  await page.screenshot({
+    path: "output/playwright/ai-permission-settings.png",
+  });
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await page
+    .locator(".area-projects")
+    .getByRole("button", { name: "Agent Integration", exact: true })
+    .click();
+  await mode("All panels").click();
+  assert.match(
+    await page
+      .getByRole("button", { name: "Agent permissions", exact: true })
+      .innerText(),
+    /Approve for me/,
+  );
+  assert.match(
+    await page
+      .getByRole("button", { name: "AI model", exact: true })
+      .innerText(),
+    /Fast Model.*Extra High/s,
+  );
+  await page.getByRole("button", { name: "AI model", exact: true }).click();
+  assert.equal(
+    await page
+      .getByRole("radio", { name: "Fast", exact: true })
+      .getAttribute("aria-checked"),
+    "true",
+  );
+  await page.getByLabel("Message the AI agent").click();
+  assert.equal(
+    await page
+      .getByRole("dialog", { name: "AI model settings", exact: true })
+      .count(),
+    0,
+  );
   await page.getByLabel("Message the AI agent").press("$");
   await page.getByRole("dialog", { name: "Choose skills" }).waitFor();
   assert.equal(await page.getByLabel("Message the AI agent").inputValue(), "");
@@ -547,6 +814,152 @@ try {
   await page
     .getByRole("dialog", { name: "Choose skills" })
     .waitFor({ state: "hidden" });
+  await page
+    .getByRole("button", { name: "Remove scale-writing", exact: true })
+    .click();
+  const slashComposer = page.getByLabel("Message the AI agent");
+  const suggestions = page.getByRole("listbox", {
+    name: "Skill suggestions",
+    exact: true,
+  });
+  await slashComposer.fill("/");
+  await suggestions.waitFor();
+  assert.equal(
+    await suggestions.getByRole("option").count(),
+    2,
+    "Slash suggestions include enabled skills only",
+  );
+  assert.equal(
+    await slashComposer.evaluate((node) => node === document.activeElement),
+    true,
+  );
+  await slashComposer.press("ArrowDown");
+  assert.equal(
+    await suggestions
+      .getByRole("option", { name: "Select system-checks", exact: true })
+      .getAttribute("aria-selected"),
+    "true",
+  );
+  await slashComposer.press("ArrowDown");
+  assert.equal(
+    await suggestions
+      .getByRole("option", { name: "Select scale-writing", exact: true })
+      .getAttribute("aria-selected"),
+    "true",
+    "Navigation wraps to the first skill",
+  );
+  await slashComposer.press("Enter");
+  await suggestions.waitFor({ state: "detached" });
+  await page
+    .getByRole("button", { name: "Remove scale-writing", exact: true })
+    .waitFor();
+  assert.equal(await slashComposer.inputValue(), "");
+  assert.equal(
+    await desktop.evaluate(() => globalThis.__workbenchAITest.lastRequest),
+    null,
+    "Enter selects the skill without sending a request",
+  );
+  await slashComposer.fill("/sca");
+  await suggestions
+    .getByRole("option", { name: "Select scale-writing", exact: true })
+    .waitFor();
+  await slashComposer.press("Tab");
+  await suggestions.waitFor({ state: "detached" });
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Remove scale-writing", exact: true })
+      .count(),
+    1,
+    "Selecting an attached skill keeps one chip",
+  );
+  await page
+    .getByRole("button", { name: "Remove scale-writing", exact: true })
+    .click();
+  await slashComposer.fill("Please /sca keep this text");
+  await slashComposer.evaluate((node) => {
+    node.setSelectionRange(11, 11);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  await suggestions
+    .getByRole("option", { name: "Select scale-writing", exact: true })
+    .waitFor();
+  await page.waitForFunction(
+    () =>
+      getComputedStyle(document.querySelector(".ai-skill-suggestions"))
+        .opacity === "1",
+  );
+  await page.screenshot({ path: "output/playwright/ai-slash-skills.png" });
+  await suggestions
+    .getByRole("option", { name: "Select scale-writing", exact: true })
+    .click();
+  await suggestions.waitFor({ state: "detached" });
+  assert.equal(
+    await slashComposer.inputValue(),
+    "Please keep this text",
+    "Selection preserves the surrounding request",
+  );
+  await page.waitForFunction(() => {
+    const node = document.querySelector(".ai-composer textarea");
+    return node === document.activeElement && node.selectionStart === 7;
+  });
+  await page
+    .getByRole("button", { name: "Remove scale-writing", exact: true })
+    .click();
+  await slashComposer.fill("/unknown-skill");
+  await suggestions
+    .getByText("No matching skills.", { exact: false })
+    .waitFor();
+  await slashComposer.press("Enter");
+  assert.equal(
+    await desktop.evaluate(() => globalThis.__workbenchAITest.lastRequest),
+    null,
+    "An empty suggestion list cannot send accidentally",
+  );
+  await slashComposer.press("Escape");
+  await suggestions.waitFor({ state: "detached" });
+  await slashComposer.press("ArrowLeft");
+  assert.equal(
+    await suggestions.count(),
+    0,
+    "Escape keeps the current token dismissed",
+  );
+  assert.equal(await slashComposer.inputValue(), "/unknown-skill");
+  for (const text of [
+    "https://example.test/scale",
+    "/Users/research/main.tex",
+    "Discuss source/PDF navigation",
+  ]) {
+    await slashComposer.fill(text);
+    assert.equal(
+      await suggestions.count(),
+      0,
+      "Paths and URLs stay ordinary request text",
+    );
+  }
+  await slashComposer.fill("/sca");
+  await suggestions.waitFor();
+  await slashComposer.evaluate((node) =>
+    node.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        isComposing: true,
+        bubbles: true,
+      }),
+    ),
+  );
+  assert.equal(
+    await suggestions.count(),
+    1,
+    "IME confirmation keeps the suggestion open",
+  );
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Remove scale-writing", exact: true })
+      .count(),
+    0,
+  );
+  await slashComposer.press("Enter");
+  await suggestions.waitFor({ state: "detached" });
   await page
     .getByLabel("Message the AI agent")
     .fill("Fix the manuscript and run the checks");
@@ -646,6 +1059,21 @@ try {
     () => globalThis.__workbenchAITest.lastRequest,
   );
   assert.equal(sent.model, "fixture-model-2");
+  assert.equal(sent.permissionMode, "auto-review");
+  assert.equal(sent.reasoningEffort, "xhigh");
+  assert.equal(sent.serviceTier, "priority");
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Agent permissions", exact: true })
+      .isDisabled(),
+    false,
+  );
+  assert.equal(
+    await page
+      .getByRole("button", { name: "AI model", exact: true })
+      .isDisabled(),
+    false,
+  );
   assert.deepEqual(sent.skillIds, ["a".repeat(64)]);
   assert.equal(
     await page.locator(".ai-selected-skills").count(),
@@ -660,7 +1088,7 @@ try {
     await page
       .getByRole("button", { name: "Choose skills", exact: true })
       .isDisabled(),
-    true,
+    false,
   );
   assert.equal(sent.context.text, "Unsaved manuscript changes\n");
   await page.screenshot({ path: "output/playwright/ai-approval.png" });
@@ -674,6 +1102,11 @@ try {
     document
       .querySelector(".cm-content")
       ?.textContent.includes("Revised manuscript from agent"),
+  );
+  await page.waitForFunction(
+    () =>
+      document.querySelector(".cm-content")?.getAttribute("contenteditable") ===
+      "true",
   );
   assert.equal(
     await page.locator(".cm-content").getAttribute("contenteditable"),
@@ -828,6 +1261,21 @@ try {
   });
   assert.equal(fits, true, "AI panel should fit the compact window");
   await page.screenshot({ path: "output/playwright/ai-agent-dark.png" });
+  await page.getByRole("button", { name: "AI model", exact: true }).click();
+  const settingsBox = await page
+    .getByRole("dialog", { name: "AI model settings", exact: true })
+    .boundingBox();
+  assert.ok(
+    settingsBox.x >= 0 &&
+      settingsBox.y >= 0 &&
+      settingsBox.x + settingsBox.width <= 1050 &&
+      settingsBox.y + settingsBox.height <= 760,
+    "Settings fit the compact window",
+  );
+  await page.screenshot({
+    path: "output/playwright/ai-model-settings-dark.png",
+  });
+  await page.keyboard.press("Escape");
   await page.evaluate(() => {
     window.__modePDF = document.querySelector(".pdf-reader");
   });
@@ -934,6 +1382,98 @@ try {
         (node) => node.scrollHeight - node.scrollTop - node.clientHeight < 5,
       ),
   );
+  await composer.fill("/sca");
+  await suggestions
+    .getByRole("option", { name: "Select scale-writing", exact: true })
+    .waitFor();
+  await page.waitForFunction(
+    () =>
+      getComputedStyle(document.querySelector(".ai-skill-suggestions"))
+        .opacity === "1",
+  );
+  const slashBox = await page.locator(".ai-skill-suggestions").boundingBox();
+  const slashInputBox = await composer.boundingBox();
+  assert.ok(
+    slashBox.x + slashBox.width <= slashInputBox.x + slashInputBox.width + 1,
+    "Suggestions stay within the compact composer",
+  );
+  assert.ok(
+    slashBox.x >= 0 &&
+      slashBox.y >= 0 &&
+      slashBox.x + slashBox.width <= 1050 &&
+      slashBox.y + slashBox.height <= 760,
+    "Slash suggestions fit the compact window",
+  );
+  await page.screenshot({ path: "output/playwright/ai-slash-skills-dark.png" });
+  await composer.press("Tab");
+  await suggestions.waitFor({ state: "detached" });
+  await composer.fill("First queued request");
+  await composer.press("Enter");
+  const queue = page.getByRole("region", {
+    name: "Queued requests",
+    exact: true,
+  });
+  await queue.getByText("First queued request", { exact: true }).waitFor();
+  await page.waitForFunction(() => {
+    const node = document.querySelector(".ai-composer textarea");
+    return (
+      node &&
+      node.value === "" &&
+      !node.readOnly &&
+      node === document.activeElement
+    );
+  });
+  assert.equal(await composer.inputValue(), "");
+  assert.deepEqual(
+    await desktop.evaluate(
+      () => globalThis.__workbenchAITest.lastQueuedRequest.skillIds,
+    ),
+    ["a".repeat(64)],
+    "Slash selection is captured by a queued request",
+  );
+  assert.equal(await page.locator(".ai-selected-skills").count(), 0);
+  await page.getByRole("button", { name: "AI model", exact: true }).click();
+  await page
+    .getByRole("radio", { name: "Research Model", exact: true })
+    .click();
+  await page.keyboard.press("Escape");
+  await composer.fill("Second queued request");
+  await page
+    .getByRole("button", { name: "Queue message", exact: true })
+    .click();
+  await queue.getByText("Second queued request", { exact: true }).waitFor();
+  assert.match(
+    await queue.locator("li").first().innerText(),
+    /Fast Model · Extra High/,
+  );
+  assert.match(
+    await queue.locator("li").last().innerText(),
+    /Research Model · Medium/,
+  );
+  await queue
+    .getByRole("button", { name: "Move queued request 2 up", exact: true })
+    .click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector(".ai-request-queue li p")?.textContent ===
+      "Second queued request",
+  );
+  await queue
+    .getByRole("button", { name: "Remove queued request 2", exact: true })
+    .click();
+  await queue
+    .getByText("First queued request", { exact: true })
+    .waitFor({ state: "detached" });
+  await composer.fill("Third queued request");
+  await composer.press("Enter");
+  await queue.getByText("Third queued request", { exact: true }).waitFor();
+  await queue
+    .getByRole("button", { name: "Pause queued requests", exact: true })
+    .click();
+  await queue.getByText("Paused", { exact: true }).waitFor();
+  await page.screenshot({
+    path: "output/playwright/ai-request-queue-dark.png",
+  });
   await page
     .getByRole("button", { name: "Stop AI agent", exact: true })
     .click();
@@ -942,11 +1482,46 @@ try {
       exact: true,
     })
     .waitFor();
+  await page.waitForFunction(
+    () =>
+      document.querySelector(".cm-content")?.getAttribute("contenteditable") ===
+      "true",
+  );
+  await page.reload();
+  await page
+    .locator(".area-projects")
+    .getByRole("button", { name: "Agent Integration", exact: true })
+    .click();
+  await queue.getByText("Second queued request", { exact: true }).waitFor();
+  await queue
+    .getByRole("button", { name: "Resume queued requests", exact: true })
+    .click();
+  await page.waitForFunction(
+    () => document.querySelectorAll(".ai-request-queue li").length === 1,
+  );
+  assert.equal(
+    await desktop.evaluate(
+      () => globalThis.__workbenchAITest.lastRequest.message,
+    ),
+    "Second queued request",
+  );
+  await desktop.evaluate(() => globalThis.__workbenchAITest.finish());
+  await queue.waitFor({ state: "detached" });
+  assert.equal(
+    await desktop.evaluate(
+      () => globalThis.__workbenchAITest.lastRequest.message,
+    ),
+    "Third queued request",
+  );
+  await desktop.evaluate(() => globalThis.__workbenchAITest.finish());
+  await page.waitForFunction(
+    () => !document.querySelector('[aria-label="Stop AI agent"]'),
+  );
   await page.getByTitle("New AI chat", { exact: true }).click();
   await page.getByText("What should we work on?", { exact: true }).waitFor();
   assert.deepEqual(failures, []);
   console.log(
-    "PASS: bundled Codex discovery, ChatGPT connection/cancel, model selection, saved drafts, save before run, editor lock, approvals, Markdown and code copy, file/PDF navigation, expandable work log, expanded AI view, IME-safe Enter/Shift+Enter, streaming snapshot consistency, scroll preservation, usage, stop, new chat, and compact dark layout.",
+    "PASS: bundled Codex discovery, ChatGPT connection/cancel, slash skill filtering, keyboard/pointer selection, cursor and text preservation, duplicate prevention, IME/URL/path handling, skills in queued requests, permission/model/reasoning/speed selection and persistence, pointer and keyboard effort slider, reduced motion, queued submissions with captured models, queue reorder/remove/pause/restore/resume, saved drafts, save before run, editor lock, approvals, Markdown and code copy, file/PDF navigation, expandable work log, expanded AI view, IME-safe Enter/Shift+Enter, streaming snapshot consistency, scroll preservation, usage, stop, new chat, and compact dark layout.",
   );
 } catch (error) {
   console.error(error);

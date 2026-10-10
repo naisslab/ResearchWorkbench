@@ -66,11 +66,11 @@ await smoke("ui", async (root) => {
     .click();
   assert.equal(await page.locator(".board-card").count(), 25);
   assert.deepEqual(await page.locator(".board-heading h3").allTextContents(), [
-    "Paper Writing",
-    "Revision",
-    "Experiments",
     "Idea Exploration",
+    "Experiments",
+    "Paper Writing",
     "Submitted",
+    "Revision",
     "Accepted",
     "Published",
   ]);

@@ -19,7 +19,7 @@ test(
     await fs.mkdir(cwd);
     const requests = [],
       events = [];
-    let serverError, agent;
+    let serverError, agent, savedThreadId;
     const server = http.createServer(async (request, response) => {
       try {
         assert.equal(request.url, "/v1/responses");
@@ -110,7 +110,7 @@ test(
           };
         } else {
           assert.ok(
-            requests.length <= 3,
+            requests.length <= 4,
             "Fixture tools should finish without retries",
           );
           item = {
@@ -183,12 +183,16 @@ test(
           ),
       });
       const result = await agent.run({
-        model: "gpt-5.4",
+        model: "gpt-5.5",
+        reasoningEffort: "high",
+        serviceTier: "priority",
         cwd,
         writableRoots: [cwd],
         text: "Create one.txt and two.txt with apply_patch and run the local check. This is an isolated integration test.",
         signal: AbortSignal.timeout(25000),
-        onThread: async () => {},
+        onThread: async (id) => {
+          savedThreadId = id;
+        },
         onEvent: (event) => events.push(event),
       });
       if (serverError) throw serverError;
@@ -227,6 +231,31 @@ test(
         ),
       );
       assert.equal(requests.length, 3);
+      for (const request of requests) {
+        assert.equal(request.reasoning.effort, "high");
+        assert.equal(request.service_tier, "priority");
+      }
+      const standard = await agent.run({
+        savedThreadId,
+        model: "gpt-5.5",
+        permissionMode: "read-only",
+        reasoningEffort: "low",
+        serviceTier: "default",
+        cwd,
+        writableRoots: [cwd],
+        text: "Summarize the completed work without changing files.",
+        signal: AbortSignal.timeout(10000),
+        onThread: async () => {},
+        onEvent: () => {},
+      });
+      if (serverError) throw serverError;
+      assert.equal(standard.status, "completed");
+      assert.equal(requests.at(-1).reasoning.effort, "low");
+      assert.ok(
+        !requests.at(-1).service_tier ||
+          requests.at(-1).service_tier === "default",
+        "Standard speed must clear the previous priority tier",
+      );
     } finally {
       await agent?.close();
       server.closeAllConnections();

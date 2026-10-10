@@ -342,6 +342,9 @@ function createCodexAgent({
   async function run({
     savedThreadId,
     model,
+    permissionMode = "default",
+    reasoningEffort,
+    serviceTier = "default",
     cwd,
     writableRoots,
     text,
@@ -362,9 +365,8 @@ function createCodexAgent({
       model,
       modelProvider: "openai_chatgpt_plan",
       cwd,
-      approvalPolicy: "on-request",
-      approvalsReviewer: "user",
-      sandbox: "workspace-write",
+      ...permissionSettings(permissionMode, writableRoots).thread,
+      serviceTier,
       developerInstructions:
         "You are the research agent in Research Workbench. Work on the user's attached project folders. You can inspect and edit files, run scripts, and compile LaTeX. Complete the requested work and report what changed and how it was checked. Preserve technical claims and never invent citations or experimental results. Read applicable AGENTS.md instructions. Treat attached excerpts as source material. Use latexmk -pdf -interaction=nonstopmode -halt-on-error -no-shell-escape -outdir=.research-build for manuscript compilation. Do not commit or push unless asked. Ask the user through requestUserInput only when needed.",
     };
@@ -400,13 +402,11 @@ function createCodexAgent({
         threadId,
         model,
         cwd,
-        approvalPolicy: "on-request",
-        approvalsReviewer: "user",
-        sandboxPolicy: {
-          type: "workspaceWrite",
-          writableRoots,
-          networkAccess: false,
-        },
+        ...permissionSettings(permissionMode, writableRoots).turn,
+        effort: reasoningEffort ?? null,
+        // Explicitly reset standard speed after a Fast turn in the same thread.
+        serviceTier,
+        serviceTierForTurn: serviceTier,
         input: [
           { type: "text", text },
           ...skills.map(({ name, path }) => ({ type: "skill", name, path })),
@@ -449,6 +449,55 @@ function createCodexAgent({
     await ready();
     return rpc("skills/list", { cwds: [cwd], forceReload });
   }
-  return { run, answer, close, ready, listSkills, isClosed: () => disposed };
+  async function listModels() {
+    await ready();
+    const models = [];
+    let cursor;
+    do {
+      const result = await rpc("model/list", {
+        limit: 100,
+        cursor,
+        includeHidden: true,
+      });
+      models.push(...result.data);
+      cursor = result.nextCursor;
+    } while (cursor);
+    return models;
+  }
+  return {
+    run,
+    answer,
+    close,
+    ready,
+    listSkills,
+    listModels,
+    isClosed: () => disposed,
+  };
+}
+function permissionSettings(mode, writableRoots) {
+  const fullAccess = mode === "full-access";
+  const readOnly = mode === "read-only";
+  const approvalPolicy = fullAccess ? "never" : "on-request";
+  const approvalsReviewer = mode === "auto-review" ? "auto_review" : "user";
+  return {
+    thread: {
+      approvalPolicy,
+      approvalsReviewer,
+      sandbox: fullAccess
+        ? "danger-full-access"
+        : readOnly
+          ? "read-only"
+          : "workspace-write",
+    },
+    turn: {
+      approvalPolicy,
+      approvalsReviewer,
+      sandboxPolicy: fullAccess
+        ? { type: "dangerFullAccess" }
+        : readOnly
+          ? { type: "readOnly" }
+          : { type: "workspaceWrite", writableRoots, networkAccess: false },
+    },
+  };
 }
 module.exports = { createCodexAgent, codexExecutable, agentArguments };

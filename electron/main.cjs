@@ -42,7 +42,7 @@ let saveQueue = Promise.resolve();
 let deadlineFeed;
 let feedTimer;
 const windowBackground = () =>
-  nativeTheme.shouldUseDarkColors ? "#1f1f1f" : "#fafbfc";
+  nativeTheme.shouldUseDarkColors ? "#1f1f1f" : "#f7f7f7";
 function applyAppearance() {
   nativeTheme.themeSource = state.appearance || "system";
   win?.setBackgroundColor(windowBackground());
@@ -583,9 +583,37 @@ app
     handle("synctex:forward", (id, file, line, rootId) =>
       core.synctexForward(project(id), file, line, rootId, environment),
     );
-    handle("synctex:inverse", (id, page, x, y) =>
-      core.synctexInverse(project(id), page, x, y, environment),
-    );
+    handle("synctex:inverse", async (id, page, x, y, url) => {
+      const p = project(id);
+      const document = pdfs.get(url);
+      if (!document || document.projectId !== id)
+        throw new Error("PDF session expired. Reopen the document.");
+      if (builds.has(id))
+        throw new Error(
+          "Wait for compilation to finish before locating the source.",
+        );
+      const main = await core.safeFile(p.folder, p.mainFile).catch(() => null);
+      if (!main || document.file !== core.pdfPath(main))
+        throw new Error(
+          "Source lookup requires this project's compiled PDF. Compile the manuscript and use its PDF preview.",
+        );
+      const metadata = await fs.stat(document.file).catch(() => null);
+      const version =
+        metadata &&
+        [
+          document.file,
+          id,
+          document.name,
+          document.sourcePath,
+          metadata.size,
+          metadata.mtimeMs,
+        ].join("\0");
+      if (version !== document.version)
+        throw new Error(
+          "The PDF has changed on disk. Compile again to refresh the preview before locating the source.",
+        );
+      return core.synctexInverse(p, page, x, y, environment);
+    });
     handle("terminal:start", async (id, mode) => {
       const p = project(id);
       if (!["local", "ssh"].includes(mode))
@@ -743,6 +771,7 @@ app
         ai.skills(id, rootId, forceReload),
       "ai:conversation": (id) => ai.conversation(id),
       "ai:send": (request) => ai.send(request),
+      "ai:queue": (request) => ai.queue(request),
       "ai:stop": (id) => ai.stop(id),
       "ai:clear": (id) => ai.clear(id),
       "ai:answer": (request) => ai.answer(request),

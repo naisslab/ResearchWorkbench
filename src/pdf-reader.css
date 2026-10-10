@@ -84,6 +84,16 @@
 .pdf-tools {
   margin-left: 8px;
 }
+.pdf-source-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  color: var(--muted);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-2xs);
+}
 .pdf-save-state {
   margin-left: auto;
   padding: 0 6px;
@@ -155,12 +165,14 @@
   height: 100%;
 }
 .pdf-page.tool-ink,
-.pdf-page.tool-note {
+.pdf-page.tool-note,
+.pdf-page.tool-source {
   cursor: crosshair;
   touch-action: none;
 }
 .pdf-page.tool-ink .textLayer,
-.pdf-page.tool-note .textLayer {
+.pdf-page.tool-note .textLayer,
+.pdf-page.tool-source .textLayer {
   pointer-events: none;
   user-select: none;
 }

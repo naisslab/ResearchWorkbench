@@ -1,8 +1,8 @@
 # Editor Syntax and Manuscripts
 
-The dark UI follows VS Code Dark Modern's neutral surfaces: editor `#1f1f1f`, sidebar `#181818`, subtle borders and muted ink-blue actions. Light mode uses a calmer Snazzy Light palette: lower-chroma syntax colors and an ink-blue accent. Source token colors carry semantic differences; dashboard surfaces remain neutral. System appearance and terminal sessions retain their existing behavior.
+The light UI uses neutral white and gray surfaces, a white editor, and near-black source text (`#202020`). Saturated blue actions and distinct green, purple, red, and teal syntax colors make controls and tokens easier to distinguish. Dark mode keeps charcoal surfaces (`#1f1f1f` editor, `#181818` sidebar), with brighter blue links (`#3794ff`) and brighter syntax colors. Filled blue buttons use a darker blue than links so their white labels remain legible. Terminal colors follow the editor palette; switching themes preserves the shell session.
 
-Light-mode chrome uses translucent white surfaces over a muted cool-gray background; only overlays (dialogs, the ⌘K finder and toasts) blur what is behind them. Source editors, terminals and PDF pages keep opaque reading surfaces. Reduced-transparency preferences use solid surfaces. The light material is the light-theme block of `src/tokens.css` and does not change dark-mode colors.
+Light-mode chrome uses solid neutral surfaces without a colored background gradient. Only overlays (dialogs, the ⌘K finder and toasts) use translucency and blur. Source editors, terminals and PDF pages keep opaque reading surfaces. Reduced-transparency preferences also make overlays solid. Theme colors live in `src/tokens.css`; terminal ANSI colors live in `src/TerminalPanel.tsx`.
 
 ## Syntax Engine
 

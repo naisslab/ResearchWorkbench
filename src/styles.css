@@ -615,8 +615,8 @@ h1 {
   padding: 4px 8px;
 }
 .button.primary {
-  border-color: var(--accent);
-  background: var(--accent);
+  border-color: var(--accent-fill);
+  background: var(--accent-fill);
   color: #fff;
 }
 .button.primary:hover:not(:disabled) {
@@ -625,6 +625,7 @@ h1 {
 }
 .button.danger {
   --accent: var(--danger);
+  --accent-fill: var(--danger);
   --accent-hover: var(--danger);
   color: var(--surface);
 }

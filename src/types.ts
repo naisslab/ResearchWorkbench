@@ -182,9 +182,18 @@ export interface ResearchAPI {
     projectId: string;
     message: string;
     model: string;
+    permissionMode?: AIPermissionMode;
+    reasoningEffort?: string;
+    serviceTier?: string;
     rootId: string;
     context?: AIContext;
     skillIds?: string[];
+  }): Promise<AIResult<AIConversation>>;
+  aiQueue(request: {
+    projectId: string;
+    action: "pause" | "resume" | "remove" | "move";
+    id?: string;
+    direction?: -1 | 1;
   }): Promise<AIResult<AIConversation>>;
   aiAnswer(request: {
     projectId: string;
@@ -309,6 +318,7 @@ export interface ResearchAPI {
     page: number,
     x: number,
     y: number,
+    pdfUrl: string,
   ): Promise<{ file: string; rootId: string; line: number } | null>;
   onCompileOutput(
     fn: (data: { projectId: string; text: string }) => void,
@@ -352,8 +362,22 @@ export interface AISession {
   }[];
   error?: AIErrorInfo;
 }
+export type AIPermissionMode =
+  "default" | "auto-review" | "read-only" | "full-access";
+export interface AIModel {
+  slug: string;
+  displayName: string;
+  supportedReasoningEfforts: { reasoningEffort: string; description: string }[];
+  defaultReasoningEffort?: string;
+  serviceTiers: { id: string; name: string; description: string }[];
+}
+export interface AIAgentSettings {
+  permissionMode: AIPermissionMode;
+  reasoningEffort?: string;
+  serviceTier: string;
+}
 export interface AIState extends AISession {
-  models: { slug: string; displayName: string }[];
+  models: AIModel[];
   modelError?: AIErrorInfo;
   usage: {
     requests: number;
@@ -388,6 +412,9 @@ export interface AIMessage {
   text: string;
   createdAt: string;
   model?: string;
+  permissionMode?: AIPermissionMode;
+  reasoningEffort?: string;
+  serviceTier?: string;
   status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
   attachments?: { name: string; kind: string }[];
   skills?: { name: string; displayName: string }[];
@@ -432,6 +459,20 @@ export interface AIConversation {
   profileId: string | null;
   agentRootId?: string;
   messages: AIMessage[];
+  queue?: AIQueuedRequest[];
+  queuePaused?: boolean;
+  queueError?: AIErrorInfo;
+}
+export interface AIQueuedRequest {
+  id: string;
+  text: string;
+  createdAt: string;
+  model: string;
+  permissionMode: AIPermissionMode;
+  reasoningEffort?: string;
+  serviceTier: string;
+  attachments: { name: string; kind: AIContext["kind"] }[];
+  skills: { name: string; displayName: string }[];
 }
 declare global {
   interface Window {

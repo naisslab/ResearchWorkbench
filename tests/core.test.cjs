@@ -138,6 +138,8 @@ test("LaTeX compilation creates a real PDF, maps lines with SyncTeX and reports 
   const buffer = await fs.readFile(result.pdf);
   assert.equal(buffer.subarray(0, 5).toString(), "%PDF-");
   const target = await core.synctexForward(p, "main.tex", 4, "primary", env);
+  const sourceMapPath = result.pdf.replace(/\.pdf$/, ".synctex.gz");
+  const sourceMap = await fs.readFile(sourceMapPath);
   assert.equal(target.page, 1);
   assert.deepEqual(
     await core.synctexInverse(p, target.page, target.x, target.y, env),
@@ -155,6 +157,76 @@ test("LaTeX compilation creates a real PDF, maps lines with SyncTeX and reports 
     await fs.readFile(result.pdf),
     buffer,
     "The last successful PDF must survive a failed build.",
+  );
+  assert.deepEqual(await fs.readFile(sourceMapPath), sourceMap);
+  assert.deepEqual(
+    await core.synctexInverse(p, target.page, target.x, target.y, env),
+    { file: "main.tex", rootId: "primary", line: 4 },
+    "The previous PDF must retain its matching source map after a failed build.",
+  );
+});
+
+test("SyncTeX locates included files on later pages through project paths with spaces and symlinks", async (t) => {
+  const root = await temporary(t);
+  const folder = path.join(root, "paper with spaces");
+  await fs.mkdir(path.join(folder, "sections"), { recursive: true });
+  await fs.writeFile(
+    path.join(folder, "main.tex"),
+    String.raw`\documentclass{article}
+\begin{document}
+Overview text on page one.
+\newpage
+\input{sections/details}
+\end{document}
+`,
+  );
+  await fs.writeFile(
+    path.join(folder, "sections", "details.tex"),
+    "\\section{Details}\n\nDistinct included text on page two.\n",
+  );
+  const linked = path.join(root, "linked paper");
+  await fs.symlink(folder, linked);
+  const project = { folder: linked, mainFile: "main.tex", localFolders: [] };
+  const env = {
+    ...process.env,
+    PATH: "/Library/TeX/texbin:" + process.env.PATH,
+  };
+  const result = await core.compile(project, undefined, env);
+  assert.equal(result.ok, true, result.log);
+  const target = await core.synctexForward(
+    project,
+    "sections/details.tex",
+    3,
+    "primary",
+    env,
+  );
+  assert.equal(target.page, 2);
+  assert.deepEqual(
+    await core.synctexInverse(project, target.page, target.x, target.y, env),
+    {
+      file: "sections/details.tex",
+      rootId: "primary",
+      line: 3,
+    },
+  );
+  for (const position of [
+    [0, 1, 1],
+    [1.5, 1, 1],
+    [1, NaN, 1],
+    [1, 1, Infinity],
+    [1, -1, 1],
+  ])
+    await assert.rejects(
+      core.synctexInverse(project, ...position, env),
+      /Invalid PDF position/,
+    );
+  assert.equal(await core.synctexInverse(project, 9999, 10, 10, env), null);
+  await assert.rejects(
+    core.synctexInverse(project, target.page, target.x, target.y, {
+      ...env,
+      PATH: path.join(root, "missing-tools"),
+    }),
+    /synctex is missing/,
   );
 });
 

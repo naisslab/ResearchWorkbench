@@ -2,7 +2,7 @@
 
 一个面向 Mac 的本地研究工作台，把研究项目、论文阶段、里程碑、LaTeX 编辑、PDF 预览和终端放在同一个窗口。
 
-界面采用基于 [Snazzy Light](https://github.com/loilo/vscode-snazzy-light) 调低饱和度的浅色主题：近白色编辑区、浅灰色侧栏、墨蓝色强调色和柔和的语法高亮，颜色只用于传达含义。界面使用 Inter，编辑器和终端使用 JetBrains Mono；字体随应用打包，可离线使用。
+浅色主题采用中性白色和浅灰色底色，编辑器正文接近黑色。按钮、链接、项目阶段和语法高亮使用更鲜明的蓝、绿、紫等颜色。深色主题保留炭灰色底色，强调色与语法颜色更明亮；编辑器和终端共用一致的配色方向。界面使用 Inter，编辑器和终端使用 JetBrains Mono；字体随应用打包，可离线使用。
 
 ## 启动
 
@@ -25,7 +25,7 @@ npm run package
 
 1. 在 Overview 点击 **New project**，选择研究方向和当前阶段。工作区预设 ML Systems、Security and Privacy 和 Cyber-Physical Systems，也支持自定义方向。
 2. 在项目详情中添加下一步任务、研究笔记和目标会议。在 **Workbench setup** 选择本地项目目录和 LaTeX 入口文件。
-3. 点击 **Open workbench**。左侧选择 `.tex`、`.bib` 或笔记文件，中间编辑，右侧查看 PDF。`⌘S` 保存文件，**Compile**（`⌘↵`）保存当前编辑文件并执行 `latexmk`，编译中可点 **Stop** 停止。Build log 把 `file:line` 错误和未定义的引用列为 Problems，点击跳到对应行。`⇧⌘J` 或 **Show in PDF** 在 PDF 中定位光标所在行，`⌘`-点击 PDF 跳回源码。`.tex` 文件显示字数和 Outline，`\cite{`、`\ref{`、`\begin{` 提供补全。文件在外部被修改时，未编辑的内容自动重新载入，有未保存编辑时提示 **Reload** 或 **Keep mine**；切换文件或离开工作台前会询问是否保存。
+3. 点击 **Open workbench**。左侧选择 `.tex`、`.bib` 或笔记文件，中间编辑，右侧查看 PDF。`⌘S` 保存文件，**Compile**（`⌘↵`）保存当前编辑文件并执行 `latexmk`，编译中可点 **Stop** 停止。Build log 把 `file:line` 错误和未定义的引用列为 Problems，点击跳到对应行。`⇧⌘J` 或 **Show in PDF** 在 PDF 中定位光标所在行；双击 PDF，或启用 **Jump to source** 后单击，跳回源码对应行。`.tex` 文件显示字数和 Outline，`\cite{`、`\ref{`、`\begin{` 提供补全。文件在外部被修改时，未编辑的内容自动重新载入，有未保存编辑时提示 **Reload** 或 **Keep mine**；切换文件或离开工作台前会询问是否保存。
 4. 底部终端支持本机交互式 shell。设置 `user@hostname` 或 SSH config alias 后，切换 **SSH**。端口、密钥和代理配置使用 `~/.ssh/config`；密码和主机密钥确认在终端完成。
 5. 在 **Project board** 拖动卡片，或用卡片菜单切换阶段：Idea Exploration、Experiments、Paper Writing、Submitted、Revision、Published。
 6. **Dates & deadlines** 的 My dates 汇总独立会议日期和个人事项；首次启动会从本机 `mac-ddl-count` 导入已保存的日期、状态和来源（`RESEARCH_MAC_DDL_DIR` 可指定其他目录）。CCF conferences 可搜索会议并添加 Abstract、Paper 等日期；Project milestones 保留每个项目的里程碑。左侧角标、Overview 和此页的计数来自同一份日期列表，角标表示 7 天内到期的数量。项目详情中关联的会议日期可直接点开编辑。删除日期、里程碑、任务或项目后，提示条提供 **Undo**。
@@ -34,9 +34,11 @@ npm run package
 
 启动时自动将 Current research 的 22 个项目加入工作区，按 ML Systems、Security and Privacy、Cyber-Physical Systems 分组显示在左侧，并进入 Project board。升级已有工作区时移除六个示例项目，保留已有真实项目的笔记、任务和阶段；全部迁移合并为一次写入，写入前保存一份备份。此操作只执行一次，之后删除的项目不会在重启时重新加入。
 
-左侧列表、Overview 和 Project board 优先显示写作和修改中的项目，已录用、已发表的项目放在后面。同一阶段按最近的投稿或修改截止日排序。在看板中点击左侧研究方向可筛选项目。FlowWise 已标为 Accepted。
+Project board 按研究时间线排列阶段：Idea Exploration → Experiments → Paper Writing → Submitted → Revision → Accepted → Published。左侧列表和 Overview 优先显示写作和修改中的项目，已录用、已发表的项目放在后面。同一阶段按最近的投稿或修改截止日排序。在看板中点击左侧研究方向可筛选项目。FlowWise 已标为 Accepted。
 
 ## PDF 标注
+
+在工作台编译稿件后，双击 PDF 中的文字会打开对应的源文件，并将光标定位到源文件的行。PDF 工具栏中的 **Jump to source** 切换为单击定位，按 Esc 恢复文字选择；也支持 `⌘` 点击或 `Ctrl` 点击。定位支持多页 PDF、`\input` 引入的子文件、缩放和旋转页面；在 **Agent + PDF** 或展开 PDF 时会自动显示编辑器。切换文件前仍会提示保存未保存的修改。源码定位使用编译生成的 SyncTeX 数据；其他本地 PDF、旧版批注快照和过期预览会显示提示，要求使用当前编译产物。
 
 右侧阅读器支持文字选择、高亮、便签和画笔，提供四种标注颜色。点击 **Show PDF annotations** 查看批注列表、搜索内容或跳到对应页面；选择批注后可编辑评论或删除，工具栏支持撤销。扫描件没有文字层时，可使用便签和画笔。
 
@@ -50,9 +52,13 @@ npm run package
 
 模型菜单读取该账户实时返回的可用模型。选择项目目录后，可要求 Agent 修改多个文件、运行脚本或修复 LaTeX 编译。**Current file** 和 **Selection** 附加文本快照；发送前保存当前编辑文件，运行时暂停编辑，结束后刷新文件、PDF 和 Git 状态。执行记录可展开查看命令输出及文件 diff，需要额外访问时在 AI 页审批。**Stop** 中断当前任务，已完成的文件修改会保留。
 
+输入框底部使用 Codex 风格的权限和模型菜单。**Default permissions** 允许在项目目录内工作，额外访问由用户审批；**Approve for me** 保留项目目录限制，由 Codex 自动审查额外访问请求；**Read only** 用于检查文件，修改或额外访问需审批；**Full access** 允许访问本机文件和网络，无需逐次审批。模型菜单提供 **Reasoning Effort** 和 **Standard / Fast**，选项来自随应用打包的 Codex `model/list` 能力目录。推理强度支持拖动滑块、点击选项和键盘调整；重置按钮恢复模型默认值。菜单、选中标记和滑块具有过渡动画，并遵守系统减少动态效果设置。Fast 的速度和用量说明采用目录返回的文本；不支持 Fast 的模型仅显示 Standard。权限按账户和项目保存，推理强度与速度再按模型保存，重启后恢复。运行期间可以调整下一条指令的设置。
+
+Agent 运行期间，按 Enter 或点击 **Queue message** 可继续提交指令，最多等待 20 条。队列按顺序执行；每条指令保留提交时的模型、权限、推理强度、速度、附件快照和 Skills。输入框上方显示等待队列，可调整顺序、删除或 **Pause / Resume**。Pause 让当前任务继续完成；Stop 中断当前任务并暂停队列。任务失败、切换账户或关闭应用后，等待指令会保留并暂停，点击 Resume 继续。开始执行前会重新检查模型、项目目录和 Skills；不可用时暂停并显示原因。队列按账户和项目保存，New AI chat 同时清空等待指令。
+
 Agent 回复支持 Markdown、列表、表格和带复制按钮的代码块。文件链接在编辑器打开，可定位到行号；PDF 链接在预览区打开。**Work log** 收起执行过程，**Review changes** 展开完整 diff。在 **All panels** 模式下，AI 默认使用约半个工作区高度，与 Terminal 分别记忆大小；拖动面板顶部的横条调整，双击恢复默认。**Expand AI** 切换到完整对话视图，打开文件后恢复分栏。输入框自动增高，Enter 发送，Shift+Enter 换行，⌘Enter 也可发送。上翻阅读时停止自动跟随，**Jump to latest** 返回最新回复。
 
-**Skills** 在输入框旁，可搜索并选择本轮使用的 skill。在空输入框按 `$` 也可打开菜单。应用通过 Codex 原生 `skills/list` 读取用户的 `~/.agents/skills`、`~/.codex/skills` 和当前项目的 skills；发送时使用正式的 skill 输入载入 `SKILL.md`。`scale-writing` 优先显示，直接使用本机安装版本及其参考文件，不复制或改写定义。选中的 skill 会显示为标签，发送成功后清空选择，消息历史保留 skill 名称。**Refresh skills** 重新发现安装或更新的 skills。Skills 不需要额外 API key，Agent 仍使用当前 ChatGPT 授权和所选模型。
+**Skills** 在输入框旁，可搜索并选择本轮使用的 skill。在消息输入框输入 `/` 弹出技能建议，输入 `/scale` 等名称实时筛选。方向键选择，Enter 或 Tab 确认，Esc 关闭并保留文字；也可点击建议。选中后，`/名称` 替换为技能标签，焦点留在输入框，可继续写请求或添加其他技能。运行期间同样可为下一条排队指令选择技能。文件路径和 URL 保留为普通文字。在空输入框按 `$` 也可打开搜索菜单。应用通过 Codex 原生 `skills/list` 读取用户的 `~/.agents/skills`、`~/.codex/skills` 和当前项目的 skills；发送时使用正式的 skill 输入载入 `SKILL.md`。`scale-writing` 优先显示，直接使用本机安装版本及其参考文件，不复制或改写定义。选中的 skill 会显示为标签，发送成功后清空选择，消息历史保留 skill 名称。**Refresh skills** 重新发现安装或更新的 skills。Skills 不需要额外 API key，Agent 仍使用当前 ChatGPT 授权和所选模型。
 
 当前没有接入 Codex 自带 Dictation；检查公开 app-server 协议后，仍未确认能复用其听写服务及订阅授权。可先启用 [macOS 系统听写](https://support.apple.com/zh-cn/guide/mac-help/mh40584/mac)，聚焦 AI 输入框后通过系统听写快捷键输入文本。应用没有调用另行计费的音频 API。
 
@@ -85,7 +91,9 @@ npm run test:e2e
 npm run test:ai-ui
 ```
 
-`test:e2e` 依次运行 `test:ui`、`test:git-ui`、`test:deadlines`、`test:pdf-ui` 和 `test:layout-ui`。核心测试验证数据保存、导入校验、目录边界、SSH 参数和实际 LaTeX 成功／失败编译。桌面集成测试在隔离数据目录启动 Electron，验证项目创建、任务、日期、阶段、PTY shell、PDF 响应、编译错误、文件保存及重启后的数据恢复；它们通过 `RESEARCH_MAC_DDL_DIR` 读取 `tests/fixtures/mac-ddl-count` 下的合成日期，不读取本机 `mac-ddl-count`。
+`test:e2e` 依次运行 `test:ui`、`test:git-ui`、`test:deadlines`、`test:pdf-ui`、`test:synctex-ui` 和 `test:layout-ui`。核心测试验证数据保存、导入校验、目录边界、SSH 参数和实际 LaTeX 成功／失败编译。桌面集成测试在隔离数据目录启动 Electron，验证项目创建、任务、日期、阶段、PTY shell、PDF 响应、编译错误、文件保存及重启后的数据恢复；它们通过 `RESEARCH_MAC_DDL_DIR` 读取 `tests/fixtures/mac-ddl-count` 下的合成日期，不读取本机 `mac-ddl-count`。
+
+`test:synctex-ui` 使用真实 LaTeX 与 SyncTeX 验证双击和单击源码定位、子文件、缩放、旋转、布局切换、未保存修改保护，以及缺少源码映射或预览过期时的提示。
 
 AI 测试验证签名身份、PKCE 回调、加密凭据、刷新令牌恢复、账户隔离、Agent JSON-RPC、真实样例文件修改、脚本执行和审批。AI 界面测试使用隔离的模拟账户，不调用真实模型或消耗订阅；真实登录需在系统浏览器完成。
 

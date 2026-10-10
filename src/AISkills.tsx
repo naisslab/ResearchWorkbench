@@ -10,6 +10,55 @@ const scopeLabel = {
   admin: "Managed",
 };
 
+export function useSkillPopupPosition(
+  anchor: HTMLElement | null,
+  fitAnchor = false,
+) {
+  const [position, setPosition] = useState<{
+    left: number;
+    bottom?: number;
+    top?: number;
+    maxHeight: number;
+    width: number;
+  }>({ left: 12, bottom: 12, maxHeight: 400, width: 370 });
+  useLayoutEffect(() => {
+    const place = () => {
+      if (!anchor) return;
+      const rect = anchor.getBoundingClientRect();
+      const above = rect.top >= 240;
+      const width = Math.min(
+        370,
+        window.innerWidth - 24,
+        fitAnchor ? rect.width : 370,
+      );
+      setPosition({
+        width,
+        left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)),
+        ...(above
+          ? { bottom: window.innerHeight - rect.top + 8 }
+          : { top: rect.bottom + 8 }),
+        maxHeight: Math.min(
+          440,
+          above ? rect.top - 20 : window.innerHeight - rect.bottom - 20,
+        ),
+      });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    const observer = new ResizeObserver(place);
+    if (anchor) observer.observe(anchor);
+    if (anchor?.closest(".ai-composer"))
+      observer.observe(anchor.closest(".ai-composer")!);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+      observer.disconnect();
+    };
+  }, [anchor, fitAnchor]);
+  return position;
+}
+
 export default function AISkills({
   catalog,
   loading,
@@ -30,38 +79,7 @@ export default function AISkills({
   anchor: HTMLButtonElement | null;
 }) {
   const [query, setQuery] = useState("");
-  const [position, setPosition] = useState<{
-    left: number;
-    bottom?: number;
-    top?: number;
-    maxHeight: number;
-  }>({ left: 12, bottom: 12, maxHeight: 400 });
-  useLayoutEffect(() => {
-    const place = () => {
-      if (!anchor) return;
-      const rect = anchor.getBoundingClientRect();
-      const above = rect.top >= 240;
-      setPosition({
-        left: Math.max(12, Math.min(rect.left, window.innerWidth - 382)),
-        ...(above
-          ? { bottom: window.innerHeight - rect.top + 8 }
-          : { top: rect.bottom + 8 }),
-        maxHeight: Math.min(
-          440,
-          above ? rect.top - 20 : window.innerHeight - rect.bottom - 20,
-        ),
-      });
-    };
-    place();
-    window.addEventListener("resize", place);
-    const observer = new ResizeObserver(place);
-    if (anchor?.closest(".ai-composer"))
-      observer.observe(anchor.closest(".ai-composer")!);
-    return () => {
-      window.removeEventListener("resize", place);
-      observer.disconnect();
-    };
-  }, [anchor]);
+  const position = useSkillPopupPosition(anchor);
   const skills = (catalog?.skills || [])
     .filter((skill) =>
       `${skill.name} ${skill.displayName} ${skill.description}`

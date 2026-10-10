@@ -76,6 +76,7 @@ contextBridge.exposeInMainWorld("research", {
   aiSkills: invoke("ai:skills"),
   aiConversation: invoke("ai:conversation"),
   aiSend: invoke("ai:send"),
+  aiQueue: invoke("ai:queue"),
   aiStop: invoke("ai:stop"),
   aiClear: invoke("ai:clear"),
   aiAnswer: invoke("ai:answer"),

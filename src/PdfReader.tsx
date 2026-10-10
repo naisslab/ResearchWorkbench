@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent,
   type PointerEvent,
 } from "react";
 import {
@@ -25,6 +26,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Crosshair,
   Highlighter,
   History,
   LoaderCircle,
@@ -59,7 +61,7 @@ const colors: Record<AnnotationColor, string> = {
   blue: "#4d94db",
   rose: "#d6668d",
 };
-type Tool = "select" | "highlight" | "note" | "ink";
+type Tool = "select" | "source" | "highlight" | "note" | "ink";
 type Flash = PdfTarget & { nonce: number };
 /** Keeps a reading spot fixed while pages resize: `offset` (a fraction of `page`) sits `y` px below the scroller top. */
 type Anchor = { page: number; offset: number; y: number };
@@ -118,6 +120,7 @@ const PdfPage = memo(function PdfPage({
   flash,
   add,
   select,
+  searchSource,
   report,
 }: {
   document: PDFDocumentProxy;
@@ -131,6 +134,7 @@ const PdfPage = memo(function PdfPage({
   flash?: Flash;
   add(item: PdfAnnotation): void;
   select(id: string): void;
+  searchSource(target: PdfTarget): void;
   report(message: string): void;
 }) {
   const element = useRef<HTMLDivElement>(null),
@@ -252,6 +256,29 @@ const PdfPage = memo(function PdfPage({
     );
     return { x, y };
   };
+  const showSource = (event: MouseEvent) => {
+    if (
+      !page ||
+      !viewport ||
+      !sharp ||
+      event.button !== 0 ||
+      (event.target as HTMLElement).closest(".pdf-note-pin")
+    )
+      return;
+    event.preventDefault();
+    const box = element.current!.getBoundingClientRect();
+    const [x, y] = viewport.convertToPdfPoint(
+      (event.clientX - box.left) * (viewport.width / box.width),
+      (event.clientY - box.top) * (viewport.height / box.height),
+    );
+    // SyncTeX uses unrotated points from the top-left, while annotations use
+    // PDF coordinates from the bottom-left. The viewport also handles zoom.
+    searchSource({
+      page: number,
+      x: x - page.view[0],
+      y: page.view[3] - y,
+    });
+  };
   const endStroke = (event: PointerEvent) => {
     if (!stroke.current || !viewport) return;
     const points = stroke.current;
@@ -267,6 +294,17 @@ const PdfPage = memo(function PdfPage({
       className={`pdf-page tool-${tool}`}
       data-page-number={number}
       data-rendered={rendered}
+      onClick={(event) => {
+        if (
+          event.detail <= 1 &&
+          (tool === "source" || event.metaKey || event.ctrlKey)
+        )
+          showSource(event);
+      }}
+      onDoubleClick={(event) => {
+        if (tool === "select" && !event.metaKey && !event.ctrlKey)
+          showSource(event);
+      }}
       style={
         {
           width,
@@ -284,6 +322,7 @@ const PdfPage = memo(function PdfPage({
           !sharp ||
           event.button !== 0 ||
           event.metaKey ||
+          event.ctrlKey ||
           (event.target as HTMLElement).closest(".pdf-note-pin")
         )
           return;
@@ -309,6 +348,7 @@ const PdfPage = memo(function PdfPage({
           endStroke(event);
           return;
         }
+        if (event.metaKey || event.ctrlKey) return;
         if (tool !== "highlight" || !viewport || !sharp) return;
         const selection = window.getSelection();
         if (
@@ -485,7 +525,7 @@ export default memo(function PdfReader({
   onViewChange(view: PdfView): void;
   /** Scrolls to the target and flashes a marker there; a new `nonce` repeats it. */
   reveal?: Flash;
-  onInverseSearch(target: PdfTarget): void;
+  onInverseSearch(target: PdfTarget): Promise<void>;
   expanded: boolean;
   onExpand(): void;
 }) {
@@ -498,6 +538,26 @@ export default memo(function PdfReader({
   const [error, setError] = useState(""),
     [saving, setSaving] = useState(false),
     [savedAt, setSavedAt] = useState("");
+  const [sourceError, setSourceError] = useState("");
+  const [searchingSource, setSearchingSource] = useState(false);
+  const sourceSearch = useRef(false);
+  const searchSource = useCallback(
+    async (target: PdfTarget) => {
+      if (sourceSearch.current) return;
+      sourceSearch.current = true;
+      setSearchingSource(true);
+      setSourceError("");
+      try {
+        await onInverseSearch(target);
+      } catch (error) {
+        setSourceError((error as Error).message);
+      } finally {
+        sourceSearch.current = false;
+        setSearchingSource(false);
+      }
+    },
+    [onInverseSearch],
+  );
   const [exporting, setExporting] = useState(false),
     [exported, setExported] = useState(false);
   const [versions, setVersions] = useState<PdfVersion[]>([]),
@@ -836,6 +896,7 @@ export default memo(function PdfReader({
           {(
             [
               ["select", MousePointer2, "Select text"],
+              ["source", Crosshair, "Jump to source"],
               ["highlight", Highlighter, "Highlight text"],
               ["note", MessageSquare, "Add PDF note"],
               ["ink", Pencil, "Draw on PDF"],
@@ -983,6 +1044,30 @@ export default memo(function PdfReader({
           </div>
         )}
       </div>
+      <div className="pdf-source-hint" role="status">
+        {searchingSource ? (
+          <>
+            <LoaderCircle size={11} className="spin" /> Finding source…
+          </>
+        ) : tool === "source" ? (
+          "Click a PDF location to open its source line · Esc to select text"
+        ) : tool !== "select" ? (
+          "⌘/Ctrl-click to jump to source · Esc to select text"
+        ) : (
+          "Double-click to jump to source · ⌘/Ctrl-click also works"
+        )}
+      </div>
+      {sourceError && (
+        <div className="pdf-reader-error" role="alert">
+          {sourceError}
+          <button
+            aria-label="Dismiss source lookup error"
+            onClick={() => setSourceError("")}
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
       {error && (
         <div className="pdf-reader-error" role="alert">
           {error}
@@ -1004,21 +1089,6 @@ export default memo(function PdfReader({
             setPageNumber(at.page);
             reportView(at);
           }}
-          onClick={(event) => {
-            const page = (event.target as HTMLElement).closest<HTMLElement>(
-              ".pdf-page",
-            );
-            if (!event.metaKey || !page) return;
-            const box = page.getBoundingClientRect(),
-              scale = Number(
-                page.style.getPropertyValue("--total-scale-factor"),
-              );
-            onInverseSearch({
-              page: Number(page.dataset.pageNumber),
-              x: (event.clientX - box.left) / scale,
-              y: (event.clientY - box.top) / scale,
-            });
-          }}
         >
           {document ? (
             Array.from({ length: pageCount }, (_, index) => (
@@ -1035,6 +1105,7 @@ export default memo(function PdfReader({
                 flash={reveal?.page === index + 1 ? reveal : undefined}
                 add={add}
                 select={select}
+                searchSource={searchSource}
                 report={setError}
               />
             ))

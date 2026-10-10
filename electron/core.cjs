@@ -335,16 +335,40 @@ async function compile(project, onOutput, env = process.env, signal) {
   const output = path.dirname(pdf);
   await fs.mkdir(output, { recursive: true });
   const backup = path.join(output, `.previous-${crypto.randomUUID()}.pdf`);
+  const sourceMaps = [".synctex.gz", ".synctex"].map((extension) => ({
+    file: pdf.replace(/\.pdf$/, extension),
+    backup: backup.replace(/\.pdf$/, extension),
+    saved: false,
+  }));
   const clone = (from, to) =>
     fs.copyFile(from, to, fs.constants.COPYFILE_FICLONE);
   let hasBackup = false;
+  let started = false;
   try {
     await clone(pdf, backup);
     hasBackup = true;
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
+  const restore = async () => {
+    if (!hasBackup || !started) return;
+    await clone(backup, pdf);
+    for (const sourceMap of sourceMaps) {
+      if (sourceMap.saved) await clone(sourceMap.backup, sourceMap.file);
+      else await fs.rm(sourceMap.file, { force: true });
+    }
+  };
   try {
+    // A failed build keeps the PDF and its matching SyncTeX data together.
+    for (const sourceMap of sourceMaps) {
+      try {
+        await clone(sourceMap.file, sourceMap.backup);
+        sourceMap.saved = true;
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
+    started = true;
     const result = await new Promise((resolve, reject) => {
       const child = spawn(
         "latexmk",
@@ -417,21 +441,29 @@ async function compile(project, onOutput, env = process.env, signal) {
         resolve({ ok, log, pdf: ok ? pdf : null });
       });
     });
-    if (!result.ok && hasBackup) await clone(backup, pdf);
+    if (!result.ok) await restore();
     return result;
   } catch (error) {
-    if (hasBackup) await clone(backup, pdf);
+    await restore();
     throw error;
   } finally {
     await fs.rm(backup, { force: true });
+    for (const sourceMap of sourceMaps)
+      await fs.rm(sourceMap.backup, { force: true });
   }
 }
-// The first record of synctex's output; {} when the tool or position is unavailable.
+// The first record of synctex's output; {} when no position is available.
 async function synctex(args, env) {
   const { stdout } = await runFile("synctex", args, {
     env,
     timeout: 10000,
-  }).catch(() => ({ stdout: "" }));
+  }).catch((error) => {
+    if (error.code === "ENOENT")
+      throw new Error(
+        "synctex is missing. Install MacTeX or add your TeX tools to PATH, then restart the app.",
+      );
+    return { stdout: "" };
+  });
   const record = {};
   for (const [, key, value] of stdout.matchAll(/^(\w+):(.*)$/gm))
     record[key] ??= value;
@@ -453,7 +485,13 @@ async function synctexForward(project, file, line, rootId, env) {
     : null;
 }
 async function synctexInverse(project, page, x, y, env) {
-  if (![page, x, y].every(Number.isFinite))
+  if (
+    !Number.isInteger(page) ||
+    page < 1 ||
+    ![x, y].every(Number.isFinite) ||
+    x < 0 ||
+    y < 0
+  )
     throw new Error("Invalid PDF position.");
   const main = await builtMain(project);
   if (!main) return null;
@@ -462,14 +500,19 @@ async function synctexInverse(project, page, x, y, env) {
     env,
   );
   if (!r.Input) return null;
-  const input = path.resolve(path.dirname(main), r.Input);
+  const line = Number(r.Line);
+  if (!Number.isInteger(line) || line < 1) return null;
+  const input = await fs
+    .realpath(path.resolve(path.dirname(main), r.Input))
+    .catch(() => null);
+  if (!input || !isTextFile(input)) return null;
   for (const root of projectRoots(project)) {
     const base = await fs.realpath(root.folder).catch(() => "");
     if (base && input.startsWith(base + path.sep))
       return {
         file: path.relative(base, input),
         rootId: root.id,
-        line: Math.max(1, Number(r.Line) || 1),
+        line,
       };
   }
   return null;

@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useId,
   useRef,
   useState,
 } from "react";
@@ -25,6 +26,9 @@ import {
   Check,
   LoaderCircle,
   BookOpen,
+  ListPlus,
+  Pause,
+  Play,
 } from "lucide-react";
 import type {
   AIApproval,
@@ -40,6 +44,16 @@ import type {
 import AIMarkdown, { CopyAction } from "./AIMarkdown";
 import AIActivityLog from "./AIActivityLog";
 import AISkills from "./AISkills";
+import AISkillSuggestions from "./AISkillSuggestions";
+import {
+  findSkillCommand,
+  skillSuggestions,
+  type SkillCommand,
+} from "./skillCommands";
+import AIAgentControls, {
+  effortLabel,
+  useAIAgentSettings,
+} from "./AIAgentControls";
 import "./ai.css";
 
 async function unwrap<T>(promise: Promise<AIResult<T>>) {
@@ -341,6 +355,11 @@ export default function AIPanel({
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillsError, setSkillsError] = useState("");
   const [selectedSkills, setSelectedSkills] = useState<AISkill[]>([]);
+  const [skillCommand, setSkillCommand] = useState<SkillCommand | null>(null);
+  const [activeSkillId, setActiveSkillId] = useState<string>();
+  const dismissedSkillCommand = useRef("");
+  const composing = useRef(false);
+  const suggestionsId = `ai-skill-suggestions-${useId()}`;
   const skillRequest = useRef(0);
   const [showLatest, setShowLatest] = useState(false);
   const stateRef = useRef<AIState | null>(null);
@@ -351,12 +370,20 @@ export default function AIPanel({
   const skillButton = useRef<HTMLButtonElement>(null);
   const stickToBottom = useRef(true);
   const wasRunning = useRef(false);
+  const submitting = useRef(false);
   const draftKey = `research-workbench.ai-draft.${state?.activeProfileId || "disconnected"}.${project.id}`;
   const running = conversation.messages.some(
     (message) => message.status === "running",
   );
-  const busy = running || operation === "send";
+  const queued = conversation.queue || [];
+  const busy =
+    running ||
+    operation === "send" ||
+    (!!queued.length && !conversation.queuePaused);
   const profile = state?.profiles.find((p) => p.id === state.activeProfileId);
+  const selectedModel = state?.models.find((m) => m.slug === model);
+  const { settings: agentSettings, update: updateAgentSettings } =
+    useAIAgentSettings(state?.activeProfileId, project.id, selectedModel);
   const roots = [
     ...(project.folder
       ? [
@@ -399,6 +426,8 @@ export default function AIPanel({
     setSkillCatalog(null);
     setSelectedSkills([]);
     setSkillsOpen(false);
+    setSkillCommand(null);
+    dismissedSkillCommand.current = "";
     setSkillsError("");
     return () => {
       skillRequest.current++;
@@ -409,8 +438,11 @@ export default function AIPanel({
       void loadSkills();
   }, [visible, root, skillCatalog, skillsLoading, skillsError, loadSkills]);
   useEffect(() => {
-    if (!visible || busy) setSkillsOpen(false);
-  }, [visible, busy]);
+    if (!visible) {
+      setSkillsOpen(false);
+      setSkillCommand(null);
+    }
+  }, [visible]);
   const closeSkills = () => {
     setSkillsOpen(false);
     input.current?.focus();
@@ -490,6 +522,8 @@ export default function AIPanel({
   useEffect(() => {
     let disposed = false;
     setContext(undefined);
+    setSkillCommand(null);
+    dismissedSkillCommand.current = "";
     stickToBottom.current = true;
     setShowLatest(false);
     setError("");
@@ -518,6 +552,8 @@ export default function AIPanel({
   }, [project.id, state?.activeProfileId, draftKey]);
   function updateDraft(value: string) {
     setDraft(value);
+    setSkillCommand(null);
+    dismissedSkillCommand.current = "";
     try {
       if (value) localStorage.setItem(draftKey, value);
       else localStorage.removeItem(draftKey);
@@ -596,10 +632,16 @@ export default function AIPanel({
     return () => resize.disconnect();
   }, []);
   useEffect(() => {
+    let current = true;
     if (wasRunning.current && !busy)
-      void onFilesChanged().finally(() => onRunning(false));
+      void onFilesChanged().finally(() => {
+        if (current) onRunning(false);
+      });
     else onRunning(busy);
     wasRunning.current = busy;
+    return () => {
+      current = false;
+    };
   }, [busy, onFilesChanged, onRunning]);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
@@ -662,27 +704,61 @@ export default function AIPanel({
     });
   }
   async function send() {
-    if (!draft.trim() || busy || !model || !state?.sharing || !root) return;
+    if (
+      !draft.trim() ||
+      skillCommand ||
+      submitting.current ||
+      operation ||
+      !model ||
+      !state?.sharing ||
+      !root ||
+      !state.runtime.available
+    )
+      return;
+    submitting.current = true;
     const message = draft;
     stickToBottom.current = true;
-    await perform("send", async () => {
-      await prepare();
-      const next = await unwrap(
-        window.research!.aiSend({
-          projectId: project.id,
-          message,
-          model,
-          rootId: agentRoot,
-          context,
-          skillIds: selectedSkills.map((skill) => skill.id),
-        }),
+    try {
+      await perform("send", async () => {
+        if (!busy) await prepare();
+        const next = await unwrap(
+          window.research!.aiSend({
+            projectId: project.id,
+            message,
+            model,
+            ...agentSettings,
+            rootId: agentRoot,
+            context,
+            skillIds: selectedSkills.map((skill) => skill.id),
+          }),
+        );
+        setConversation(next);
+        updateDraft("");
+        setContext(undefined);
+        setSelectedSkills([]);
+        setSkillsOpen(false);
+        input.current?.focus();
+      });
+    } finally {
+      submitting.current = false;
+    }
+  }
+  function manageQueue(
+    action: "pause" | "resume" | "remove" | "move",
+    id?: string,
+    direction?: -1 | 1,
+  ) {
+    void perform("queue", async () => {
+      setConversation(
+        await unwrap(
+          window.research!.aiQueue({
+            projectId: project.id,
+            action,
+            id,
+            direction,
+          }),
+        ),
       );
-      setConversation(next);
-      updateDraft("");
-      setContext(undefined);
-      setSelectedSkills([]);
-      setSkillsOpen(false);
-      input.current?.focus();
     });
   }
   function attach(kind: AIContext["kind"]) {
@@ -694,6 +770,66 @@ export default function AIPanel({
     });
   }
   const actionDisabled = !!operation || state?.status === "connecting";
+  const suggestedSkills = skillCommand
+    ? skillSuggestions(skillCatalog?.skills || [], skillCommand.query).filter(
+        (skill) =>
+          selectedSkills.length < 8 ||
+          selectedSkills.some((item) => item.id === skill.id),
+      )
+    : [];
+  const activeSkill =
+    suggestedSkills.find((skill) => skill.id === activeSkillId) ||
+    suggestedSkills[0];
+  const commandKey = (command: SkillCommand) =>
+    `${command.start}:${command.end}:${command.query}`;
+  function inspectSkillCommand(node: HTMLTextAreaElement) {
+    if (
+      composing.current ||
+      actionDisabled ||
+      !root ||
+      skillsOpen ||
+      !visible ||
+      node.selectionStart !== node.selectionEnd
+    ) {
+      setSkillCommand(null);
+      return;
+    }
+    const command = findSkillCommand(node.value, node.selectionStart);
+    if (command && dismissedSkillCommand.current === commandKey(command)) {
+      setSkillCommand(null);
+      return;
+    }
+    if (
+      command?.start !== skillCommand?.start ||
+      command?.query !== skillCommand?.query
+    )
+      setActiveSkillId(undefined);
+    setSkillCommand(command);
+    if (command) setPopover(null);
+  }
+  function closeSkillCommands() {
+    if (skillCommand) dismissedSkillCommand.current = commandKey(skillCommand);
+    setSkillCommand(null);
+  }
+  function chooseSkillCommand(skill: AISkill) {
+    if (
+      !skillCommand ||
+      (selectedSkills.length >= 8 &&
+        !selectedSkills.some((item) => item.id === skill.id))
+    )
+      return;
+    const before = draft.slice(0, skillCommand.start);
+    let after = draft.slice(skillCommand.end);
+    if (before.endsWith(" ") && after.startsWith(" ")) after = after.slice(1);
+    if (!selectedSkills.some((item) => item.id === skill.id))
+      setSelectedSkills((selected) => [...selected, skill]);
+    updateDraft(before + after);
+    setSkillsOpen(false);
+    requestAnimationFrame(() => {
+      input.current?.focus();
+      input.current?.setSelectionRange(before.length, before.length);
+    });
+  }
   const banner =
     error ||
     state?.error?.message ||
@@ -708,37 +844,7 @@ export default function AIPanel({
         <div className="ai-agent-label">
           <Sparkles size={13} />
           <strong>Agent</strong>
-          <span title="Can edit files and run commands in this project's attached folders">
-            Project access
-          </span>
         </div>
-        <select
-          aria-label="AI model"
-          value={model}
-          disabled={busy || !state?.sharing || !state.models.length}
-          onChange={(event) => {
-            setModel(event.target.value);
-            try {
-              localStorage.setItem(
-                `research-workbench.ai-model.${state?.activeProfileId}`,
-                event.target.value,
-              );
-            } catch {
-              /* Selection remains available this session. */
-            }
-          }}
-        >
-          {!state?.models.length && (
-            <option value="">
-              {operation === "models" ? "Loading models…" : "Select model"}
-            </option>
-          )}
-          {state?.models.map((m) => (
-            <option key={m.slug} value={m.slug}>
-              {m.displayName}
-            </option>
-          ))}
-        </select>
         <button
           className="icon-button"
           title="Refresh AI models"
@@ -1092,12 +1198,96 @@ export default function AIPanel({
         }}
       >
         <div className="ai-composer-inner">
+          {!!queued.length && (
+            <section className="ai-request-queue" aria-label="Queued requests">
+              <div className="ai-queue-heading">
+                <ListPlus size={13} />
+                <strong>{queued.length} queued</strong>
+                <span role="status">
+                  {conversation.queuePaused
+                    ? "Paused"
+                    : "Runs after the current request"}
+                </span>
+                <button
+                  type="button"
+                  disabled={actionDisabled}
+                  onClick={() =>
+                    manageQueue(conversation.queuePaused ? "resume" : "pause")
+                  }
+                  aria-label={
+                    conversation.queuePaused
+                      ? "Resume queued requests"
+                      : "Pause queued requests"
+                  }
+                >
+                  {conversation.queuePaused ? (
+                    <Play size={12} />
+                  ) : (
+                    <Pause size={12} />
+                  )}
+                  {conversation.queuePaused ? "Resume" : "Pause"}
+                </button>
+              </div>
+              {conversation.queueError && (
+                <p role="alert" className="ai-queue-error">
+                  {conversation.queueError.message}
+                </p>
+              )}
+              <ol>
+                {queued.map((item, index) => (
+                  <li key={item.id}>
+                    <span className="ai-queue-number">{index + 1}</span>
+                    <div className="ai-queue-request" title={item.text}>
+                      <p>{item.text}</p>
+                      <small>
+                        {state?.models.find((m) => m.slug === item.model)
+                          ?.displayName || item.model}
+                        {item.reasoningEffort
+                          ? ` · ${effortLabel(item.reasoningEffort)}`
+                          : ""}
+                        {item.attachments?.length ? " · attachment" : ""}
+                        {item.skills?.length
+                          ? ` · ${item.skills.map((s) => s.displayName).join(", ")}`
+                          : ""}
+                      </small>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={actionDisabled || index === 0}
+                      aria-label={`Move queued request ${index + 1} up`}
+                      onClick={() => manageQueue("move", item.id, -1)}
+                    >
+                      <ArrowUp size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={actionDisabled || index === queued.length - 1}
+                      aria-label={`Move queued request ${index + 1} down`}
+                      onClick={() => manageQueue("move", item.id, 1)}
+                    >
+                      <ArrowDown size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={actionDisabled}
+                      aria-label={`Remove queued request ${index + 1}`}
+                      onClick={() => manageQueue("remove", item.id)}
+                    >
+                      <X size={12} />
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
           <div className="ai-context-bar">
             <Folder size={11} />
             <select
               aria-label="Agent working folder"
               value={agentRoot}
-              disabled={busy || !!conversation.messages.length}
+              disabled={
+                busy || !!conversation.messages.length || !!queued.length
+              }
               title={root?.folder}
               onChange={(event) => setAgentRoot(event.target.value)}
             >
@@ -1113,7 +1303,7 @@ export default function AIPanel({
             <button
               type="button"
               title="Attach a snapshot of the current file"
-              disabled={busy || !file || !text.trim()}
+              disabled={actionDisabled || !file || !text.trim()}
               onClick={() => attach("file")}
             >
               <FileText size={11} /> Current file
@@ -1121,7 +1311,7 @@ export default function AIPanel({
             <button
               type="button"
               title="Attach selected text from the editor"
-              disabled={busy || !file || !selection.trim()}
+              disabled={actionDisabled || !file || !selection.trim()}
               onClick={() => attach("selection")}
             >
               <TextSelect size={11} /> Selection
@@ -1144,11 +1334,12 @@ export default function AIPanel({
               <button
                 type="button"
                 ref={skillButton}
-                title="Use an installed skill for this run ($)"
+                title="Choose skills, or type / in your message"
                 aria-label="Choose skills"
                 aria-expanded={skillsOpen}
-                disabled={busy || !root}
+                disabled={actionDisabled || !root}
                 onClick={() => {
+                  closeSkillCommands();
                   setSkillsOpen((open) => !open);
                   setPopover(null);
                 }}
@@ -1202,7 +1393,7 @@ export default function AIPanel({
                   {skill.displayName}
                   <button
                     type="button"
-                    disabled={busy}
+                    disabled={actionDisabled}
                     aria-label={`Remove ${skill.name}`}
                     onClick={() =>
                       setSelectedSkills((selected) =>
@@ -1217,24 +1408,112 @@ export default function AIPanel({
             </div>
           )}
           <div className="ai-input-row">
+            {skillCommand && (
+              <AISkillSuggestions
+                id={suggestionsId}
+                anchor={input.current}
+                skills={suggestedSkills}
+                query={skillCommand.query}
+                activeId={activeSkill?.id}
+                selected={selectedSkills}
+                loading={skillsLoading}
+                error={skillsError}
+                warnings={skillCatalog?.warnings || 0}
+                choose={chooseSkillCommand}
+                highlight={setActiveSkillId}
+                refresh={() => void loadSkills(true)}
+                close={closeSkillCommands}
+              />
+            )}
             <textarea
               ref={input}
               aria-label="Message the AI agent"
+              aria-autocomplete="list"
+              aria-haspopup="listbox"
+              aria-expanded={!!skillCommand}
+              aria-controls={skillCommand ? suggestionsId : undefined}
+              aria-activedescendant={
+                skillCommand && activeSkill
+                  ? `${suggestionsId}-${activeSkill.id}`
+                  : undefined
+              }
               value={draft}
+              readOnly={operation === "send"}
               placeholder={
                 busy
-                  ? "Draft your next request while the agent works…"
+                  ? "Send another request to add it to the queue…"
                   : state?.sharing
                     ? "Ask the agent to edit files, run a script, or fix a build…"
                     : "Connect ChatGPT, then tell the agent what to work on…"
               }
               rows={1}
-              onChange={(event) => updateDraft(event.target.value)}
+              onChange={(event) => {
+                updateDraft(event.target.value);
+                inspectSkillCommand(event.currentTarget);
+              }}
+              onSelect={(event) => inspectSkillCommand(event.currentTarget)}
+              onFocus={(event) => inspectSkillCommand(event.currentTarget)}
+              onBlur={(event) => {
+                if (
+                  !(event.relatedTarget instanceof Element) ||
+                  !event.relatedTarget.closest(".ai-skill-suggestions")
+                )
+                  closeSkillCommands();
+              }}
+              onCompositionStart={() => {
+                composing.current = true;
+                setSkillCommand(null);
+              }}
+              onCompositionEnd={(event) => {
+                composing.current = false;
+                inspectSkillCommand(event.currentTarget);
+              }}
               onKeyDown={(event) => {
+                if (
+                  composing.current ||
+                  event.nativeEvent.isComposing ||
+                  event.nativeEvent.keyCode === 229
+                )
+                  return;
+                if (skillCommand) {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    closeSkillCommands();
+                    return;
+                  }
+                  if (
+                    (event.key === "ArrowDown" || event.key === "ArrowUp") &&
+                    suggestedSkills.length
+                  ) {
+                    event.preventDefault();
+                    const index = suggestedSkills.findIndex(
+                      (skill) => skill.id === activeSkill?.id,
+                    );
+                    setActiveSkillId(
+                      suggestedSkills[
+                        (index +
+                          (event.key === "ArrowDown" ? 1 : -1) +
+                          suggestedSkills.length) %
+                          suggestedSkills.length
+                      ].id,
+                    );
+                    return;
+                  }
+                  if (
+                    (event.key === "Enter" && !event.shiftKey) ||
+                    (event.key === "Tab" && !event.shiftKey && activeSkill)
+                  ) {
+                    event.preventDefault();
+                    if (activeSkill) chooseSkillCommand(activeSkill);
+                    return;
+                  }
+                  if (event.key === "Tab") closeSkillCommands();
+                }
                 if (
                   event.key === "$" &&
                   !draft &&
-                  !busy &&
+                  !actionDisabled &&
                   root &&
                   !event.nativeEvent.isComposing
                 ) {
@@ -1253,31 +1532,58 @@ export default function AIPanel({
                 }
               }}
             />
-            {busy ? (
-              <button
-                className="ai-send ai-stop"
-                type="button"
-                title="Stop agent"
-                aria-label="Stop AI agent"
-                disabled={operation === "stop"}
-                onClick={() =>
-                  void perform("stop", async () =>
-                    setConversation(
-                      await unwrap(window.research!.aiStop(project.id)),
-                    ),
-                  )
+            <AIAgentControls
+              key={`${state?.activeProfileId}.${project.id}`}
+              models={state?.models || []}
+              model={selectedModel}
+              settings={agentSettings}
+              update={updateAgentSettings}
+              disabled={actionDisabled || !state?.sharing || !visible}
+              selectModel={(slug) => {
+                setModel(slug);
+                try {
+                  localStorage.setItem(
+                    `research-workbench.ai-model.${state?.activeProfileId}`,
+                    slug,
+                  );
+                } catch {
+                  /* Selection remains available this session. */
                 }
-              >
-                <Square size={13} fill="currentColor" />
-              </button>
-            ) : (
+              }}
+            />
+            <div className="ai-send-actions">
+              {busy && (
+                <button
+                  className="ai-send ai-stop"
+                  type="button"
+                  title="Stop agent"
+                  aria-label="Stop AI agent"
+                  disabled={actionDisabled}
+                  onClick={() =>
+                    void perform("stop", async () =>
+                      setConversation(
+                        await unwrap(window.research!.aiStop(project.id)),
+                      ),
+                    )
+                  }
+                >
+                  <Square size={13} fill="currentColor" />
+                </button>
+              )}
               <button
                 className="ai-send"
                 type="submit"
-                title="Send message (Enter)"
-                aria-label="Run AI agent"
+                title={
+                  busy || queued.length
+                    ? "Queue message (Enter)"
+                    : "Send message (Enter)"
+                }
+                aria-label={
+                  busy || queued.length ? "Queue message" : "Run AI agent"
+                }
                 disabled={
                   !draft.trim() ||
+                  !!skillCommand ||
                   !model ||
                   !state?.sharing ||
                   !root ||
@@ -1285,15 +1591,19 @@ export default function AIPanel({
                   !state.runtime.available
                 }
               >
-                <ArrowUp size={16} />
+                {busy || queued.length ? (
+                  <ListPlus size={16} />
+                ) : (
+                  <ArrowUp size={16} />
+                )}
               </button>
-            )}
+            </div>
           </div>
           <div className="ai-composer-hint">
             <span>
-              {busy
-                ? "Your draft will stay here until this run finishes."
-                : "Enter to send · Shift+Enter for a new line"}
+              {busy || queued.length
+                ? "Enter to queue · / for skills · Shift+Enter for a new line"
+                : "Enter to send · / for skills · Shift+Enter for a new line"}
             </span>
           </div>
         </div>

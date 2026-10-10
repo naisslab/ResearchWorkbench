@@ -11,6 +11,7 @@ let threadId = "fixture-thread",
   tokens = 0,
   pending;
 let skillRoots = [];
+let threadSettings;
 async function work(params) {
   const current = `fixture-turn-${turnId}`;
   const notification = (method, data) =>
@@ -23,6 +24,16 @@ async function work(params) {
     );
   if (text.includes("wait-for-stop")) {
     pending = { current, params };
+    return;
+  }
+  if (text.includes("fixture-failure")) {
+    notification("turn/completed", {
+      turn: {
+        id: current,
+        status: "failed",
+        error: { message: "Fixture failure" },
+      },
+    });
     return;
   }
   if (text.includes("request-approval") && !params.approved) {
@@ -147,7 +158,40 @@ readline.createInterface({ input: process.stdin }).on("line", async (line) => {
   }
   if (message.method === "initialize")
     send({ id: message.id, result: { userAgent: "fixture" } });
-  else if (message.method === "skills/extraRoots/set") {
+  else if (message.method === "model/list") {
+    send({
+      id: message.id,
+      result: {
+        data: [
+          {
+            model: "fixture-model",
+            defaultReasoningEffort: "medium",
+            supportedReasoningEfforts: [
+              { reasoningEffort: "low", description: "Lighter reasoning" },
+              { reasoningEffort: "medium", description: "Balanced reasoning" },
+              { reasoningEffort: "xhigh", description: "Deep reasoning" },
+            ],
+            serviceTiers: [
+              {
+                id: "priority",
+                name: "Fast",
+                description: "Faster responses, increased usage",
+              },
+            ],
+          },
+          {
+            model: "fixture-model-2",
+            defaultReasoningEffort: "low",
+            supportedReasoningEfforts: [
+              { reasoningEffort: "low", description: "Lighter reasoning" },
+            ],
+            serviceTiers: [],
+          },
+        ],
+        nextCursor: null,
+      },
+    });
+  } else if (message.method === "skills/extraRoots/set") {
     skillRoots = message.params.extraRoots;
     send({ id: message.id, result: {} });
   } else if (message.method === "skills/list") {
@@ -179,9 +223,18 @@ readline.createInterface({ input: process.stdin }).on("line", async (line) => {
     message.method === "thread/start" ||
     message.method === "thread/resume"
   ) {
+    threadSettings = message.params;
     threadId = message.params.threadId || threadId;
     send({ id: message.id, result: { thread: { id: threadId } } });
   } else if (message.method === "turn/start") {
+    await fs.appendFile(
+      path.join(message.params.cwd, "received-turns.jsonl"),
+      JSON.stringify(message.params) + "\n",
+    );
+    await fs.writeFile(
+      path.join(message.params.cwd, "received-agent-settings.json"),
+      JSON.stringify({ thread: threadSettings, turn: message.params }),
+    );
     turnId++;
     send({
       id: message.id,

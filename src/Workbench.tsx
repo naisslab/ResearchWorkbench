@@ -529,7 +529,10 @@ function Workbench({
         guard(() =>
           load(rootId, file, line).catch((error) => report(error.message)),
         );
-      else if (line && view.current) place(view.current, line);
+      else if (line)
+        requestAnimationFrame(() => {
+          if (view.current?.dom.isConnected) place(view.current, line);
+        });
     },
   );
   const removeRoot = useStableCallback(async (rootId: string) => {
@@ -575,19 +578,21 @@ function Workbench({
     }
   }
   const inverseSearch = useStableCallback(async (target: PdfTarget) => {
-    try {
-      const source = await window.research!.synctexInverse(
-        project.id,
-        target.page,
-        target.x,
-        target.y,
+    if (!pdf) return;
+    const source = await window.research!.synctexInverse(
+      project.id,
+      target.page,
+      target.x,
+      target.y,
+      pdf.url,
+    );
+    if (!source)
+      throw new Error(
+        "No source line was found here. Compile the manuscript to refresh its source map, then click near the text.",
       );
-      if (!source) return;
-      setExpandedPdf(false);
-      openFile(source.file, source.rootId, source.line);
-    } catch (error) {
-      report((error as Error).message);
-    }
+    setExpandedPdf(false);
+    setExpandedAI(false);
+    openFile(source.file, source.rootId, source.line);
   });
   const openReference = useStableCallback(
     async (reference: string, rootId: string) => {
@@ -627,6 +632,11 @@ function Workbench({
           name: project.mainFile.replace(/^.*\/|\.tex$/g, "") + ".pdf",
         });
         setShowPdf(true);
+      } else if (!result.ok) {
+        // A failed build restores the old PDF and map on disk. Refresh its
+        // session because copying the PDF back changes its modification time.
+        const previous = await window.research!.lastPdf(project.id);
+        if (previous) setPdf(previous);
       }
       if (!result.ok) showTab("build");
     } catch (error) {
@@ -1020,6 +1030,7 @@ function Workbench({
             </div>
           ) : active ? (
             <CodeMirror
+              key={`${activeRoot}:${active}`}
               value={text}
               height="100%"
               theme={dark ? darkEditor : lightEditor}
