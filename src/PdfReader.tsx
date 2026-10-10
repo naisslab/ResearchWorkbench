@@ -51,6 +51,12 @@ import type {
   PdfView,
 } from "./pdf-types";
 import { timeLabel } from "./dates";
+import {
+  indexPdfText,
+  matchingRects,
+  normalizePdfText,
+} from "../electron/pdf-text.mjs";
+import type { TextRect } from "../electron/pdf-text.mjs";
 
 // The 1 MB worker is bundled locally and loads with the first PDF. A blob
 // module also works in the packaged file:// renderer.
@@ -167,7 +173,7 @@ const PdfPage = memo(function PdfPage({
   const [draft, setDraft] = useState<PdfPoint[]>([]);
   const stroke = useRef<PdfPoint[] | null>(null);
   const [pageError, setPageError] = useState("");
-  const [textReady, setTextReady] = useState(false);
+  const [searchRects, setSearchRects] = useState<TextRect[]>([]);
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => setNear(entry.isIntersecting),
@@ -212,42 +218,35 @@ const PdfPage = memo(function PdfPage({
     layer.render().then(
       () => {
         textBuilt.current = true;
-        setTextReady(true);
       },
       () => {},
     );
     return () => layer.cancel();
   }, [near, page]);
   useEffect(() => {
-    if (!textReady || !text.current) return;
-    const elements = [...text.current.querySelectorAll<HTMLElement>("span")];
-    elements.forEach((element) => element.classList.remove("pdf-search-match"));
-    if (!flash?.query) return;
-    const normalize = (value: string) =>
-      value.normalize("NFKC").toLocaleLowerCase().replace(/\s+/g, " ").trim();
-    let content = "";
-    const offsets = elements.map((element) => {
-      const value = normalize(element.textContent || "");
-      if (
-        content &&
-        !(/[\u3000-\u9fff]$/.test(content) && /^[\u3000-\u9fff]/.test(value))
-      )
-        content += " ";
-      const start = content.length;
-      content += value;
-      return { element, start, end: content.length };
-    });
-    const query = normalize(flash.query);
+    setSearchRects([]);
+    if (!page || !flash?.query) return;
+    let cancelled = false;
+    const query = normalizePdfText(flash.query);
     if (!query) return;
-    let from = 0,
-      at = -1;
-    while ((at = content.indexOf(query, from)) >= 0) {
-      offsets
-        .filter((span) => span.end > at && span.start < at + query.length)
-        .forEach((span) => span.element.classList.add("pdf-search-match"));
-      from = at + query.length;
-    }
-  }, [textReady, flash?.nonce, flash?.query]);
+    void page
+      .getTextContent()
+      .then((content) => {
+        const { text, spans } = indexPdfText(content.items);
+        const rects: TextRect[] = [];
+        let from = 0,
+          at;
+        while ((at = text.indexOf(query, from)) >= 0 && rects.length < 2000) {
+          rects.push(...matchingRects(spans, at, query.length));
+          from = at + query.length;
+        }
+        if (!cancelled) setSearchRects(rects);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [page, flash?.nonce, flash?.query]);
   useEffect(() => {
     if (!near || !page || !viewport || sharp === viewport) return;
     let cancelled = false,
@@ -487,6 +486,26 @@ const PdfPage = memo(function PdfPage({
           height={viewport.height}
           aria-hidden="true"
         >
+          {searchRects.map((r, i) => {
+            const [x1, y1, x2, y2] = viewport.convertToViewportRectangle([
+              r.x,
+              r.y,
+              r.x + r.width,
+              r.y + r.height,
+            ]);
+            return (
+              <rect
+                key={`search-${i}`}
+                className="pdf-search-match"
+                x={Math.min(x1, x2)}
+                y={Math.min(y1, y2)}
+                width={Math.abs(x2 - x1)}
+                height={Math.abs(y2 - y1)}
+                fill="#eabf3d"
+                opacity={0.4}
+              />
+            );
+          })}
           {annotations.map((item) =>
             item.kind === "highlight" ? (
               <g key={item.id}>

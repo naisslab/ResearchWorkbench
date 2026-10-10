@@ -1,7 +1,13 @@
 const { Worker } = require("node:worker_threads");
 const fs = require("node:fs/promises");
 const path = require("node:path");
-function createSearch({ directory, workspace, ai, emit }) {
+function createSearch({
+  directory,
+  workspace,
+  ai,
+  emit,
+  WorkerClass = Worker,
+}) {
   let worker, pending;
   const stop = () => {
     pending?.resolve({
@@ -25,9 +31,12 @@ function createSearch({ directory, workspace, ai, emit }) {
         throw new Error("Enter 2–200 characters to search.");
       stop();
       if (!worker) {
-        worker = new Worker(path.join(__dirname, "search-worker.cjs"));
-        worker.on("message", (packet) => {
-          if (!pending || packet.id !== pending.id) return;
+        const instance = (worker = new WorkerClass(
+          path.join(__dirname, "search-worker.cjs"),
+        ));
+        instance.on("message", (packet) => {
+          if (worker !== instance || !pending || packet.id !== pending.id)
+            return;
           if (packet.error) {
             pending.reject(new Error(packet.error));
             pending = null;
@@ -37,12 +46,14 @@ function createSearch({ directory, workspace, ai, emit }) {
             pending = null;
           }
         });
-        worker.on("error", (error) => {
+        instance.on("error", (error) => {
+          if (worker !== instance) return;
           pending?.reject(error);
           pending = null;
           worker = null;
         });
-        worker.on("exit", () => {
+        instance.on("exit", () => {
+          if (worker !== instance) return;
           pending?.reject(new Error("Search stopped. Try again."));
           pending = null;
           worker = null;
@@ -57,6 +68,7 @@ function createSearch({ directory, workspace, ai, emit }) {
             initialWarnings = [];
           const folder = path.join(directory, "pdf-annotations");
           for (const name of await fs.readdir(folder).catch(() => [])) {
+            if (pending?.id !== id) return;
             if (!/^[a-f0-9]{64}\.json$/.test(name)) continue;
             try {
               const record = JSON.parse(
@@ -72,6 +84,7 @@ function createSearch({ directory, workspace, ai, emit }) {
             }
           }
           for (const project of projects) {
+            if (pending?.id !== id) return;
             try {
               for (const chat of await ai().searchChats(project.id))
                 chats.push({ ...chat, projectId: project.id });
@@ -100,7 +113,9 @@ function createSearch({ directory, workspace, ai, emit }) {
     },
     dispose() {
       stop();
-      return worker?.terminate();
+      const instance = worker;
+      worker = null;
+      return instance?.terminate();
     },
   };
 }

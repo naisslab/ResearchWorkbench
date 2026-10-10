@@ -1,7 +1,11 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { PdfAnnotation, PdfRect } from "./pdf-types";
-const normalized = (value: string) =>
-  value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+import {
+  indexPdfText,
+  matchingRects,
+  normalizePdfText,
+  type TextSpan,
+} from "../electron/pdf-text.mjs";
 /** Only unique, exact quotations are transferable. Notes and drawings stay in the original. */
 export async function planAnnotationMigration(
   document: PDFDocumentProxy,
@@ -10,34 +14,18 @@ export async function planAnnotationMigration(
   const pages: {
     page: number;
     text: string;
-    spans: { from: number; to: number; rect: PdfRect }[];
+    spans: TextSpan[];
   }[] = [];
   for (let number = 1; number <= document.numPages; number++) {
     const page = await document.getPage(number);
     const content = await page.getTextContent();
-    let text = "";
-    const spans = [];
-    for (const item of content.items) {
-      if (!("str" in item)) continue;
-      const from = text.length;
-      text += normalized(item.str);
-      spans.push({
-        from,
-        to: text.length,
-        rect: {
-          x: item.transform[4],
-          y: item.transform[5],
-          width: Math.max(1, item.width),
-          height: Math.max(1, item.height),
-        },
-      });
-    }
+    const { text, spans } = indexPdfText(content.items);
     pages.push({ page: number, text, spans });
   }
   const matched: PdfAnnotation[] = [],
     unresolved: PdfAnnotation[] = [];
   for (const item of annotations) {
-    const quote = normalized(item.quote);
+    const quote = normalizePdfText(item.quote);
     if (item.kind !== "highlight" || quote.length < 4) {
       unresolved.push(item);
       continue;
@@ -48,9 +36,7 @@ export async function planAnnotationMigration(
       while (at >= 0 && occurrences.length < 2) {
         occurrences.push({
           page: page.page,
-          rects: page.spans
-            .filter((span) => span.to > at && span.from < at + quote.length)
-            .map((span) => span.rect),
+          rects: matchingRects(page.spans, at, quote.length),
         });
         at = page.text.indexOf(quote, at + 1);
       }

@@ -3,21 +3,21 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const core = require("./core.cjs");
-const normalize = (text) =>
-  text
-    .normalize("NFKC")
-    .toLocaleLowerCase()
-    .replace(/-\s*\n\s*/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+const textTools = import("./pdf-text.mjs");
+let normalize;
 let generation = 0;
 let pdfjs;
 const cache = new Map();
 let cacheBytes = 0;
-async function pdfPages(file) {
+async function pdfPages(file, cancelled = () => false) {
+  const { indexPdfText } = await textTools;
+  const check = () => {
+    if (cancelled()) throw new Error("Search cancelled");
+  };
+  check();
   const stat = await fs.stat(file);
   if (stat.size > 64 * 1024 * 1024) throw new Error("PDF exceeds 64 MB");
-  const stamp = `${stat.mtimeMs}:${stat.size}`;
+  const stamp = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.ino}:${stat.size}`;
   if (cache.get(file)?.stamp === stamp) return cache.get(file).value;
   pdfjs ||= await import("pdfjs-dist/legacy/build/pdf.mjs");
   const bytes = await fs.readFile(file);
@@ -31,30 +31,14 @@ async function pdfPages(file) {
   try {
     const pages = [];
     for (let page = 1; page <= Math.min(document.numPages, 1000); page++) {
+      check();
       const loaded = await document.getPage(page);
       const content = await loaded.getTextContent();
-      let text = "";
-      const spans = [];
-      for (const item of content.items) {
-        if (!("str" in item) || !item.str) continue;
-        const str = normalize(item.str);
-        const separator =
-          /[\u3000-\u9fff]$/.test(text) && /^[\u3000-\u9fff]/.test(str)
-            ? ""
-            : " ";
-        if (text && !text.endsWith(" ")) text += separator;
-        const start = text.length;
-        text += str;
-        spans.push({
-          start,
-          end: text.length,
-          x: item.transform[4] - loaded.view[0],
-          y: loaded.view[3] - item.transform[5],
-        });
-        if (item.hasEOL) {
-          if (text.endsWith("-")) text = text.slice(0, -1);
-          else text += " ";
-        }
+      check();
+      const { text, spans } = indexPdfText(content.items);
+      for (const span of spans) {
+        span.x = span.rect.x - loaded.view[0];
+        span.y = loaded.view[3] - span.rect.y;
       }
       pages.push({ page, text, spans });
       loaded.cleanup();
@@ -126,15 +110,12 @@ function snippet(text, index, length) {
       .replace(/\s+/g, " ")
   );
 }
-async function search({
-  id,
-  query,
-  projects,
-  archives,
-  chats,
-  initialWarnings = [],
-}) {
-  const mine = ++generation;
+async function search(
+  { id, query, projects, archives, chats, initialWarnings = [] },
+  mine,
+) {
+  ({ normalizePdfText: normalize } = await textTools);
+  if (mine !== generation) return;
   const needle = normalize(query);
   const results = [],
     warnings = new Set(initialWarnings);
@@ -197,7 +178,10 @@ async function search({
     const documents = new Set();
     async function inspectPdf(file, target) {
       try {
-        const { pages, version, truncated } = await pdfPages(file);
+        const { pages, version, truncated } = await pdfPages(
+          file,
+          () => mine !== generation,
+        );
         if (mine !== generation) return;
         if (documents.has(version)) return;
         documents.add(version);
@@ -211,7 +195,7 @@ async function search({
           let from = 0,
             count = 0,
             at;
-          while ((at = page.text.indexOf(needle, from)) >= 0 && count++ < 20) {
+          while ((at = page.text.indexOf(needle, from)) >= 0 && count++ < 150) {
             const span = page.spans.find((s) => s.end > at) || { x: 0, y: 0 };
             add({
               ...base,
@@ -226,6 +210,10 @@ async function search({
             });
             from = at + needle.length;
           }
+          if (count > 150)
+            warnings.add(
+              `${path.basename(file)}: showing the first 150 matches on page ${page.page}`,
+            );
         }
       } catch (error) {
         warnings.add(`${path.basename(file)}: ${error.message}`);
@@ -239,15 +227,15 @@ async function search({
         const target = { title: relative, file: relative, rootId: root.id };
         try {
           await core.safeFile(root.folder, relative);
+          if (normalize(relative).includes(needle))
+            add({ ...base, ...target, kind: "file", snippet: relative });
           if (/\.pdf$/i.test(file)) await inspectPdf(file, target);
           else {
-            if (normalize(relative).includes(needle))
-              add({ ...base, ...target, kind: "file", snippet: relative });
             const stat = await fs.stat(file);
             if (stat.size <= 2 * 1024 * 1024) {
               const lines = (await fs.readFile(file, "utf8")).split("\n");
               let hits = 0;
-              for (let i = 0; i < lines.length && hits < 8; i++) {
+              for (let i = 0; i < lines.length && hits < 150; i++) {
                 const text = normalize(lines[i]),
                   at = text.indexOf(needle);
                 if (at >= 0) {
@@ -261,6 +249,10 @@ async function search({
                   hits++;
                 }
               }
+              if (hits >= 150)
+                warnings.add(
+                  `${relative}: showing the first 150 matching lines`,
+                );
             } else warnings.add(`${relative}: text file exceeds 2 MB`);
           }
         } catch (error) {
@@ -302,14 +294,34 @@ async function search({
       partial: false,
     });
 }
+// Run one extraction at a time. New input supersedes queued work, and the
+// running extraction checks cancellation at each page before releasing its PDF.
+let queued,
+  running = false;
 if (parentPort)
   parentPort.on("message", (request) => {
-    if (request.cancel) {
-      generation++;
-      return;
-    }
-    void search(request).catch((error) =>
-      parentPort.postMessage({ id: request.id, error: error.message }),
-    );
+    const mine = ++generation;
+    queued = request.cancel ? null : { request, mine };
+    if (running || !queued) return;
+    running = true;
+    void (async () => {
+      try {
+        while (queued) {
+          const next = queued;
+          queued = null;
+          try {
+            await search(next.request, next.mine);
+          } catch (error) {
+            if (next.mine === generation)
+              parentPort.postMessage({
+                id: next.request.id,
+                error: error.message,
+              });
+          }
+        }
+      } finally {
+        running = false;
+      }
+    })();
   });
-module.exports = { normalize, pdfPages, files };
+module.exports = { pdfPages, files };

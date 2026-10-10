@@ -192,8 +192,8 @@ test("workspace search finds PDF text across spans, identifies pages and coordin
     const doc = await PDFDocument.create();
     doc.addPage([600, 800]).drawText("Unrelated introduction");
     const page = doc.addPage([600, 800]);
-    page.drawText(text, { x: 50, y: 640 });
-    page.drawText("sail evidence", { x: 105, y: 640 });
+    page.drawText(text, { x: 50, y: 640, size: 12 });
+    page.drawText("sail evidence", { x: 105, y: 640, size: 12 });
     await fs.writeFile(path.join(f.folder, "paper.pdf"), await doc.save());
   }
   await pdf("Solar");
@@ -437,4 +437,90 @@ test("overlapping project roots retain the same files after restoration", async 
     project.localFolders[0].folder,
     path.join(project.folder, "figures"),
   );
+});
+
+test("PDF indexing joins split glyph runs and dehyphenates lines without merging words", async () => {
+  const { indexPdfText, normalizePdfText, matchingRects } =
+    await import("../electron/pdf-text.mjs");
+  const item = (str, x, y, width, hasEOL = false) => ({
+    str,
+    transform: [12, 0, 0, 12, x, y],
+    width,
+    height: 12,
+    hasEOL,
+  });
+  const indexed = indexPdfText([
+    item("Multi-", 20, 700, 35, true),
+    item("mod", 20, 680, 22),
+    item("al", 42, 680, 10),
+    item("search", 59, 680, 36),
+    item("works", 20, 660, 30),
+  ]);
+  assert.equal(indexed.text, "multimodal search works");
+  assert.equal(normalizePdfText("MULTI-\nMODAL"), "multimodal");
+  assert.equal(matchingRects(indexed.spans, 0, 10).length, 3);
+});
+
+test("worker finds actual PDF line breaks and filenames and promptly cancels obsolete searches", async (t) => {
+  const f = await fixture(t);
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([600, 800]);
+  page.drawText("Multi-", { x: 50, y: 700, size: 12 });
+  page.drawText("modal search", { x: 50, y: 680, size: 12 });
+  await fs.writeFile(path.join(f.folder, "breaks.pdf"), await doc.save());
+  const search = createSearch({
+    directory: f.directory,
+    workspace: () => f.workspace,
+    ai: () => ({ searchChats: async () => [] }),
+    emit: () => {},
+  });
+  t.after(() => search.dispose());
+  const old = search.search("obsolete", "old");
+  const current = search.search("multimodal", "current");
+  assert.equal((await old).cancelled, true);
+  assert.ok(
+    (await current).results.some((hit) => hit.kind === "pdf" && hit.page === 1),
+  );
+  assert.ok(
+    (await search.search("breaks.pdf", "filename")).results.some(
+      (hit) => hit.kind === "file" && hit.file === "breaks.pdf",
+    ),
+  );
+});
+
+test("an old worker exit cannot cancel its replacement", async (t) => {
+  const { EventEmitter } = require("node:events");
+  const f = await fixture(t);
+  const workers = [];
+  class FakeWorker extends EventEmitter {
+    constructor() {
+      super();
+      workers.push(this);
+    }
+    postMessage(packet) {
+      if (packet.id) this.request = packet;
+    }
+    async terminate() {}
+  }
+  const search = createSearch({
+    directory: f.directory,
+    workspace: () => f.workspace,
+    ai: () => ({ searchChats: async () => [] }),
+    emit: () => {},
+    WorkerClass: FakeWorker,
+  });
+  t.after(() => search.dispose());
+  const failed = search.search("first", "one");
+  const rejection = assert.rejects(failed, /worker failed/);
+  workers[0].emit("error", new Error("worker failed"));
+  await rejection;
+  const replacement = search.search("second", "two");
+  workers[0].emit("exit", 1);
+  workers[1].emit("message", {
+    id: "two",
+    results: [],
+    warnings: [],
+    scanned: 0,
+  });
+  assert.equal((await replacement).id, "two");
 });
