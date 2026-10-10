@@ -5,6 +5,8 @@ const os = require("node:os");
 const path = require("node:path");
 const core = require("../electron/core.cjs");
 const { manuscriptWorkspace } = require("./fixtures.cjs");
+// The app's own PATH, which adds the MacTeX tools.
+const env = require("../electron/environment.cjs");
 async function temporary(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "research-test-"));
   t.after(() => fs.rm(dir, { recursive: true, force: true }));
@@ -110,6 +112,45 @@ test("file listing excludes dependencies, build artifacts, and symlinks", async 
     path.join("sections", "intro.tex"),
   ]);
 });
+test("saving a script keeps its execute permission", async (t) => {
+  const root = await temporary(t);
+  const script = path.join(root, "run.sh");
+  await fs.writeFile(script, "echo old\n", { mode: 0o755 });
+  await fs.chmod(script, 0o755);
+  await core.atomicWrite(script, "echo new\n");
+  assert.equal((await fs.stat(script)).mode & 0o777, 0o755);
+  assert.equal(await fs.readFile(script, "utf8"), "echo new\n");
+});
+test("an unreadable subfolder does not hide the rest of the project", async (t) => {
+  const root = await temporary(t);
+  const locked = path.join(root, "locked");
+  await fs.mkdir(locked);
+  await fs.writeFile(path.join(locked, "secret.tex"), "");
+  await fs.writeFile(path.join(root, "main.tex"), "");
+  await fs.chmod(locked, 0);
+  try {
+    assert.deepEqual(await core.listFiles(root), ["main.tex"]);
+  } finally {
+    // Cleanup runs later and needs to read the folder.
+    await fs.chmod(locked, 0o755);
+  }
+  await assert.rejects(core.listFiles(path.join(root, "missing")));
+});
+test("a folder deeper than the tree limit is reported as truncated", async (t) => {
+  const root = await temporary(t);
+  const deep = path.join(root, ...Array.from({ length: 8 }, (_, i) => `d${i}`));
+  await fs.mkdir(deep, { recursive: true });
+  await fs.writeFile(path.join(root, "main.tex"), "");
+  await fs.writeFile(path.join(deep, "hidden.tex"), "");
+  const [listing] = await core.projectFiles({ folder: root, mainFile: "" });
+  assert.deepEqual(listing.files, ["main.tex"]);
+  assert.equal(listing.truncated, true);
+  await fs.rm(path.join(root, "d0"), { recursive: true });
+  assert.equal(
+    (await core.projectFiles({ folder: root, mainFile: "" }))[0].truncated,
+    false,
+  );
+});
 test("SSH targets support aliases and user@host and reject options or command text", () => {
   assert.deepEqual(core.sshArgs("research-server"), ["research-server"]);
   assert.deepEqual(core.sshArgs("alice@cluster.example.edu"), [
@@ -149,10 +190,6 @@ test("LaTeX compilation creates a real PDF, maps lines with SyncTeX and reports 
   const root = await temporary(t);
   const state = await manuscriptWorkspace(root);
   const p = state.projects[0];
-  const env = {
-    ...process.env,
-    PATH: "/Library/TeX/texbin:" + process.env.PATH,
-  };
   const result = await core.compile(p, undefined, env);
   assert.equal(result.ok, true, result.log);
   const buffer = await fs.readFile(result.pdf);
@@ -186,6 +223,71 @@ test("LaTeX compilation creates a real PDF, maps lines with SyncTeX and reports 
   );
 });
 
+test("the entry file's TeX program comment selects XeLaTeX and keeps SyncTeX", async (t) => {
+  const folder = await temporary(t);
+  await fs.writeFile(
+    path.join(folder, "main.tex"),
+    "% !TEX program = xelatex\n\\documentclass{article}\n\\usepackage{fontspec}\n\\begin{document}\nUnicode text.\n\\end{document}\n",
+  );
+  const project = { folder, mainFile: "main.tex", localFolders: [] };
+  const result = await core.compile(project, undefined, env);
+  assert.equal(result.ok, true, result.log);
+  assert.match(
+    await fs.readFile(result.pdf.replace(/\.pdf$/, ".log"), "utf8"),
+    /^This is XeTeX/,
+  );
+  assert.match(result.log, /^Engine: XeLaTeX \(% !TEX program\)\n/);
+  assert.ok(await core.synctexForward(project, "main.tex", 5, "primary", env));
+  const invalid = structuredClone(await manuscriptWorkspace(folder));
+  invalid.projects[0].latexEngine = "latex";
+  assert.throws(() => core.validateState(invalid), /LaTeX engine/);
+});
+test("a project latexmkrc runs only after the user trusts it", async (t) => {
+  const folder = await temporary(t);
+  await fs.writeFile(
+    path.join(folder, "main.tex"),
+    "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n",
+  );
+  const marker = path.join(folder, "rc-ran");
+  await fs.writeFile(
+    path.join(folder, "latexmkrc"),
+    `system("touch", ${JSON.stringify(marker)});\n`,
+  );
+  const project = { folder, mainFile: "main.tex", localFolders: [] };
+  const asked = [];
+  const declined = await core.compile(
+    project,
+    undefined,
+    env,
+    undefined,
+    async (config) => {
+      asked.push(config);
+      return false;
+    },
+  );
+  assert.equal(declined.ok, true, declined.log);
+  assert.match(
+    declined.log,
+    /^Engine: pdfLaTeX \(default\); latexmkrc skipped/,
+  );
+  await assert.rejects(
+    fs.access(marker),
+    "An untrusted latexmkrc must not run",
+  );
+  assert.deepEqual(
+    asked.map((config) => config.files),
+    [["latexmkrc"]],
+  );
+  assert.match(asked[0].hash, /^[a-f0-9]{64}$/);
+  await core.compile(project, undefined, env, undefined, async () => true);
+  await fs.access(marker);
+  await assert.rejects(
+    core.compile(project, undefined, env, undefined, async () => {
+      throw new Error("Build canceled.");
+    }),
+    /canceled/,
+  );
+});
 test("SyncTeX locates included files on later pages through project paths with spaces and symlinks", async (t) => {
   const root = await temporary(t);
   const folder = path.join(root, "paper with spaces");
@@ -207,10 +309,6 @@ Overview text on page one.
   const linked = path.join(root, "linked paper");
   await fs.symlink(folder, linked);
   const project = { folder: linked, mainFile: "main.tex", localFolders: [] };
-  const env = {
-    ...process.env,
-    PATH: "/Library/TeX/texbin:" + process.env.PATH,
-  };
   const result = await core.compile(project, undefined, env);
   assert.equal(result.ok, true, result.log);
   const target = await core.synctexForward(

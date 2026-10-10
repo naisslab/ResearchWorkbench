@@ -14,6 +14,7 @@ import type {
 } from "./types";
 import { AreaIcon, ProjectIcon } from "./ResearchIcons";
 import { openExternal, SearchField, StageBadge, Tabs } from "./components/ui";
+import { exclusive } from "./workspace-lock";
 
 type Tab = "current" | "review" | "archive";
 const tabs: [Tab, string, (c: ResearchCandidate) => boolean][] = [
@@ -153,10 +154,12 @@ export default function ResearchCollection({
           onClick={async () => {
             setBusy(true);
             try {
-              const next =
-                await window.research!.addResearchProjects(available);
-              setSelected([]);
-              added(next, next.projects.length - state.projects.length);
+              await exclusive(async () => {
+                const next =
+                  await window.research!.addResearchProjects(available);
+                setSelected([]);
+                added(next, next.projects.length - state.projects.length);
+              });
             } catch (error) {
               report((error as Error).message);
             } finally {

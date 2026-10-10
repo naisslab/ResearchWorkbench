@@ -325,6 +325,27 @@ export default function ProjectDetailsView({
             </select>
           </label>
           <label>
+            LaTeX engine
+            <select
+              value={p.latexEngine || ""}
+              onChange={(e) =>
+                update({
+                  latexEngine: (e.target.value ||
+                    undefined) as Project["latexEngine"],
+                })
+              }
+            >
+              <option value="">Automatic</option>
+              <option value="pdflatex">pdfLaTeX</option>
+              <option value="xelatex">XeLaTeX</option>
+              <option value="lualatex">LuaLaTeX</option>
+            </select>
+          </label>
+          <p className="form-help">
+            Automatic follows a <code>% !TEX program</code> line at the top of
+            the entry file, otherwise pdfLaTeX.
+          </p>
+          <label>
             SSH host <span className="optional">optional</span>
             <BlurField
               value={p.sshHost}

@@ -10,6 +10,7 @@ const { spawn, execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { createCodexAgent } = require("../electron/codex-agent.cjs");
 const { createGitEnvironment } = require("../electron/git-runner.cjs");
+const { withoutProxy } = require("./fixtures.cjs");
 const execute = promisify(execFile);
 const quote = (value) => "'" + value.replace(/'/g, "'\\''") + "'";
 
@@ -175,7 +176,7 @@ test(
         home: path.join(root, "agent-home"),
         environment: await createGitEnvironment(
           {
-            ...process.env,
+            ...withoutProxy(process.env),
             PATH: "/usr/bin:/bin",
             GIT_CONFIG_GLOBAL: "/dev/null",
             GIT_CONFIG_NOSYSTEM: "1",

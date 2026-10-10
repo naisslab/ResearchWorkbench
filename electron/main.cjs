@@ -7,6 +7,8 @@ const {
   nativeTheme,
   safeStorage,
   net,
+  session,
+  Notification,
 } = require("electron");
 app.setName("Research Workbench");
 const fs = require("node:fs/promises");
@@ -27,6 +29,7 @@ const pty = require("node-pty");
 const { createAI } = require("./ai.cjs");
 const { AIError, publicError } = require("./chatgpt.cjs");
 const { createTaskQueue } = require("./task-queue.cjs");
+const { createReminders } = require("./reminders.cjs");
 if (process.env.RESEARCH_TEST_DATA)
   app.setPath("userData", path.resolve(process.env.RESEARCH_TEST_DATA));
 if (!process.env.RESEARCH_TEST_DATA && !app.requestSingleInstanceLock())
@@ -184,7 +187,9 @@ function createWindow() {
   if (process.env.RESEARCH_DEV_URL) win.loadURL(process.env.RESEARCH_DEV_URL);
   else win.loadFile(path.join(__dirname, "../dist/index.html"));
   win.on("closed", () => {
-    ai?.dispose();
+    // macOS keeps the app running, so a reopened window still needs the AI;
+    // only work that reports to this window stops here.
+    void ai?.stopAll().catch(() => {});
     for (const controller of builds.values()) controller.abort();
     stopTerminals();
     win = null;
@@ -193,12 +198,19 @@ function createWindow() {
 app
   .whenReady()
   .then(async () => {
+    // The page needs only clipboard writes for its copy buttons; camera,
+    // microphone, location and notification requests are refused.
+    session.defaultSession.setPermissionRequestHandler((_, permission, done) =>
+      done(permission === "clipboard-sanitized-write"),
+    );
     const developmentIcon = path.join(__dirname, "../build/icon.png");
     if (!app.isPackaged && fsSync.existsSync(developmentIcon))
       app.dock?.setIcon(developmentIcon);
     store = path.join(app.getPath("userData"), "workspace.json");
     deadlineFeed = deadlines.createFeed(
       path.join(app.getPath("userData"), "ccf-deadlines-cache.json"),
+      // Chromium networking follows the desktop's proxy, as sign-in does.
+      { fetch: (url, options) => net.fetch(url, options) },
     );
     let saved;
     try {
@@ -478,12 +490,21 @@ app
     const annotationStore = createAnnotationStore(
       path.join(app.getPath("userData"), "pdf-annotations"),
     );
-    // will-quit comes after the window's pagehide, so the reader's last save
-    // is already queued.
+    // will-quit comes after every window has closed, so the quit can no longer
+    // be cancelled and the reader's last save is already queued.
+    let shutDown = false;
     app.on("will-quit", (event) => {
-      if (!annotationStore.hasPending()) return;
+      clearInterval(feedTimer);
+      if (shutDown) return;
+      shutDown = true;
       event.preventDefault();
-      void annotationStore.flush().finally(() => app.quit());
+      const limit = new Promise((resolve) => setTimeout(resolve, 5000));
+      // Every window is closed by now, so exit skips the quit events instead
+      // of asking Electron to quit again while it unwinds this one.
+      void Promise.race([
+        Promise.allSettled([annotationStore.flush(), ai?.dispose()]),
+        limit,
+      ]).finally(() => app.exit());
     });
     handle("pdf:read-annotations", async (id, url) => {
       const document = await pdfDocument(id, url);
@@ -553,6 +574,37 @@ app
       await core.atomicWrite(target, bytes);
       return true;
     });
+    // Decisions about a project's latexmkrc, kept outside the workspace so
+    // renderer saves cannot change them. Any edit to the file, including an
+    // agent's, asks again. Skipping it lasts until the app restarts.
+    const trustFile = path.join(app.getPath("userData"), "build-trust.json");
+    const readTrust = () =>
+      fs.readFile(trustFile, "utf8").then(JSON.parse, () => ({}));
+    const skipped = new Map();
+    async function confirmBuildConfig(id, config) {
+      const key = `${id}\0${config.directory}`;
+      if ((await readTrust())[key] === config.hash) return true;
+      if (skipped.get(key) === config.hash) return false;
+      const { response } = await dialog.showMessageBox(win, {
+        type: "warning",
+        buttons: ["Compile without it", "Trust and compile"],
+        defaultId: 0,
+        cancelId: 0,
+        message: `Run this project's ${config.files.join(" and ")}?`,
+        detail:
+          "latexmk configuration files are Perl programs. They run with your full permissions, outside the agent sandbox. Trust one only if you or a collaborator wrote it. You will be asked again whenever it changes, and after a restart if you skip it.",
+      });
+      if (response !== 1) {
+        skipped.set(key, config.hash);
+        return false;
+      }
+      await queue(async () => {
+        const decisions = await readTrust();
+        decisions[key] = config.hash;
+        await writeJson(trustFile, decisions);
+      }, "build-trust");
+      return true;
+    }
     handle("latex:compile", async (id) => {
       if (ai?.isRunning(id))
         throw new Error(
@@ -571,6 +623,7 @@ app
           output,
           environment,
           controller.signal,
+          (config) => confirmBuildConfig(id, config),
         );
         return { ...result, pdf: result.pdf ? pdfUrl(result.pdf, id) : null };
       } finally {
@@ -814,6 +867,31 @@ app
       setTimeout(refresh, 60000).unref();
       feedTimer = setInterval(refresh, 6 * 60 * 60 * 1000);
       feedTimer.unref();
+      // Runs while the app is open, including with its window closed.
+      const shown = new Set();
+      const reminders = createReminders(
+        path.join(app.getPath("userData"), "reminders.json"),
+        ({ title, body }) => {
+          const notification = new Notification({ title, body });
+          // Held until dismissed, so its click handler is not collected.
+          shown.add(notification);
+          notification.on("close", () => shown.delete(notification));
+          notification.on("click", () => {
+            shown.delete(notification);
+            if (!win) createWindow();
+            win.show();
+            win.focus();
+          });
+          notification.show();
+        },
+      );
+      const remind = () => {
+        if (state.deadlineReminders === false || !Notification.isSupported())
+          return;
+        reminders.check(state).catch((error) => console.error(error.message));
+      };
+      setTimeout(remind, 30000).unref();
+      setInterval(remind, 10 * 60 * 1000).unref();
     }
     app.on("activate", () => {
       if (!win) createWindow();
@@ -826,8 +904,4 @@ app
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin" || process.env.RESEARCH_TEST_DATA)
     app.quit();
-});
-app.on("before-quit", () => {
-  clearInterval(feedTimer);
-  ai?.dispose();
 });

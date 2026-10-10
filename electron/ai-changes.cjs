@@ -28,6 +28,18 @@ const same = (a, b) =>
   (!!a && !!b && a.hash === b.hash && a.mode === b.mode && a.type === b.type);
 const reviewKey = (profileId, projectId, messageId) =>
   hash(JSON.stringify([profileId, projectId, messageId]));
+const folderKey = (item) => item.root + "\0" + item.relative;
+// Older runs kept every folder listing; newer ones keep only the folders the
+// run created, which is all a revert removes.
+function createdDirectories(value) {
+  if (value.createdDirectories) return value.createdDirectories;
+  const original = new Set((value.before?.directories || []).map(folderKey));
+  return (value.after?.directories || []).filter(
+    (item) => !original.has(folderKey(item)),
+  );
+}
+const statKey = (stat) =>
+  [stat.size, stat.mtimeMs, stat.ctimeMs, stat.ino, stat.mode].join(":");
 
 function createChangeStore(
   directory,
@@ -40,6 +52,23 @@ function createChangeStore(
   const manifests = path.join(directory, "runs");
   const blobs = path.join(directory, "blobs");
   const locks = new Set();
+  // Versions from each root's last capture, by file. A file whose size,
+  // times, inode and mode still match is not read and hashed again. The index
+  // keeps them across restarts.
+  const known = new Map();
+  const indexFile = path.join(directory, "index.json");
+  const exists = (file) =>
+    fs.access(file).then(
+      () => true,
+      () => false,
+    );
+  const listOrEmpty = (folder) =>
+    fs
+      .readdir(folder)
+      .catch((error) => (error.code === "ENOENT" ? [] : Promise.reject(error)));
+  // Captures, reviews and restores wait while unused versions are deleted.
+  let collecting = null;
+  const collected = () => collecting?.catch(() => {});
   function manifestFile(id) {
     if (!/^[a-f0-9]{64}$/.test(id)) throw new Error("Invalid change snapshot.");
     return path.join(manifests, id + ".json");
@@ -97,7 +126,8 @@ function createChangeStore(
     }
     return path.join(parent, parts.at(-1));
   }
-  async function entryAt(root, relative, budget = { bytes: 0 }, store = false) {
+  // With `capture` ({ budget, seen }), the version is also stored for revert.
+  async function entryAt(root, relative, capture) {
     let file;
     try {
       file = await safeTarget(root, relative);
@@ -137,7 +167,7 @@ function createChangeStore(
     };
     if (
       stat.size > maxFileBytes ||
-      (store && budget.bytes + stat.size > maxSnapshotBytes)
+      (capture && capture.budget.bytes + stat.size > maxSnapshotBytes)
     ) {
       return {
         ...entry,
@@ -145,47 +175,57 @@ function createChangeStore(
         unavailable: "This file exceeded the snapshot size limit.",
       };
     }
-    const handle = await fs.open(
-      file,
-      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
-    );
-    let bytes;
-    try {
-      const before = await handle.stat();
-      bytes = await handle.readFile();
-      const after = await handle.stat();
-      if (
-        before.size !== after.size ||
-        before.mtimeMs !== after.mtimeMs ||
-        before.ctimeMs !== after.ctimeMs
-      )
-        throw new Error(
-          "A file changed while its version was being saved: " + relative,
-        );
-    } finally {
-      await handle.close();
+    // A cached version's blob exists: collect keeps every indexed version.
+    const cached = capture && known.get(root)?.get(relative);
+    if (cached?.key === statKey(stat)) {
+      capture.budget.bytes += stat.size;
+      capture.seen.set(relative, cached);
+      return cached.entry;
     }
+    let bytes, after;
+    // A file that keeps changing, such as a log, cannot be restored exactly.
+    for (let attempt = 0; !bytes; attempt++) {
+      if (attempt === 3)
+        return {
+          ...entry,
+          hash: hash(JSON.stringify([stat.size, stat.mtimeMs, stat.ctimeMs])),
+          unavailable: "This file kept changing while it was being saved.",
+        };
+      const handle = await fs.open(
+        file,
+        fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+      );
+      try {
+        const before = await handle.stat();
+        const read = await handle.readFile();
+        after = await handle.stat();
+        if (statKey(before) === statKey(after)) bytes = read;
+      } finally {
+        await handle.close();
+      }
+    }
+    entry.size = bytes.length;
     entry.hash = hash(bytes);
     entry.binary =
       bytes.includes(0) || !Buffer.from(bytes.toString("utf8")).equals(bytes);
-    if (store) {
-      budget.bytes += bytes.length;
+    if (capture) {
+      capture.budget.bytes += bytes.length;
       const target = blobFile(entry.hash);
-      if (
-        !(await fs.access(target).then(
-          () => true,
-          () => false,
-        ))
-      )
-        await protectedWrite(target, bytes);
+      if (!(await exists(target))) await protectedWrite(target, bytes);
+      // Coarse timestamps on some volumes miss edits made within a second or
+      // two, so recently modified files are read again next time.
+      if (Date.now() - after.mtimeMs > 3000)
+        capture.seen.set(relative, { key: statKey(after), entry });
     }
     return entry;
   }
   async function capture(roots) {
+    await collected();
     const entries = {},
       directories = [];
     const budget = { bytes: 0 };
     for (const root of roots) {
+      const seen = new Map();
       const pending = [""];
       while (pending.length) {
         const relative = pending.shift();
@@ -204,12 +244,17 @@ function createChangeStore(
             directories.push({ root, relative: name });
             pending.push(name);
           } else if (item.isFile() || item.isSymbolicLink()) {
-            const entry = await entryAt(root, name, budget, true);
+            const entry = await entryAt(root, name, { budget, seen });
             if (entry) entries[hash(root + "\0" + name)] = entry;
           }
         }
       }
+      known.set(root, seen);
     }
+    await protectedWrite(
+      indexFile,
+      JSON.stringify([...known].map(([root, seen]) => [root, [...seen]])),
+    );
     return { entries, directories };
   }
   async function begin(id, folders) {
@@ -233,28 +278,86 @@ function createChangeStore(
     });
   }
   async function finish(id) {
-    const value = await load(id);
-    value.after = await capture(value.roots);
+    const { before, ...value } = await load(id);
+    const after = await capture(value.roots);
     value.changes = [
       ...new Set([
-        ...Object.keys(value.before.entries),
-        ...Object.keys(value.after.entries),
+        ...Object.keys(before.entries),
+        ...Object.keys(after.entries),
       ]),
     ]
-      .filter(
-        (key) => !same(value.before.entries[key], value.after.entries[key]),
-      )
+      .filter((key) => !same(before.entries[key], after.entries[key]))
       .map((key) => ({
         id: key,
-        before: value.before.entries[key] || null,
-        after: value.after.entries[key] || null,
+        before: before.entries[key] || null,
+        after: after.entries[key] || null,
       }));
+    // Review and revert need only the changed files, not the full listings.
+    value.createdDirectories = createdDirectories({ before, after });
     await save(id, value);
     return { files: value.changes.length };
   }
+  // Removes the runs of a cleared chat; their versions go at the next collect.
+  async function discard(ids) {
+    for (const id of ids) await fs.rm(manifestFile(id), { force: true });
+  }
+  // Deletes saved versions that no run or cached capture needs, shrinks older
+  // run records, and drops captures a closed app never finished. Runs before
+  // any capture.
+  function collect() {
+    collecting = (async () => {
+      // A damaged index is only a lost cache.
+      const index = await fs
+        .readFile(indexFile, "utf8")
+        .then(JSON.parse)
+        .then((data) => (Array.isArray(data) ? data : []))
+        .catch(() => []);
+      const needed = new Set();
+      for (const [, files] of index)
+        for (const [, { entry }] of files) needed.add(entry.hash);
+      for (const name of await listOrEmpty(manifests)) {
+        const id = path.basename(name, ".json");
+        if (!/^[a-f0-9]{64}\.json$/.test(name)) continue;
+        // An unreadable run might need any version, so nothing is deleted.
+        const value = await load(id);
+        if (!value.changes) {
+          const { mtimeMs } = await fs.stat(manifestFile(id));
+          if (Date.now() - mtimeMs > 60 * 60 * 1000) {
+            await fs.rm(manifestFile(id), { force: true });
+            continue;
+          }
+          for (const entry of Object.values(value.before?.entries || {}))
+            needed.add(entry.hash);
+          continue;
+        }
+        for (const change of value.changes)
+          for (const entry of [change.before, change.after])
+            if (entry?.type === "file") needed.add(entry.hash);
+        if (value.before) {
+          const { before, after, ...slim } = value;
+          slim.createdDirectories = createdDirectories(value);
+          await save(id, slim);
+        }
+      }
+      const stored = new Set(await listOrEmpty(blobs));
+      for (const digest of stored)
+        if (/^[a-f0-9]{64}$/.test(digest) && !needed.has(digest))
+          await fs.rm(path.join(blobs, digest), { force: true });
+      // Only versions still on disk may stand in for a read.
+      known.clear();
+      for (const [root, files] of index)
+        known.set(
+          root,
+          new Map(files.filter(([, { entry }]) => stored.has(entry.hash))),
+        );
+    })().finally(() => {
+      collecting = null;
+    });
+    return collecting;
+  }
   async function check(value, allowedRoots) {
     if (value.revertedAt) return "These changes have already been reverted.";
-    if (!value.after)
+    if (!value.changes)
       return "This run ended before its final file versions were saved.";
     if (!value.changes.length)
       return "This run did not change any project files.";
@@ -271,8 +374,10 @@ function createChangeStore(
         )
       )
         return "The original project folder is no longer attached.";
-      if (change.before?.unavailable || change.after?.unavailable)
-        return "A changed file exceeded the snapshot size limit; automatic revert is unavailable.";
+      const unavailable =
+        change.before?.unavailable || change.after?.unavailable;
+      if (unavailable)
+        return `${entry.relative}: ${unavailable} Automatic revert is unavailable.`;
       try {
         const current = await entryAt(entry.root, entry.relative);
         if (
@@ -312,6 +417,7 @@ function createChangeStore(
     };
   }
   async function review(id, allowedRoots) {
+    await collected();
     const value = await load(id);
     const reason = await check(value, allowedRoots);
     return {
@@ -325,15 +431,14 @@ function createChangeStore(
     };
   }
   async function file(id, fileId) {
+    await collected();
     const value = await load(id);
     const change = value.changes?.find((item) => item.id === fileId);
     if (!change) throw new Error("This file is not part of the selected run.");
     const info = fileInfo(change);
-    if (change.before?.unavailable || change.after?.unavailable)
-      return {
-        ...info,
-        diff: "File versions are unavailable because this file exceeded the snapshot size limit.",
-      };
+    const unavailable = change.before?.unavailable || change.after?.unavailable;
+    if (unavailable)
+      return { ...info, diff: `File versions are unavailable. ${unavailable}` };
     const beforeBytes =
       change.before?.type === "link"
         ? Buffer.from("Symbolic link: " + change.before.link + "\n")
@@ -432,6 +537,7 @@ function createChangeStore(
     }
   }
   async function revert(id, allowedRoots) {
+    await collected();
     if (locks.has(id))
       throw new Error("These changes are already being restored.");
     locks.add(id);
@@ -466,19 +572,12 @@ function createChangeStore(
       value.revertedAt = new Date().toISOString();
       delete value.reverting;
       await save(id, value);
-      const original = new Set(
-        value.before.directories.map(
-          (item) => item.root + "\0" + item.relative,
-        ),
-      );
-      for (const item of [...value.after.directories].sort(
+      for (const item of [...createdDirectories(value)].sort(
         (a, b) => b.relative.length - a.relative.length,
-      )) {
-        if (!original.has(item.root + "\0" + item.relative))
-          await safeTarget(item.root, item.relative)
-            .then((folder) => fs.rmdir(folder))
-            .catch(() => {});
-      }
+      ))
+        await safeTarget(item.root, item.relative)
+          .then((folder) => fs.rmdir(folder))
+          .catch(() => {});
       return { files: value.changes.length, revertedAt: value.revertedAt };
     } catch (error) {
       let recovered = true;
@@ -516,7 +615,7 @@ function createChangeStore(
       locks.delete(id);
     }
   }
-  return { begin, finish, review, file, revert };
+  return { begin, finish, discard, collect, review, file, revert };
 }
 // Older conversations saved patches but no original bytes. Keep them reviewable
 // without implying that their changes can be restored.

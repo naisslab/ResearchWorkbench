@@ -71,7 +71,7 @@ export default memo(function BuildLog({
             : state === "error"
               ? "Build failed"
               : "Ready to compile"}
-        <span>latexmk · pdfLaTeX · shell escape disabled</span>
+        <span>latexmk · shell escape disabled</span>
         <label title="Compile after ⌘S saves a .tex or .bib file in the manuscript folder">
           <input
             type="checkbox"

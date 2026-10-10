@@ -237,7 +237,15 @@ export default memo(function ProjectFiles({
                 (root.error ? (
                   <p className="file-empty">{root.error}</p>
                 ) : root.files.length ? (
-                  render(root.nodes, root.id)
+                  <>
+                    {render(root.nodes, root.id)}
+                    {root.truncated && !query && (
+                      <p className="file-empty">
+                        Some files are not listed. The tree shows up to 1,500
+                        files, six folders deep.
+                      </p>
+                    )}
+                  </>
                 ) : (
                   <p className="file-empty">
                     {query

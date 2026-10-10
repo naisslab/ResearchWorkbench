@@ -1,4 +1,6 @@
 const fs = require("node:fs/promises");
+const { existsSync } = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { promisify } = require("node:util");
@@ -22,6 +24,12 @@ const EXTENSIONS = new Set(
       ".sh .zsh .bash .rs .go .c .cc .cpp .h .hpp",
   ),
 );
+// Each engine a project can choose, with its latexmk switch.
+const ENGINES = {
+  pdflatex: { flag: "-pdf", name: "pdfLaTeX" },
+  xelatex: { flag: "-pdfxe", name: "XeLaTeX" },
+  lualatex: { flag: "-pdflua", name: "LuaLaTeX" },
+};
 const IGNORED = new Set(
   words("node_modules build dist vendor __pycache__ target venv"),
 );
@@ -73,6 +81,11 @@ function validateState(value) {
     !["light", "dark", "system"].includes(value.appearance)
   )
     throw new Error("Invalid appearance.");
+  if (
+    value.deadlineReminders !== undefined &&
+    typeof value.deadlineReminders !== "boolean"
+  )
+    throw new Error("Invalid deadline reminder setting.");
   if (value.trackedDeadlines !== undefined) {
     if (
       !Array.isArray(value.trackedDeadlines) ||
@@ -140,6 +153,8 @@ function validateState(value) {
       if (typeof p[field] !== "string") throw new Error(`Invalid ${field}.`);
     if (p.compileOnSave !== undefined && typeof p.compileOnSave !== "boolean")
       throw new Error("Invalid compileOnSave.");
+    if (p.latexEngine !== undefined && !Object.hasOwn(ENGINES, p.latexEngine))
+      throw new Error("Invalid LaTeX engine.");
     if (p.localFolders !== undefined) {
       if (!Array.isArray(p.localFolders) || p.localFolders.length > 30)
         throw new Error("Invalid local folders.");
@@ -195,8 +210,17 @@ function validateState(value) {
 async function atomicWrite(file, contents, { directoryMode, ...options } = {}) {
   await fs.mkdir(path.dirname(file), { recursive: true, mode: directoryMode });
   const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+  // A replaced file keeps its permissions, such as a script's execute bit.
+  const existing =
+    options.mode === undefined
+      ? await fs.stat(file).then(
+          ({ mode }) => mode & 0o7777,
+          () => undefined,
+        )
+      : undefined;
   try {
     await fs.writeFile(temporary, contents, { encoding: "utf8", ...options });
+    if (existing !== undefined) await fs.chmod(temporary, existing);
     await fs.rename(temporary, file);
   } finally {
     await fs.rm(temporary, { force: true });
@@ -233,21 +257,32 @@ async function safeNewPath(root, relative) {
   return path.join(parent, path.basename(relative));
 }
 // Breadth-first, eight directories at a time, within a directory-entry budget.
-async function listFiles(root) {
-  if (!root) return [];
+// `truncated` reports that the limits left part of the folder unlisted.
+async function scanFiles(root) {
+  if (!root) return { files: [], truncated: false };
   const results = [];
+  let truncated = false;
   let level = [root];
   let budget = 20000;
-  for (let depth = 0; level.length && depth <= 6; depth++) {
+  for (let depth = 0; level.length; depth++) {
+    if (depth > 6) {
+      truncated = true;
+      break;
+    }
     const next = [];
-    for (
-      let i = 0;
-      i < level.length && budget > 0 && results.length < 1500;
-      i += 8
-    ) {
+    for (let i = 0; i < level.length; i += 8) {
+      if (budget <= 0 || results.length >= 1500) {
+        truncated = true;
+        break;
+      }
       const batch = level.slice(i, i + 8);
+      // An unreadable subfolder is skipped; only an unreadable root fails.
       const listings = await Promise.all(
-        batch.map((dir) => fs.readdir(dir, { withFileTypes: true })),
+        batch.map((dir) =>
+          fs
+            .readdir(dir, { withFileTypes: true })
+            .catch((error) => (dir === root ? Promise.reject(error) : [])),
+        ),
       );
       listings.forEach((entries, index) => {
         budget -= entries.length;
@@ -255,19 +290,18 @@ async function listFiles(root) {
           if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue;
           const file = path.join(batch[index], entry.name);
           if (entry.isDirectory()) next.push(file);
-          else if (
-            entry.isFile() &&
-            isTextFile(entry.name) &&
-            results.length < 1500
-          )
-            results.push(path.relative(root, file));
+          else if (entry.isFile() && isTextFile(entry.name)) {
+            if (results.length < 1500) results.push(path.relative(root, file));
+            else truncated = true;
+          }
         }
       });
     }
     level = next;
   }
-  return results.sort();
+  return { files: results.sort(), truncated };
 }
+const listFiles = async (root) => (await scanFiles(root)).files;
 function isTextFile(file) {
   return (
     EXTENSIONS.has(path.extname(file).toLowerCase()) ||
@@ -300,7 +334,7 @@ async function projectFiles(project) {
   return Promise.all(
     projectRoots(project).map(async (root) => {
       try {
-        return { ...root, files: await listFiles(root.folder) };
+        return { ...root, ...(await scanFiles(root.folder)) };
       } catch {
         return {
           ...root,
@@ -327,10 +361,96 @@ const pdfPath = (main) =>
     ".research-build",
     path.basename(main, ".tex") + ".pdf",
   );
-async function compile(project, onOutput, env = process.env, signal) {
+// TeXShop, TeXstudio and LaTeX Workshop read the same comment at the top of
+// the entry file, before any LaTeX code.
+async function magicEngine(main) {
+  for (const line of (await fs.readFile(main, "utf8")).split("\n", 40)) {
+    if (line.trim() && !line.trimStart().startsWith("%")) break;
+    const name = /^\s*%\s*!\s*TEX\s+(?:TS-)?program\s*=\s*(\w+)/i
+      .exec(line)?.[1]
+      .toLowerCase();
+    if (Object.hasOwn(ENGINES, name || "")) return name;
+  }
+}
+// latexmk runs these Perl files from the build folder unless told not to.
+async function buildConfig(directory) {
+  const files = [];
+  const hash = crypto.createHash("sha256");
+  let text = "";
+  for (const name of ["latexmkrc", ".latexmkrc"]) {
+    const contents = await fs
+      .readFile(path.join(directory, name), "utf8")
+      .catch((error) =>
+        error.code === "ENOENT" ? null : Promise.reject(error),
+      );
+    if (contents === null) continue;
+    files.push(name);
+    hash.update(`${name}\0${contents}\0`);
+    text += contents;
+  }
+  return files.length
+    ? {
+        directory,
+        files,
+        hash: hash.digest("hex"),
+        // Only a plain assignment of a PDF mode counts; a comment or mode 0
+        // (DVI) would leave the build without a PDF.
+        setsEngine: /^\s*\$pdf_mode\s*=\s*[1-5]\s*;/m.test(text),
+      }
+    : null;
+}
+// The user's own configuration still applies when a project's is skipped.
+const userConfig = () =>
+  [
+    path.join(os.homedir(), ".latexmkrc"),
+    path.join(
+      process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"),
+      "latexmk",
+      "latexmkrc",
+    ),
+  ].filter(existsSync);
+// The latexmk switches for a build and a first log line naming the engine.
+async function latexmkOptions(project, main, confirmConfig) {
+  const config = await buildConfig(path.dirname(main));
+  const trusted = config ? await confirmConfig(config) : false;
+  let engine = project.latexEngine,
+    source = "project setting";
+  if (!engine) [engine, source] = [await magicEngine(main), "% !TEX program"];
+  // Without a choice, a trusted project configuration picks the engine.
+  const configured = !engine && trusted && config.setsEngine;
+  if (!engine) [engine, source] = ["pdflatex", "default"];
+  const files = config?.files.join(" and ");
+  // The agent and a build never run at once, so the file checked here is the
+  // file latexmk would read.
+  return {
+    args: [
+      ...(config && !trusted
+        ? ["-norc", ...userConfig().flatMap((f) => ["-r", f])]
+        : []),
+      ...(configured ? [] : [ENGINES[engine].flag]),
+    ],
+    summary:
+      (configured
+        ? `Engine: chosen by ${files}`
+        : `Engine: ${ENGINES[engine].name} (${source})`) +
+      (config && !trusted ? `; ${files} skipped` : "") +
+      "\n",
+  };
+}
+async function compile(
+  project,
+  onOutput,
+  env = process.env,
+  signal,
+  confirmConfig = async () => false,
+) {
   if (!project.mainFile.endsWith(".tex"))
     throw new Error("Select a .tex entry file first.");
   const main = await safeFile(project.folder, project.mainFile);
+  const options = await latexmkOptions(project, main, confirmConfig);
+  // Stop pressed while the latexmkrc question was open.
+  if (signal?.aborted) throw new Error("Build canceled.");
+  onOutput?.(options.summary);
   const pdf = pdfPath(main);
   const output = path.dirname(pdf);
   await fs.mkdir(output, { recursive: true });
@@ -373,7 +493,7 @@ async function compile(project, onOutput, env = process.env, signal) {
       const child = spawn(
         "latexmk",
         [
-          "-pdf",
+          ...options.args,
           "-interaction=nonstopmode",
           "-halt-on-error",
           "-no-shell-escape",
@@ -384,7 +504,7 @@ async function compile(project, onOutput, env = process.env, signal) {
         ],
         { cwd: path.dirname(main), env, detached: true },
       );
-      let log = "";
+      let log = options.summary;
       let stopped = "";
       let forceTimer;
       const append = (data) => {
@@ -410,8 +530,8 @@ async function compile(project, onOutput, env = process.env, signal) {
       const abort = () => stop("Build canceled.");
       signal?.addEventListener("abort", abort, { once: true });
       const timer = setTimeout(
-        () => stop("Compilation stopped after 90 seconds."),
-        90000,
+        () => stop("Compilation stopped after 5 minutes."),
+        5 * 60 * 1000,
       );
       const settle = () => {
         clearTimeout(timer);
@@ -527,6 +647,7 @@ function seedWorkspace() {
 }
 module.exports = {
   DEFAULT_AREAS,
+  ENGINES,
   DATE_CATEGORIES,
   DATE_STATUSES,
   stringList,

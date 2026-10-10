@@ -336,7 +336,7 @@ test("installed skills are discovered locally, invoked as native skill inputs, a
   assert.equal(JSON.stringify(completed).includes(f.skillPath), false);
   assert.equal(
     f.events
-      .filter((e) => e.channel === "conversation")
+      .filter((e) => ["conversation", "message"].includes(e.channel))
       .some((e) => JSON.stringify(e.value).includes(f.skillPath)),
     false,
   );
@@ -646,6 +646,32 @@ test("cancellation interrupts the RPC turn and preserves project isolation", asy
   assert.equal(canceled.messages.at(-1).status, "cancelled");
   await signIn(f.client, { newProfile: true });
   assert.equal((await f.client.conversation("one")).messages.length, 0);
+});
+test("closing the window stops running work and pauses queues without disabling later requests", async (t) => {
+  const f = await clientFixture(t);
+  const request = {
+    projectId: "one",
+    model: "fixture-model",
+    rootId: "primary",
+  };
+  await f.client.send({ ...request, message: "wait-for-stop" });
+  await f.client.send({ ...request, message: "Queued request" });
+  await waitFor(() => f.launched.length > 1);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await f.client.stopAll();
+  const stopped = await f.client.conversation("one");
+  assert.equal(stopped.messages.at(-1).status, "cancelled");
+  assert.equal(stopped.queuePaused, true);
+  assert.equal(stopped.queue.length, 1);
+  assert.equal(f.client.isRunning("one"), false);
+  await f.client.queue({ projectId: "one", action: "resume" });
+  const resumed = await waitFor(async () => {
+    const c = await f.client.conversation("one");
+    return c.messages.length === 4 && c.messages.at(-1).status === "completed"
+      ? c
+      : false;
+  });
+  assert.equal(resumed.queue.length, 0);
 });
 test("agent configuration uses subscribed Responses with the local Code Mode host", () => {
   const args = agentArguments().join(" ");

@@ -143,3 +143,27 @@ test("invalid and oversized annotations cannot be stored or exported", () => {
   ])
     assert.throws(() => validateAnnotations(input, 2), /annotation|geometry/);
 });
+test("quit can wait for annotation saves that are still being written", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "research-pdf-quit-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const store = createAnnotationStore(root),
+    bytes = await pdf();
+  const saved = store.save(
+    "project-a",
+    bytes,
+    "paper.pdf",
+    "/paper.pdf",
+    marks,
+    2,
+  );
+  // Quit flushes right after the reader queues its last save.
+  await store.flush();
+  const reopened = await store.load(
+    "project-a",
+    bytes,
+    "paper.pdf",
+    "/paper.pdf",
+  );
+  assert.equal(reopened.annotations.length, marks.length);
+  assert.equal((await saved).key, reopened.key);
+});

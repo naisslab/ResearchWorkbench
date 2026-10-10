@@ -4,6 +4,7 @@ import {
   useEffect,
   useLayoutEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -366,12 +367,13 @@ const Message = memo(function Message({
   );
 });
 
-export default function AIPanel({
+export default memo(function AIPanel({
   project,
   file,
   rootId,
-  text,
-  selection,
+  hasText,
+  hasSelection,
+  readText,
   dirty,
   prepare,
   onRunning,
@@ -382,8 +384,10 @@ export default function AIPanel({
   project: Project;
   file: string;
   rootId: string;
-  text: string;
-  selection: string;
+  hasText: boolean;
+  hasSelection: boolean;
+  /** The editor's text now, read only when it is attached. */
+  readText(kind: AIContext["kind"]): string;
   dirty: boolean;
   prepare(): Promise<void>;
   onRunning(running: boolean): void;
@@ -405,6 +409,8 @@ export default function AIPanel({
   const [reviewMessage, setReviewMessage] = useState<string>();
   const [error, setError] = useState("");
   const [popover, setPopover] = useState<"account" | "usage" | null>(null);
+  const popoverOpener = useRef<HTMLButtonElement | null>(null);
+  const popoverPanel = useRef<HTMLDivElement>(null);
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [skillCatalog, setSkillCatalog] = useState<AISkillCatalog | null>(null);
   const [skillsLoading, setSkillsLoading] = useState(false);
@@ -440,18 +446,21 @@ export default function AIPanel({
   const selectedModel = state?.models.find((m) => m.slug === model);
   const { settings: agentSettings, update: updateAgentSettings } =
     useAIAgentSettings(state?.activeProfileId, project.id, selectedModel);
-  const roots = [
-    ...(project.folder
-      ? [
-          {
-            id: "primary",
-            label: project.folderLabel || "Manuscript",
-            folder: project.folder,
-          },
-        ]
-      : []),
-    ...(project.localFolders || []),
-  ];
+  const roots = useMemo(
+    () => [
+      ...(project.folder
+        ? [
+            {
+              id: "primary",
+              label: project.folderLabel || "Manuscript",
+              folder: project.folder,
+            },
+          ]
+        : []),
+      ...(project.localFolders || []),
+    ],
+    [project.folder, project.folderLabel, project.localFolders],
+  );
   const root = roots.find((item) => item.id === agentRoot);
 
   const takeState = useCallback((next: AIState) => {
@@ -531,6 +540,23 @@ export default function AIPanel({
         setConversation(next);
       }
     });
+    const offMessage = api.onAIMessage((event) => {
+      if (
+        disposed ||
+        event.projectId !== project.id ||
+        event.profileId !== stateRef.current?.activeProfileId
+      )
+        return;
+      // The message already contains its earlier deltas.
+      deltas.delete(event.message.id);
+      // Unchanged messages keep their identity, so they do not re-render.
+      setConversation((value) => ({
+        ...value,
+        messages: value.messages.map((message) =>
+          message.id === event.message.id ? event.message : message,
+        ),
+      }));
+    });
     const offDelta = api.onAIDelta((event) => {
       if (
         !disposed &&
@@ -572,6 +598,7 @@ export default function AIPanel({
       discardDeltas();
       offState();
       offConversation();
+      offMessage();
       offDelta();
     };
   }, [project.id, takeState]);
@@ -699,16 +726,33 @@ export default function AIPanel({
       current = false;
     };
   }, [busy, onFilesChanged, onRunning]);
+  // Escape closes only an open menu and returns focus to its button.
   useEffect(() => {
+    if (!popover && !skillsOpen) return;
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key !== "Escape") return;
+      if (popover) {
         setPopover(null);
-        setSkillsOpen(false);
+        popoverOpener.current?.focus();
       }
+      setSkillsOpen(false);
     };
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
-  }, []);
+  }, [popover, skillsOpen]);
+  useEffect(() => {
+    if (popover)
+      popoverPanel.current
+        ?.querySelector<HTMLElement>("button, a[href], input, select")
+        ?.focus();
+  }, [popover]);
+  const togglePopover = (
+    name: "account" | "usage",
+    opener: HTMLButtonElement,
+  ) => {
+    popoverOpener.current = opener;
+    setPopover((current) => (current === name ? null : name));
+  };
   const perform = useCallback(
     async (name: string, fn: () => Promise<unknown>) => {
       setOperation(name);
@@ -837,7 +881,7 @@ export default function AIPanel({
       kind,
       file,
       rootId,
-      text: kind === "selection" ? selection : text,
+      text: readText(kind),
     });
   }
   const actionDisabled = !!operation || state?.status === "connecting";
@@ -938,15 +982,17 @@ export default function AIPanel({
               ? "ai-toolbar-button selected"
               : "ai-toolbar-button"
           }
-          onClick={() => setPopover((p) => (p === "usage" ? null : "usage"))}
+          aria-haspopup="dialog"
+          aria-expanded={popover === "usage"}
+          onClick={(event) => togglePopover("usage", event.currentTarget)}
         >
           <Gauge size={13} /> Usage
         </button>
         <button
           className="ai-toolbar-button ai-account-button"
-          onClick={() =>
-            setPopover((p) => (p === "account" ? null : "account"))
-          }
+          aria-haspopup="dialog"
+          aria-expanded={popover === "account"}
+          onClick={(event) => togglePopover("account", event.currentTarget)}
         >
           <i className={state?.sharing ? "live-dot" : "idle-dot"} />
           <span>{profile?.label || "ChatGPT"}</span>
@@ -974,7 +1020,14 @@ export default function AIPanel({
             aria-label="Close AI menu"
             onClick={() => setPopover(null)}
           />
-          <div className={`ai-popover ai-popover-${popover}`}>
+          <div
+            ref={popoverPanel}
+            className={`ai-popover ai-popover-${popover}`}
+            role="dialog"
+            aria-label={
+              popover === "usage" ? "ChatGPT usage" : "ChatGPT account"
+            }
+          >
             {popover === "usage" ? (
               <>
                 <strong>ChatGPT plan usage</strong>
@@ -1353,7 +1406,7 @@ export default function AIPanel({
             <button
               type="button"
               title="Attach a snapshot of the current file"
-              disabled={actionDisabled || !file || !text.trim()}
+              disabled={actionDisabled || !file || !hasText}
               onClick={() => attach("file")}
             >
               <FileText size={11} /> Current file
@@ -1361,7 +1414,7 @@ export default function AIPanel({
             <button
               type="button"
               title="Attach selected text from the editor"
-              disabled={actionDisabled || !file || !selection.trim()}
+              disabled={actionDisabled || !file || !hasSelection}
               onClick={() => attach("selection")}
             >
               <TextSelect size={11} /> Selection
@@ -1663,4 +1716,4 @@ export default function AIPanel({
       )}
     </section>
   );
-}
+});

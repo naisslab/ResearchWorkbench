@@ -9,6 +9,7 @@ const {
   createGitRunner,
   createGitEnvironment,
 } = require("../electron/git-runner.cjs");
+const { withoutProxy } = require("./fixtures.cjs");
 
 test("system proxy routes reach HTTP, HTTPS and SOCKS clients without overriding explicit preferences", async () => {
   for (const [route, expected] of [
@@ -34,6 +35,15 @@ test("system proxy routes reach HTTP, HTTPS and SOCKS clients without overriding
       await proxyEnvironment("https://github.com", env, unexpected),
       {},
     );
+  // Git and curl read only lowercase http_proxy, so the system route still applies.
+  assert.deepEqual(
+    await proxyEnvironment(
+      "http://github.com",
+      { HTTP_PROXY: "http://ignored.test:80" },
+      async () => "PROXY 127.0.0.1:12000",
+    ),
+    { http_proxy: "http://127.0.0.1:12000" },
+  );
   assert.deepEqual(
     await proxyEnvironment(
       "https://github.com",
@@ -90,12 +100,10 @@ test("Git remote requests actually use the resolved proxy for their destination"
     const target = "http://unresolvable-research-fixture.invalid/paper.git";
     const runner = createGitRunner(
       {
-        ...process.env,
+        ...withoutProxy(process.env),
         PATH: "/usr/bin:/bin",
         GIT_CONFIG_GLOBAL: "/dev/null",
         GIT_CONFIG_NOSYSTEM: "1",
-        NO_PROXY: "",
-        no_proxy: "",
       },
       async (url) => {
         assert.equal(url, target);

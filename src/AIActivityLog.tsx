@@ -1,3 +1,4 @@
+import { useState, type ReactNode } from "react";
 import {
   Check,
   ChevronRight,
@@ -7,6 +8,31 @@ import {
 } from "lucide-react";
 import type { AIMessage } from "./types";
 import { plural } from "./components/ui";
+
+// A section renders its contents once first opened, so long transcripts keep
+// command output and diffs out of the page until someone looks at them.
+function Disclosure({
+  className,
+  summary,
+  children,
+}: {
+  className: string;
+  summary: ReactNode;
+  children: ReactNode;
+}) {
+  const [opened, setOpened] = useState(false);
+  return (
+    <details
+      className={className}
+      onToggle={(event) => {
+        if (event.currentTarget.open) setOpened(true);
+      }}
+    >
+      {summary}
+      {opened && children}
+    </details>
+  );
+}
 
 export default function AIActivityLog({
   message,
@@ -33,27 +59,31 @@ export default function AIActivityLog({
     .filter(Boolean)
     .join(" · ");
   return (
-    <details className="ai-work-log">
-      <summary>
-        {running ? (
-          <LoaderCircle size={13} className="spin" />
-        ) : (
-          <Check size={13} />
-        )}
-        <span>
-          {running
-            ? message.approvals?.length
-              ? "Waiting for approval"
-              : "Working"
-            : "Work log"}
-        </span>
-        <small>
-          {running && active
-            ? active.command?.split("\n")[0] || active.type
-            : counts}
-        </small>
-        <ChevronRight size={12} className="ai-disclosure" />
-      </summary>
+    <Disclosure
+      className="ai-work-log"
+      summary={
+        <summary>
+          {running ? (
+            <LoaderCircle size={13} className="spin" />
+          ) : (
+            <Check size={13} />
+          )}
+          <span>
+            {running
+              ? message.approvals?.length
+                ? "Waiting for approval"
+                : "Working"
+              : "Work log"}
+          </span>
+          <small>
+            {running && active
+              ? active.command?.split("\n")[0] || active.type
+              : counts}
+          </small>
+          <ChevronRight size={12} className="ai-disclosure" />
+        </summary>
+      }
+    >
       <div className="ai-work-log-content">
         {message.plan?.length ? (
           <ul className="ai-plan">
@@ -72,34 +102,36 @@ export default function AIActivityLog({
           </ul>
         ) : null}
         {activities.map((activity) => (
-          <details
+          <Disclosure
             className={`ai-activity ${activity.status}`}
             key={activity.id}
+            summary={
+              <summary>
+                {activity.type === "commandExecution" ? (
+                  <TerminalSquare size={12} />
+                ) : (
+                  <FileText size={12} />
+                )}
+                <span>
+                  {activity.type === "commandExecution"
+                    ? activity.command
+                    : activity.type === "fileChange"
+                      ? `${activity.changes?.length || 0} file changes`
+                      : activity.text || activity.type}
+                </span>
+                <small className={activity.exitCode ? "ai-exit-error" : ""}>
+                  {activity.status === "inProgress"
+                    ? "Running"
+                    : activity.exitCode !== undefined
+                      ? activity.exitCode === 0
+                        ? "Passed"
+                        : `Exit ${activity.exitCode}`
+                      : activity.status}
+                </small>
+                <ChevronRight size={11} className="ai-disclosure" />
+              </summary>
+            }
           >
-            <summary>
-              {activity.type === "commandExecution" ? (
-                <TerminalSquare size={12} />
-              ) : (
-                <FileText size={12} />
-              )}
-              <span>
-                {activity.type === "commandExecution"
-                  ? activity.command
-                  : activity.type === "fileChange"
-                    ? `${activity.changes?.length || 0} file changes`
-                    : activity.text || activity.type}
-              </span>
-              <small className={activity.exitCode ? "ai-exit-error" : ""}>
-                {activity.status === "inProgress"
-                  ? "Running"
-                  : activity.exitCode !== undefined
-                    ? activity.exitCode === 0
-                      ? "Passed"
-                      : `Exit ${activity.exitCode}`
-                    : activity.status}
-              </small>
-              <ChevronRight size={11} className="ai-disclosure" />
-            </summary>
             {activity.cwd && (
               <small className="ai-command-cwd">{activity.cwd}</small>
             )}
@@ -117,9 +149,9 @@ export default function AIActivityLog({
                 <pre>{change.diff}</pre>
               </div>
             ))}
-          </details>
+          </Disclosure>
         ))}
       </div>
-    </details>
+    </Disclosure>
   );
 }

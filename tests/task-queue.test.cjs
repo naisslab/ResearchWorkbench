@@ -77,3 +77,19 @@ test("completed tasks cannot release a newer queued task or let subsequent work 
   await Promise.all([second, third]);
   assert.deepEqual(order, ["second", "third"]);
 });
+test("settled waits for every queued key until the last task finishes", async () => {
+  const queue = createTaskQueue(),
+    gate = deferred();
+  const slow = queue(() => gate.promise, "a");
+  const failed = queue(() => {
+    throw new Error("Cannot save fixture");
+  }, "b");
+  await assert.rejects(failed);
+  let settled = false;
+  const done = queue.settled().then(() => (settled = true));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  gate.resolve("saved");
+  await done;
+  assert.equal(await slow, "saved");
+});

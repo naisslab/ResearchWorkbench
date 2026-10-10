@@ -726,6 +726,10 @@ h1 {
   font-size: var(--text-xs);
   line-height: 1.7;
 }
+.form-help code {
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}
 .optional {
   margin-left: 4px;
   color: var(--muted);
@@ -1682,6 +1686,17 @@ button.stat-card:hover {
 .appearance-option[aria-pressed="true"] {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
+}
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: var(--text-sm);
+}
+.settings-toggle input {
+  margin: 0;
+  accent-color: var(--accent);
 }
 .settings-areas > div {
   display: flex;

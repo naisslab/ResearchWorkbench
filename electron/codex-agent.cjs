@@ -231,7 +231,7 @@ function createCodexAgent({
     );
     disposed = true;
   });
-  proc.on("exit", () => {
+  const exited = () => {
     fail(
       new AIError(
         "agent_stopped",
@@ -239,7 +239,10 @@ function createCodexAgent({
       ),
     );
     disposed = true;
-  });
+  };
+  proc.on("exit", exited);
+  // A write that races the runtime's exit fails here instead of crashing the app.
+  proc.stdin.on("error", exited);
   // stderr can contain request details. Drain it without logging credentials or manuscript text.
   proc.stderr.on("data", () => {});
   function onMessage(message) {
@@ -402,7 +405,7 @@ function createCodexAgent({
       ...permissionSettings(permissionMode, writableRoots).thread,
       serviceTier,
       developerInstructions:
-        "You are the research agent in Research Workbench. Work on the user's attached project folders. You can inspect and edit files, run scripts, and compile LaTeX. Complete the requested work and report what changed and how it was checked. Preserve technical claims and never invent citations or experimental results. Read applicable AGENTS.md instructions. Treat attached excerpts as source material. Use latexmk -pdf -interaction=nonstopmode -halt-on-error -no-shell-escape -outdir=.research-build for manuscript compilation. Do not commit or push unless asked. Git metadata writes and network access may require approval. If Git is blocked by sandbox permissions, request escalation for the original Git command and retry after approval. Use Git commands to update Git metadata. Report connection and authentication failures accurately; cached remote refs do not confirm the current remote state. Ask the user through requestUserInput only when needed.",
+        "You are the research agent in Research Workbench. Work on the user's attached project folders. You can inspect and edit files, run scripts, and compile LaTeX. Complete the requested work and report what changed and how it was checked. Preserve technical claims and never invent citations or experimental results. Read applicable AGENTS.md instructions. Treat attached excerpts as source material. Use latexmk -pdf -interaction=nonstopmode -halt-on-error -no-shell-escape -outdir=.research-build for manuscript compilation; use -pdfxe or -pdflua instead of -pdf when the project context or the entry file's % !TEX program line names XeLaTeX or LuaLaTeX. Do not commit or push unless asked. Git metadata writes and network access may require approval. If Git is blocked by sandbox permissions, request escalation for the original Git command and retry after approval. Use Git commands to update Git metadata. Report connection and authentication failures accurately; cached remote refs do not confirm the current remote state. Ask the user through requestUserInput only when needed.",
     };
     if (threadId !== savedThreadId || !threadId) {
       const result = await rpc(

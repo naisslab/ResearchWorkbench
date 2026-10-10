@@ -322,3 +322,130 @@ test("older multi-file patches are reviewable without inventing original file ve
   assert.equal(review.canRevert, false);
   assert.match(review.reason, /older run/);
 });
+test("unchanged files are not read again, and recent edits are never trusted to the cache", async (t) => {
+  const f = await fixture(t);
+  await f.write("stable.txt", "stable");
+  await f.write("draft.txt", "before");
+  const old = new Date(Date.now() - 60000);
+  for (const name of ["stable.txt", "draft.txt"])
+    await fs.utimes(path.join(f.folder, name), old, old);
+  await f.store.begin(f.id, [f.folder]);
+  const opened = [];
+  const open = fs.open;
+  fs.open = async (file, ...rest) => {
+    opened.push(path.basename(String(file)));
+    return open(file, ...rest);
+  };
+  t.after(() => (fs.open = open));
+  await f.write("draft.txt", "after");
+  assert.equal((await f.store.finish(f.id)).files, 1);
+  fs.open = open;
+  assert.deepEqual(opened, ["draft.txt"]);
+  await f.store.revert(f.id, [f.folder]);
+  assert.equal((await f.read("draft.txt")).toString(), "before");
+});
+test("a file that keeps changing does not stop the run and disables only automatic revert", async (t) => {
+  const f = await fixture(t);
+  await f.write("log.txt", "start");
+  const open = fs.open;
+  t.after(() => (fs.open = open));
+  // Every read sees the file grow, as an experiment log would.
+  fs.open = async (file, ...rest) => {
+    const handle = await open(file, ...rest);
+    if (!String(file).endsWith("log.txt")) return handle;
+    const readFile = handle.readFile.bind(handle);
+    handle.readFile = async () => {
+      const bytes = await readFile();
+      await fs.appendFile(file, "+");
+      return bytes;
+    };
+    return handle;
+  };
+  await f.store.begin(f.id, [f.folder]);
+  fs.open = open;
+  await f.write("log.txt", "finished");
+  await f.store.finish(f.id);
+  const review = await f.store.review(f.id, [f.folder]);
+  assert.equal(review.canRevert, false);
+  assert.match(review.reason, /^log\.txt: This file kept changing/);
+});
+test("collecting keeps versions that reviews need and removes the rest", async (t) => {
+  const f = await fixture(t);
+  await f.write("draft.txt", "before");
+  await f.write("untouched.txt", "same");
+  await f.store.begin(f.id, [f.folder]);
+  await f.write("draft.txt", "after");
+  await f.store.finish(f.id);
+  const unfinished = reviewKey("profile", "project", "crashed");
+  await f.store.begin(unfinished, [f.folder]);
+  const stale = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  await fs.utimes(
+    path.join(f.storage, "runs", unfinished + ".json"),
+    stale,
+    stale,
+  );
+  const restarted = createChangeStore(f.storage);
+  await restarted.collect();
+  assert.deepEqual(await fs.readdir(path.join(f.storage, "runs")), [
+    f.id + ".json",
+  ]);
+  const manifest = JSON.parse(
+    await fs.readFile(path.join(f.storage, "runs", f.id + ".json")),
+  );
+  assert.equal(manifest.before, undefined);
+  assert.deepEqual(
+    (await fs.readdir(path.join(f.storage, "blobs"))).sort(),
+    [manifest.changes[0].before.hash, manifest.changes[0].after.hash].sort(),
+  );
+  await restarted.revert(f.id, [f.folder]);
+  assert.equal((await f.read("draft.txt")).toString(), "before");
+  await restarted.discard([f.id]);
+  await restarted.collect();
+  assert.deepEqual(await fs.readdir(path.join(f.storage, "blobs")), []);
+});
+test("an unreadable run record stops collection before any version is deleted", async (t) => {
+  const f = await fixture(t);
+  await f.write("draft.txt", "before");
+  await f.store.begin(f.id, [f.folder]);
+  await f.write("draft.txt", "after");
+  await f.store.finish(f.id);
+  const blobs = (await fs.readdir(path.join(f.storage, "blobs"))).sort();
+  await fs.writeFile(
+    path.join(f.storage, "runs", reviewKey("p", "q", "damaged") + ".json"),
+    "{ truncated",
+  );
+  await assert.rejects(createChangeStore(f.storage).collect());
+  assert.deepEqual(
+    (await fs.readdir(path.join(f.storage, "blobs"))).sort(),
+    blobs,
+  );
+});
+test("after a restart, collected stores still skip unchanged files and keep their versions", async (t) => {
+  const f = await fixture(t);
+  await f.write("stable.txt", "stable");
+  await f.write("draft.txt", "before");
+  const old = new Date(Date.now() - 60000);
+  for (const name of ["stable.txt", "draft.txt"])
+    await fs.utimes(path.join(f.folder, name), old, old);
+  await f.store.begin(f.id, [f.folder]);
+  await f.write("draft.txt", "after");
+  await f.store.finish(f.id);
+  const restarted = createChangeStore(f.storage);
+  await restarted.collect();
+  const opened = [];
+  const open = fs.open;
+  t.after(() => (fs.open = open));
+  fs.open = async (file, ...rest) => {
+    opened.push(path.basename(String(file)));
+    return open(file, ...rest);
+  };
+  const next = reviewKey("profile", "project", "next");
+  await restarted.begin(next, [f.folder]);
+  fs.open = open;
+  // draft.txt changed moments ago, so only it is read again.
+  assert.deepEqual(opened, ["draft.txt"]);
+  await f.write("stable.txt", "edited by the agent");
+  await restarted.finish(next);
+  await restarted.revert(next, [f.folder]);
+  assert.equal((await f.read("stable.txt")).toString(), "stable");
+});

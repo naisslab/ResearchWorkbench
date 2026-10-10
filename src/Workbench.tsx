@@ -448,6 +448,18 @@ function Workbench({
     await reloadActive();
     setFileRevision((revision) => revision + 1);
   });
+  // Stable callbacks keep the memoized Git and AI panels out of each keystroke.
+  const openTerminal = useStableCallback(() => {
+    showTab("terminal");
+    setExpandedAI(false);
+    setLocalTerminalRequest((request) => request + 1);
+  });
+  const readEditor = useStableCallback((kind: "file" | "selection") =>
+    kind === "selection" ? selection : text,
+  );
+  const prepareAgent = useStableCallback(async () => {
+    if (dirty) await save();
+  });
   const refreshAfterAgent = useCallback(async () => {
     try {
       await filesChanged();
@@ -857,11 +869,7 @@ function Workbench({
             onOpenFile={openFile}
             save={gitSave}
             changed={filesChanged}
-            onOpenTerminal={() => {
-              showTab("terminal");
-              setExpandedAI(false);
-              setLocalTerminalRequest((request) => request + 1);
-            }}
+            onOpenTerminal={openTerminal}
           />
           {!agentMode && (
             <button
@@ -1263,12 +1271,11 @@ function Workbench({
             project={project}
             file={active}
             rootId={activeRoot}
-            text={text}
-            selection={selection}
+            hasText={/\S/.test(text)}
+            hasSelection={/\S/.test(selection)}
+            readText={readEditor}
             dirty={dirty}
-            prepare={async () => {
-              if (dirty) await save();
-            }}
+            prepare={prepareAgent}
             onRunning={setAgentRunning}
             onFilesChanged={refreshAfterAgent}
             onOpenReference={openReference}

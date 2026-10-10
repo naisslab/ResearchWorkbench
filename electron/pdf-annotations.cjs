@@ -215,8 +215,7 @@ function createAnnotationStore(directory) {
     save,
     library,
     archived,
-    hasPending: () => queues.size > 0,
-    flush: () => Promise.allSettled([...queues.values()]),
+    flush: queue.settled,
   };
 }
 async function exportAnnotated(bytes, input, pageCount) {

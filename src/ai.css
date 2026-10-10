@@ -82,7 +82,7 @@
   border: 1px solid var(--border);
   border-radius: 7px;
   background: var(--surface);
-  box-shadow: 0 5px 18px #0002;
+  box-shadow: var(--shadow-popover);
   z-index: 10;
   font-size: 11px;
 }
@@ -545,7 +545,7 @@
   border-radius: 12px;
   background: var(--surface);
   color: var(--text);
-  box-shadow: 0 8px 30px #0003;
+  box-shadow: var(--shadow-popover);
   font-size: 12px;
   transform-origin: bottom right;
   animation: ai-settings-appear 180ms var(--ease-out);
@@ -906,7 +906,7 @@
   border-radius: 10px;
   background: var(--surface);
   color: var(--text);
-  box-shadow: 0 8px 30px #0003;
+  box-shadow: var(--shadow-popover);
   font-size: 11px;
   overflow: hidden;
   animation: ai-settings-appear 180ms var(--ease-out);

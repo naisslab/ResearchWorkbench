@@ -38,6 +38,7 @@ import ResearchCollection from "./ResearchCollection";
 import DeadlineHub, { DateEditor } from "./DeadlineHub";
 import { MilestoneEditor } from "./ProjectMilestones";
 import { DarkContext, useAppearance } from "./theme";
+import { remoteChange } from "./workspace-lock";
 import { ResearchMark } from "./ResearchIcons";
 import { sortProjects } from "./project-order";
 import Sidebar from "./components/Sidebar";
@@ -135,6 +136,7 @@ export default function App() {
   }, []);
   const commit = useCallback<Commit>(
     async (transform) => {
+      for (let wait = remoteChange(); wait; wait = remoteChange()) await wait;
       if (!stateRef.current) return false;
       const next = transform(stateRef.current);
       stateRef.current = next;
@@ -167,16 +169,20 @@ export default function App() {
   );
   const commitWithUndo = useCallback(
     async (label: string, transform: (state: Workspace) => Workspace) => {
-      const previous = stateRef.current;
-      const done = commit(transform);
-      const after = stateRef.current;
+      // The states around the change, even when it waited for another one.
+      let previous: Workspace | undefined, after: Workspace | undefined;
+      const done = commit((state) => {
+        previous = state;
+        return (after = transform(state));
+      });
       if (!(await done) || !previous || !after) return false;
+      const restore = previous;
       show({
         tone: "info",
         message: label,
         action: {
           label: "Undo",
-          run: () => void commit(() => previous),
+          run: () => void commit(() => restore),
           until: after,
         },
       });
@@ -632,10 +638,12 @@ function ToastItem({
   state: Workspace;
   dismiss(): void;
 }) {
+  // Errors stay until dismissed or resolved, so a message is never missed.
   useEffect(() => {
+    if (tone === "danger") return;
     const timer = setTimeout(dismiss, 8000);
     return () => clearTimeout(timer);
-  }, [dismiss]);
+  }, [tone, dismiss]);
   return (
     <div
       className="toast"

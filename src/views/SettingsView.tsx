@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
+  Bell,
   FolderOpen,
   Layers3,
   Monitor,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react";
 import type { Commit, Workspace } from "../types";
 import { BlurField, plural } from "../components/ui";
+import { exclusive } from "../workspace-lock";
 
 const appearances = [
   { id: "light", name: "Light", icon: Sun },
@@ -71,6 +73,28 @@ export default function SettingsView({
             </button>
           ))}
         </div>
+      </section>
+      <section className="detail-card">
+        <div className="section-heading">
+          <h2>
+            <Bell size={17} /> Reminders
+          </h2>
+        </div>
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
+            checked={state.deadlineReminders !== false}
+            onChange={(event) => {
+              const deadlineReminders = event.target.checked;
+              void commit((s) => ({ ...s, deadlineReminders }));
+            }}
+          />
+          Notify me a week and a day before each upcoming date
+        </label>
+        <p className="form-help">
+          Covers My dates and project milestones while the app is open, even
+          with its window closed. Finished dates are skipped.
+        </p>
       </section>
       <section className="detail-card">
         <div className="section-heading">
@@ -186,14 +210,16 @@ export default function SettingsView({
           <button
             className="button"
             onClick={() =>
-              run(async () => {
-                const result = await window.research!.importWorkspace();
-                if (!result) return;
-                imported(result);
-                notify(
-                  "Workspace imported. The previous workspace was backed up.",
-                );
-              })
+              run(() =>
+                exclusive(async () => {
+                  const next = await window.research!.importWorkspace();
+                  if (!next) return;
+                  imported(next);
+                  notify(
+                    "Workspace imported. The previous workspace was backed up.",
+                  );
+                }),
+              )
             }
           >
             <ArrowUpFromLine size={16} /> Import workspace

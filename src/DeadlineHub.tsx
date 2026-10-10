@@ -47,6 +47,7 @@ import ProjectMilestones, {
   kindLabel,
   kindOptions,
 } from "./ProjectMilestones";
+import { exclusive } from "./workspace-lock";
 
 const categories: { id: DateCategory; name: string; icon: typeof FileText }[] =
   [
@@ -201,15 +202,19 @@ export default function DeadlineHub({
     }
   }
   const track = (keys: string[]) =>
-    action("track", async () => {
-      received(await window.research!.trackConferenceDates(keys));
-      notify("Conference dates added to your tracker.");
-    });
+    action("track", () =>
+      exclusive(async () => {
+        received(await window.research!.trackConferenceDates(keys));
+        notify("Conference dates added to your tracker.");
+      }),
+    );
   const accept = (ids: string[]) =>
-    action("updates", async () => {
-      received(await window.research!.acceptDeadlineUpdates(ids));
-      notify("Conference date changes applied.");
-    });
+    action("updates", () =>
+      exclusive(async () => {
+        received(await window.research!.acceptDeadlineUpdates(ids));
+        notify("Conference date changes applied.");
+      }),
+    );
   function openTab(next: string) {
     setTab(next);
     setQuery("");
@@ -250,11 +255,13 @@ export default function DeadlineHub({
             className="button"
             disabled={!!busy}
             onClick={() =>
-              void action("import", async () => {
-                const r = await window.research!.importMacDeadlines();
-                received(r.state);
-                notify(`${r.count} new dates imported from mac-ddl-count.`);
-              })
+              void action("import", () =>
+                exclusive(async () => {
+                  const r = await window.research!.importMacDeadlines();
+                  received(r.state);
+                  notify(`${r.count} new dates imported from mac-ddl-count.`);
+                }),
+              )
             }
           >
             <ArrowDownToLine size={14} />

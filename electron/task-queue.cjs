@@ -2,7 +2,7 @@
 // blocking later work; independent keys can progress concurrently.
 function createTaskQueue() {
   const pending = new Map();
-  return (task, key) => {
+  const run = (task, key) => {
     const next = (pending.get(key) || Promise.resolve())
       .catch(() => {})
       .then(task);
@@ -14,5 +14,9 @@ function createTaskQueue() {
     void next.then(release, release);
     return next;
   };
+  // Resolves once every task queued so far has finished, whatever its outcome.
+  return Object.assign(run, {
+    settled: () => Promise.allSettled([...pending.values()]),
+  });
 }
 module.exports = { createTaskQueue };

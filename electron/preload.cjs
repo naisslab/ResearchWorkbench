@@ -87,4 +87,5 @@ contextBridge.exposeInMainWorld("research", {
   onAIState: listen("ai:state"),
   onAIConversation: listen("ai:conversation"),
   onAIDelta: listen("ai:delta"),
+  onAIMessage: listen("ai:message"),
 });

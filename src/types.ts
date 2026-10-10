@@ -96,6 +96,8 @@ export interface LocalFolder {
 }
 export interface ProjectFileRoot extends LocalFolder {
   files: string[];
+  /** The folder holds more files than the tree lists. */
+  truncated?: boolean;
   error?: string;
 }
 export interface GitStatus {
@@ -139,6 +141,8 @@ export interface Project {
   localFolders?: LocalFolder[];
   links?: { label: string; url: string }[];
   compileOnSave?: boolean;
+  /** Unset reads `% !TEX program` from the entry file, then uses pdfLaTeX. */
+  latexEngine?: "pdflatex" | "xelatex" | "lualatex";
 }
 export interface ResearchCandidate {
   id: string;
@@ -157,6 +161,8 @@ export interface ResearchCatalog {
 export interface Workspace {
   version: 1;
   appearance?: Appearance;
+  /** System notifications a week and a day before each date; on unless false. */
+  deadlineReminders?: boolean;
   trackedDeadlines: TrackedDeadline[];
   areas: Area[];
   projects: Project[];
@@ -225,6 +231,14 @@ export interface ResearchAPI {
       profileId: string;
       requestId: string;
       delta: string;
+    }) => void,
+  ): () => void;
+  /** The running message while the agent works; other messages are unchanged. */
+  onAIMessage(
+    fn: (event: {
+      projectId: string;
+      profileId: string;
+      message: AIMessage;
     }) => void,
   ): () => void;
   readPdfAnnotations(

@@ -597,7 +597,14 @@ await smoke("ai", async (root) => {
         requestId: message.id,
         delta,
       });
-      if (snapshot) emit("conversation", conversation);
+      // The agent sends either the whole chat or only its running message.
+      if (snapshot === "message")
+        emit("message", {
+          projectId: conversation.projectId,
+          profileId: conversation.profileId,
+          message,
+        });
+      else if (snapshot) emit("conversation", conversation);
     };
     globalThis.__workbenchAITest.cleanPreview = () => {
       const message = conversation.messages.at(-1);
@@ -1413,6 +1420,23 @@ await smoke("ai", async (root) => {
   assert.equal(
     (await page.locator(".ai-message-assistant").last().innerText()).match(
       /Streaming paragraph 49/g,
+    )?.length,
+    1,
+  );
+  await desktop.evaluate(() => {
+    for (let i = 0; i < 20; i++)
+      globalThis.__workbenchAITest.delta(`\n\nPatched paragraph ${i}.`);
+    // A running-message update already holds the deltas sent before it.
+    globalThis.__workbenchAITest.delta("\n\nMessage checkpoint.", "message");
+  });
+  await page
+    .locator(".ai-message-assistant")
+    .last()
+    .getByText("Message checkpoint.", { exact: true })
+    .waitFor();
+  assert.equal(
+    (await page.locator(".ai-message-assistant").last().innerText()).match(
+      /Patched paragraph 19/g,
     )?.length,
     1,
   );

@@ -24,13 +24,14 @@ npm run package
 ## 使用
 
 1. 在 Overview 点击 **New project**，选择研究方向和当前阶段。工作区预设 ML Systems、Security and Privacy 和 Cyber-Physical Systems，也支持自定义方向。
-2. 在项目详情中添加下一步任务、研究笔记和目标会议。在 **Workbench setup** 选择本地项目目录和 LaTeX 入口文件。
+2. 在项目详情中添加下一步任务、研究笔记和目标会议。在 **Workbench setup** 选择本地项目目录、LaTeX 入口文件和编译引擎。
 3. 点击 **Open workbench**。左侧选择 `.tex`、`.bib` 或笔记文件，中间编辑，右侧查看 PDF。`⌘S` 保存文件，**Compile**（`⌘↵`）保存当前编辑文件并执行 `latexmk`，编译中可点 **Stop** 停止。Build log 把 `file:line` 错误和未定义的引用列为 Problems，点击跳到对应行。`⇧⌘J` 或 **Show in PDF** 在 PDF 中定位光标所在行；双击 PDF，或启用 **Jump to source** 后单击，跳回源码对应行。`.tex` 文件显示字数和 Outline，`\cite{`、`\ref{`、`\begin{` 提供补全。文件在外部被修改时，未编辑的内容自动重新载入，有未保存编辑时提示 **Reload** 或 **Keep mine**；切换文件或离开工作台前会询问是否保存。
 4. 底部终端支持本机交互式 shell。设置 `user@hostname` 或 SSH config alias 后，切换 **SSH**。端口、密钥和代理配置使用 `~/.ssh/config`；密码和主机密钥确认在终端完成。
 5. 在 **Project board** 拖动卡片，或用卡片菜单切换阶段：Idea Exploration、Experiments、Paper Writing、Submitted、Revision、Published。
 6. **Dates & deadlines** 的 My dates 汇总独立会议日期和个人事项；首次启动会从本机 `mac-ddl-count` 导入已保存的日期、状态和来源（`RESEARCH_MAC_DDL_DIR` 可指定其他目录）。CCF conferences 可搜索会议并添加 Abstract、Paper 等日期；Project milestones 保留每个项目的里程碑。左侧角标、Overview 和此页的计数来自同一份日期列表，角标表示 7 天内到期的数量。项目详情中关联的会议日期可直接点开编辑。删除日期、里程碑、任务或项目后，提示条提供 **Undo**。
 7. 右上角的月亮/太阳按钮切换浅色和深色；Workspace settings 的 Appearance 可选择 Light、Dark 或跟随系统。主题覆盖编辑器、终端和弹窗，并在重启后保留。
 8. 在 **Workspace settings** 管理研究方向，导入或导出项目资料。`⌘K` 搜索并打开项目。
+9. 应用会在 My dates 和项目里程碑到期前一周、前一天各发一次系统通知，已完成的日期不提醒。窗口关闭但应用仍在运行时同样提醒；点击通知打开窗口。Workspace settings 的 **Reminders** 可关闭提醒。
 
 启动时自动将 Current research 的 22 个项目加入工作区，按 ML Systems、Security and Privacy、Cyber-Physical Systems 分组显示在左侧，并进入 Project board。升级已有工作区时移除六个示例项目，保留已有真实项目的笔记、任务和阶段；全部迁移合并为一次写入，写入前保存一份备份。此操作只执行一次，之后删除的项目不会在重启时重新加入。
 
@@ -54,11 +55,11 @@ Project board 按研究时间线排列阶段：Idea Exploration → Experiments 
 
 每次请求结束后，**Review changes** 打开逐文件审阅窗口。**Diff** 显示增删颜色和修改前后的行号，点击行号跳回 source；**Before & after** 并排显示完整文件的预览。比较基于请求开始前的文件，包含通过命令改动的文件，并保留原有未提交编辑。停止的请求也能审阅其部分修改。
 
-点击 **Revert this run** 可一次还原该请求修改、新增或删除的文件。还原前保存当前编辑器内容，并核对所有文件；后续编辑、未结束的请求、正在执行的 Git 操作或编译会阻止还原。还原结束后刷新编辑器和文件树，历史 diff 仍可查看。备份保存在 Application Support 的 `Research Workbench/ai/changes/`，重启后仍可使用；工作区 JSON 导出不包含这些备份。旧历史没有原始文件备份，只提供只读审阅。生成目录、依赖目录和 Git 历史不纳入还原；单文件快照最多 8 MiB，每个版本最多 128 MiB，超出限制的修改会明确禁用自动还原。
+点击 **Revert this run** 可一次还原该请求修改、新增或删除的文件。还原前保存当前编辑器内容，并核对所有文件；后续编辑、未结束的请求、正在执行的 Git 操作或编译会阻止还原。还原结束后刷新编辑器和文件树，历史 diff 仍可查看。备份保存在 Application Support 的 `Research Workbench/ai/changes/`，重启后仍可使用；工作区 JSON 导出不包含这些备份。旧历史没有原始文件备份，只提供只读审阅。生成目录、依赖目录和 Git 历史不纳入还原；单文件快照最多 8 MiB，每个版本最多 128 MiB，超出限制或在保存时持续变化的文件（例如实验日志）会明确禁用该次请求的自动还原，请求本身照常执行。未修改的文件不会重复读取。**New AI chat** 删除该对话的备份；应用启动时清理不再被任何请求引用的文件版本。
 
 输入框底部使用 Codex 风格的权限和模型菜单。**Default permissions** 允许在项目目录内工作，额外访问由用户审批；**Approve for me** 保留项目目录限制，由 Codex 自动审查额外访问请求；**Read only** 用于检查文件，修改或额外访问需审批；**Full access** 允许访问本机文件和网络，无需逐次审批。模型菜单提供 **Reasoning Effort** 和 **Standard / Fast**，选项来自随应用打包的 Codex `model/list` 能力目录。推理强度只使用滑块，支持拖动、点击滑轨和键盘调整；重置按钮恢复模型默认值。菜单、选中标记和滑块具有过渡动画，并遵守系统减少动态效果设置。Fast 的速度和用量说明采用目录返回的文本；不支持 Fast 的模型仅显示 Standard。权限按账户和项目保存，推理强度与速度再按模型保存，重启后恢复。运行期间可以调整下一条指令的设置。
 
-Agent 运行期间，按 Enter 或点击 **Queue message** 可继续提交指令，最多等待 20 条。队列按顺序执行；每条指令保留提交时的模型、权限、推理强度、速度、附件快照和 Skills。输入框上方显示等待队列，可调整顺序、删除或 **Pause / Resume**。Pause 让当前任务继续完成；Stop 中断当前任务并暂停队列。任务失败、切换账户或关闭应用后，等待指令会保留并暂停，点击 Resume 继续。开始执行前会重新检查模型、项目目录和 Skills；不可用时暂停并显示原因。队列按账户和项目保存，New AI chat 同时清空等待指令。
+Agent 运行期间，按 Enter 或点击 **Queue message** 可继续提交指令，最多等待 20 条。队列按顺序执行；每条指令保留提交时的模型、权限、推理强度、速度、附件快照和 Skills。输入框上方显示等待队列，可调整顺序、删除或 **Pause / Resume**。Pause 让当前任务继续完成；Stop 中断当前任务并暂停队列。任务失败、切换账户、关闭窗口或退出应用后，等待指令会保留并暂停，点击 Resume 继续；关闭窗口同时停止当前任务，重新打开窗口后 Agent 照常可用。开始执行前会重新检查模型、项目目录和 Skills；不可用时暂停并显示原因。队列按账户和项目保存，New AI chat 同时清空等待指令。
 
 Agent 回复支持 Markdown、列表、表格和带复制按钮的代码块。文件链接在编辑器打开，可定位到行号；PDF 链接在预览区打开。**Work log** 收起执行过程，**Review changes** 展开完整 diff。在 **All panels** 模式下，AI 默认使用约半个工作区高度，与 Terminal 分别记忆大小；拖动面板顶部的横条调整，双击恢复默认。**Expand AI** 切换到完整对话视图，打开文件后恢复分栏。输入框自动增高，Enter 发送，Shift+Enter 换行，⌘Enter 也可发送。上翻阅读时停止自动跟随，**Jump to latest** 返回最新回复。
 
@@ -76,7 +77,9 @@ Agent 回复支持 Markdown、列表、表格和带复制按钮的代码块。�
 
 安装 MacTeX 或确保 `latexmk`、`pdflatex` 在 PATH 中。应用会加入 `/Library/TeX/texbin`、`/opt/homebrew/bin` 和 `/usr/local/bin`。
 
-当前编译器为 pdfLaTeX，通过 `latexmk -pdf -interaction=nonstopmode -halt-on-error -no-shell-escape -file-line-error -synctex=1` 执行。产物和 SyncTeX 数据保存在入口文件旁的 `.research-build/`。失败或停止时保留日志和此前的 PDF；编译超过 90 秒会终止。PDF 内容未变时，重新编译不会重新加载阅读器。
+编译通过 `latexmk -interaction=nonstopmode -halt-on-error -no-shell-escape -file-line-error -synctex=1` 执行。**Workbench setup** 的 LaTeX engine 可选 pdfLaTeX、XeLaTeX 或 LuaLaTeX；默认的 Automatic 读取入口文件开头的 `% !TEX program = xelatex` 等注释，没有注释时使用 pdfLaTeX。Build log 第一行显示本次使用的引擎。产物和 SyncTeX 数据保存在入口文件旁的 `.research-build/`。失败或停止时保留日志和此前的 PDF；编译超过 5 分钟会终止。PDF 内容未变时，重新编译不会重新加载阅读器。
+
+入口文件所在目录有 `latexmkrc` 或 `.latexmkrc` 时，首次编译前会询问是否运行。这类文件是 Perl 程序，会以你的权限在 Agent 沙箱之外执行，所以 Agent 或协作者修改后会再次询问。选择 **Compile without it** 时跳过项目配置，仍使用 `~/.latexmkrc`，重启应用前不再询问；选择 **Trust and compile** 后，项目配置中的 `$pdf_mode` 可以在 Automatic 模式下设定引擎。信任的文件按项目保存在 Application Support 的 `Research Workbench/build-trust.json`。
 
 ## 数据与边界
 
@@ -86,7 +89,7 @@ Agent 回复支持 Markdown、列表、表格和带复制按钮的代码块。�
 
 SSH 提供真实远端终端。当前编辑器和 Compile 使用本地文件，尚未实现远端目录浏览、同步或远端 LaTeX 构建。
 
-项目里程碑以日为单位，在当天结束时到期；My dates 记录精确时间。应用不发送后台或系统通知，会议的具体时间和时区应以官网为准。笔记和项目字段在离开输入框时保存；稿件通过 `⌘S` 或 Compile 保存。
+项目里程碑以日为单位，在当天结束时到期；My dates 记录精确时间。到期提醒只在应用运行时发送，会议的具体时间和时区应以官网为准。笔记和项目字段在离开输入框时保存；稿件通过 `⌘S` 或 Compile 保存。
 
 ## 验证
 

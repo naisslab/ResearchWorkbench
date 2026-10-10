@@ -14,8 +14,9 @@ async function proxyEnvironment(url, env, resolveProxy = systemProxy) {
   if (!["http:", "https:"].includes(protocol)) return {};
   const key = protocol.slice(0, -1) + "_proxy";
   // Explicit command-line proxy settings take precedence over the system route.
-  if (env.all_proxy || env.ALL_PROXY || env[key] || env[key.toUpperCase()])
-    return {};
+  // Git and curl ignore uppercase HTTP_PROXY, so it does not count here.
+  const explicit = env[key] || (key === "https_proxy" && env.HTTPS_PROXY);
+  if (env.all_proxy || env.ALL_PROXY || explicit) return {};
   const route = await resolveProxy(url).catch(() => undefined);
   const first = route?.split(";")[0].trim();
   const match = /^(PROXY|HTTP|HTTPS|SOCKS|SOCKS5)\s+(\S+)$/i.exec(first || "");

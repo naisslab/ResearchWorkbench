@@ -31,4 +31,11 @@ A manuscript used only by automated tests.
   });
   return state;
 }
-module.exports = { manuscriptWorkspace };
+// The caller's shell proxy would otherwise take precedence over the fixture's.
+const withoutProxy = (env) =>
+  Object.fromEntries(
+    Object.entries(env).filter(
+      ([key]) => !/^(https?|all|no)_proxy$/i.test(key),
+    ),
+  );
+module.exports = { manuscriptWorkspace, withoutProxy };

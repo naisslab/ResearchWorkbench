@@ -16,6 +16,7 @@ const {
 const { createCodexAgent, codexExecutable } = require("./codex-agent.cjs");
 const { createResponseGateway } = require("./response-gateway.cjs");
 const { createTaskQueue } = require("./task-queue.cjs");
+const { ENGINES } = require("./core.cjs");
 const { createGitEnvironment } = require("./git-runner.cjs");
 const {
   createChangeStore,
@@ -53,6 +54,7 @@ function createAI({
     loads = new Map(),
     agents = new Map();
   const changes = createChangeStore(path.join(directory, "changes"));
+  void changes.collect().catch(() => {});
   const restoring = new Map();
   const canonicalRoot = (root) => {
     try {
@@ -351,19 +353,17 @@ function createAI({
     await loads.get(id);
     return conversations.get(id);
   }
+  const publicMessage = ({ inputText, skills, ...rest }) => ({
+    ...rest,
+    skills: skills?.map(({ name, displayName }) => ({ name, displayName })),
+  });
   function publicConversation(value) {
     const finalizing = running.has(key(value.profileId, value.projectId));
     return {
       ...value,
       queue: (value.queue || []).map(({ request, ...item }) => item),
-      messages: value.messages.map(({ inputText, skills, ...rest }, index) => {
-        const message = {
-          ...rest,
-          skills: skills?.map(({ name, displayName }) => ({
-            name,
-            displayName,
-          })),
-        };
+      messages: value.messages.map((item, index) => {
+        const message = publicMessage(item);
         return finalizing &&
           index === value.messages.length - 1 &&
           message.role === "assistant"
@@ -509,7 +509,8 @@ function createAI({
       await validateContext(projectId, context);
       attachment = { name: context.file, kind: context.kind };
     }
-    const projectContext = `Project: ${p.name}\nResearch question: ${p.summary || ""}\nStage: ${p.stage}\nTarget venue: ${p.venue || ""}`;
+    const engine = ENGINES[p.latexEngine]?.name;
+    const projectContext = `Project: ${p.name}\nResearch question: ${p.summary || ""}\nStage: ${p.stage}\nTarget venue: ${p.venue || ""}${engine ? `\nLaTeX engine: ${engine}` : ""}`;
     const inputText = `${projectContext}\n\n${context ? `Attached ${context.kind}: ${context.file}\n<attached_text>\n${context.text}\n</attached_text>\n\n` : ""}${message.trim()}`;
     const requestId = crypto.randomUUID();
     const createdAt = new Date().toISOString();
@@ -777,8 +778,20 @@ function createAI({
       value.projectId,
       assistant.id,
     );
+    let publishTimer;
+    // Agent events can arrive hundreds of times a second. The window gets at
+    // most ten updates a second, each carrying only the running message.
+    function publishMessage() {
+      clearTimeout(publishTimer);
+      publishTimer = undefined;
+      emit("message", {
+        projectId: value.projectId,
+        profileId: value.profileId,
+        message: publicMessage(assistant),
+      });
+    }
     function updated() {
-      publishConversation(value);
+      publishTimer ??= setTimeout(publishMessage, 100);
       if (Date.now() - lastCheckpoint > 1000) {
         lastCheckpoint = Date.now();
         void saveConversation(value).catch(() => {});
@@ -790,6 +803,7 @@ function createAI({
       if (event.type === "approval") {
         assistant.approvals.push(event.approval);
         updated();
+        publishMessage();
         return;
       }
       if (event.type === "approvalResolved") {
@@ -977,6 +991,8 @@ function createAI({
           }
         : publicError(error);
     } finally {
+      // The finished conversation is published in full after this.
+      clearTimeout(publishTimer);
       assistant.approvals = [];
       if (snapshotStarted) {
         try {
@@ -1045,6 +1061,9 @@ function createAI({
     const value = await conversation(projectId);
     if (!value.profileId) return value;
     await stop(projectId);
+    const runs = value.messages
+      .filter((message) => message.role === "assistant")
+      .map((message) => reviewKey(value.profileId, projectId, message.id));
     value.messages = [];
     value.queue = [];
     value.queuePaused = false;
@@ -1058,6 +1077,8 @@ function createAI({
     if (entry) await closeAgent(entry);
     agents.delete(id);
     await saveConversation(value);
+    // Cleared runs can no longer be reviewed, so their file versions go too.
+    await changes.discard(runs).catch(() => {});
     publishConversation(value);
     return publicConversation(value);
   }
@@ -1244,6 +1265,7 @@ function createAI({
         return auth.disconnect();
       }),
     openUsage: () => openBrowser(USAGE_URL),
+    stopAll,
     dispose: () => {
       disposed = true;
       auth.dispose();

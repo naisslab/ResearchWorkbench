@@ -19,7 +19,6 @@ import {
   type RenderTask,
 } from "pdfjs-dist";
 import type { PageViewport } from "pdfjs-dist/types/src/display/display_utils";
-import workerSource from "pdfjs-dist/build/pdf.worker.min.mjs?raw";
 import {
   ArrowDownToLine,
   Check,
@@ -51,10 +50,22 @@ import type {
 } from "./pdf-types";
 import { timeLabel } from "./dates";
 
-// The worker is bundled locally. A blob module also works in the packaged file:// renderer.
-GlobalWorkerOptions.workerSrc = URL.createObjectURL(
-  new Blob([workerSource], { type: "text/javascript" }),
-);
+// The 1 MB worker is bundled locally and loads with the first PDF. A blob
+// module also works in the packaged file:// renderer.
+let worker: Promise<void> | undefined;
+const loadWorker = () =>
+  (worker ??= import("pdfjs-dist/build/pdf.worker.min.mjs?raw").then(
+    ({ default: source }) => {
+      GlobalWorkerOptions.workerSrc = URL.createObjectURL(
+        new Blob([source], { type: "text/javascript" }),
+      );
+    },
+    (error) => {
+      // The next PDF tries again.
+      worker = undefined;
+      throw error;
+    },
+  ));
 const colors: Record<AnnotationColor, string> = {
   yellow: "#eabf3d",
   green: "#4dad6e",
@@ -235,6 +246,15 @@ const PdfPage = memo(function PdfPage({
       render?.cancel();
     };
   }, [near, page, viewport]);
+  // A page far from view gives back its bitmap and pdf.js render data, so a
+  // long thesis keeps only the pages around the viewport in memory.
+  useEffect(() => {
+    if (near || !page) return;
+    const target = canvas.current;
+    if (target) target.width = target.height = 0;
+    setSharp(undefined);
+    page.cleanup();
+  }, [near, page]);
   useEffect(() => {
     const box = element.current!;
     if (!flash || flashed.current === flash.nonce) return;
@@ -614,6 +634,7 @@ export default memo(function PdfReader({
     const loading = window
       .research!.readPdfAnnotations(projectId, pdf.url)
       .then(async (data) => {
+        await loadWorker();
         if (cancelled) return;
         setDocumentKey(data.key);
         setItems(data.annotations);
@@ -648,12 +669,18 @@ export default memo(function PdfReader({
   const locate = (y: number): Anchor | null => {
     const element = scroller.current!,
       line = element.scrollTop + y;
-    const pages = Array.from(
-      element.querySelectorAll<HTMLElement>(".pdf-page"),
-    );
-    const page =
-      pages.find((page) => page.offsetTop + page.offsetHeight > line + 40) ??
-      pages.at(-1);
+    const pages = element.querySelectorAll<HTMLElement>(".pdf-page");
+    // Pages are in order, so a binary search finds the first one that ends
+    // below the line; every scroll event runs this.
+    let low = 0,
+      high = pages.length - 1;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      const { offsetTop, offsetHeight } = pages[middle];
+      if (offsetTop + offsetHeight > line + 40) high = middle;
+      else low = middle + 1;
+    }
+    const page = pages[low];
     return page
       ? {
           page: Number(page.dataset.pageNumber),
