@@ -22,6 +22,7 @@ function createAI({
   validateContext,
   scope,
   environment,
+  skillRoots = [],
   agentFactory = createCodexAgent,
   fetcher = fetch,
   emit = () => {},
@@ -33,6 +34,7 @@ function createAI({
   let loadedUsage;
   let usageQueue = Promise.resolve();
   let accountQueue = Promise.resolve();
+  let skillAgent;
   const conversations = new Map(),
     running = new Map(),
     writes = new Map(),
@@ -124,6 +126,40 @@ function createAI({
     );
     agents.clear();
   }
+  async function availableSkills(projectId, rootId, forceReload = false) {
+    project(projectId);
+    const { cwd } = await scope(projectId, rootId);
+    if (!skillAgent || skillAgent.isClosed())
+      skillAgent = agentFactory({
+        accessToken: "",
+        home: path.join(directory, "codex", "skill-catalog"),
+        environment,
+        skillRoots,
+      });
+    const result = await skillAgent.listSkills(cwd, forceReload);
+    const entry = result.data?.find((entry) => entry.cwd === cwd);
+    return {
+      skills: (entry?.skills || []).map((skill) => ({
+        ...skill,
+        id: crypto.createHash("sha256").update(skill.path).digest("hex"),
+        displayName: skill.interface?.displayName || skill.name,
+      })),
+      errors: entry?.errors || [],
+    };
+  }
+  const publicSkills = ({ skills, errors }) => ({
+    skills: skills.map(
+      ({ id, name, description, displayName, scope, enabled }) => ({
+        id,
+        name,
+        description,
+        displayName,
+        scope,
+        enabled,
+      }),
+    ),
+    warnings: errors.length,
+  });
   async function refreshModels() {
     const session = await auth.getSession();
     const profileId = session.activeProfileId;
@@ -226,13 +262,20 @@ function createAI({
     const finalizing = running.has(key(value.profileId, value.projectId));
     return {
       ...value,
-      messages: value.messages.map(({ inputText, ...message }, index) =>
-        finalizing &&
-        index === value.messages.length - 1 &&
-        message.role === "assistant"
+      messages: value.messages.map(({ inputText, skills, ...rest }, index) => {
+        const message = {
+          ...rest,
+          skills: skills?.map(({ name, displayName }) => ({
+            name,
+            displayName,
+          })),
+        };
+        return finalizing &&
+          index === value.messages.length - 1 &&
+          message.role === "assistant"
           ? { ...message, status: "running" }
-          : message,
-      ),
+          : message;
+      }),
     };
   }
   async function saveConversation(value) {
@@ -252,7 +295,14 @@ function createAI({
   function publishConversation(value) {
     emit("conversation", publicConversation(value));
   }
-  async function send({ projectId, message, model, context, rootId }) {
+  async function send({
+    projectId,
+    message,
+    model,
+    context,
+    rootId,
+    skillIds = [],
+  }) {
     const session = await auth.getSession();
     if (session.status === "connecting")
       throw new AIError(
@@ -292,6 +342,33 @@ function createAI({
         "request_running",
         "A response is already running for this project.",
       );
+    if (
+      !Array.isArray(skillIds) ||
+      skillIds.length > 8 ||
+      skillIds.some(
+        (id) => typeof id !== "string" || !/^[a-f0-9]{64}$/.test(id),
+      ) ||
+      new Set(skillIds).size !== skillIds.length
+    )
+      throw new AIError(
+        "invalid_skills",
+        "Select up to eight available skills.",
+      );
+    let skills = [];
+    if (skillIds.length) {
+      const catalog = await availableSkills(projectId, rootId, true);
+      skills = skillIds.map((id) => {
+        const skill = catalog.skills.find(
+          (skill) => skill.id === id && skill.enabled,
+        );
+        if (!skill)
+          throw new AIError(
+            "skill_unavailable",
+            "A selected skill is no longer available. Refresh Skills and select it again.",
+          );
+        return skill;
+      });
+    }
     let attachment;
     if (context) {
       await validateContext(projectId, context);
@@ -307,6 +384,11 @@ function createAI({
       text: message.trim(),
       inputText,
       attachments: attachment ? [attachment] : [],
+      skills: skills.map(({ name, displayName, path }) => ({
+        name,
+        displayName,
+        path,
+      })),
       createdAt,
       status: "completed",
     };
@@ -319,8 +401,14 @@ function createAI({
       status: "running",
       activities: [],
       approvals: [],
+      skills: skills.map(({ name, displayName }) => ({ name, displayName })),
     };
     const controller = new AbortController();
+    if (running.has(id))
+      throw new AIError(
+        "request_running",
+        "A response is already running for this project.",
+      );
     value.agentRootId = rootId || "primary";
     const job = { controller, projectId, done: undefined };
     running.set(id, job);
@@ -462,6 +550,7 @@ function createAI({
             accessToken: token,
             home: path.join(directory, "codex", value.profileId),
             environment,
+            skillRoots,
           }),
         };
         agents.set(id, entry);
@@ -472,6 +561,7 @@ function createAI({
         model,
         ...projectScope,
         text: value.messages.at(-2).inputText,
+        skills: value.messages.at(-2).skills || [],
         signal,
         onThread: async (threadId) => {
           value.threadId = threadId;
@@ -585,6 +675,8 @@ function createAI({
     isRunning: (projectId) =>
       [...running.values()].some((job) => job.projectId === projectId),
     refreshModels,
+    skills: async (projectId, rootId, forceReload) =>
+      publicSkills(await availableSkills(projectId, rootId, forceReload)),
     answer: async ({ projectId, id, decision, answers }) => {
       if (!["accept", "decline", "cancel", "answer"].includes(decision))
         throw new AIError("invalid_decision", "Choose an approval decision.");
@@ -664,6 +756,7 @@ function createAI({
       return Promise.allSettled([
         ...[...running.values()].map((job) => job.done),
         ...[...agents.values()].map((entry) => entry.agent.close()),
+        ...(skillAgent ? [skillAgent.close()] : []),
       ]);
     },
   };

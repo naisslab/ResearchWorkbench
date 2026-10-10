@@ -1,4 +1,11 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   Sparkles,
   ArrowUp,
@@ -17,6 +24,7 @@ import {
   Folder,
   Check,
   LoaderCircle,
+  BookOpen,
 } from "lucide-react";
 import type {
   AIApproval,
@@ -25,10 +33,13 @@ import type {
   AIMessage,
   AIResult,
   AIState,
+  AISkill,
+  AISkillCatalog,
   Project,
 } from "./types";
 import AIMarkdown, { CopyAction } from "./AIMarkdown";
 import AIActivityLog from "./AIActivityLog";
+import AISkills from "./AISkills";
 import "./ai.css";
 
 async function unwrap<T>(promise: Promise<AIResult<T>>) {
@@ -178,23 +189,111 @@ const Message = memo(function Message({
   ): void;
   openReference(reference: string): void;
 }) {
-  const changedFiles = [...new Set(message.activities?.flatMap((activity) => activity.changes?.map((change) => change.path) || []) || [])];
+  const changedFiles = [
+    ...new Set(
+      message.activities?.flatMap(
+        (activity) => activity.changes?.map((change) => change.path) || [],
+      ) || [],
+    ),
+  ];
   return (
-    <article className={`ai-message ai-message-${message.role}`} data-message-id={message.id}>
+    <article
+      className={`ai-message ai-message-${message.role}`}
+      data-message-id={message.id}
+    >
       <div className="ai-message-heading">
-        {message.role === "assistant" ? <Sparkles size={14} /> : <span className="ai-user-dot" />}
+        {message.role === "assistant" ? (
+          <Sparkles size={14} />
+        ) : (
+          <span className="ai-user-dot" />
+        )}
         <strong>{message.role === "assistant" ? "Agent" : "You"}</strong>
         {message.model && <span>{modelLabel || message.model}</span>}
-        {message.status === "running" && <span className="ai-run-state" role="status"><LoaderCircle size={12} className="spin" />{message.approvals?.length ? "Needs your approval" : "Working…"}</span>}
+        {message.status === "running" && (
+          <span className="ai-run-state" role="status">
+            <LoaderCircle size={12} className="spin" />
+            {message.approvals?.length ? "Needs your approval" : "Working…"}
+          </span>
+        )}
       </div>
-      {message.attachments?.map((attachment, index) => <small className="ai-message-attachment" key={index}><FileText size={11} /> {attachment.name}{attachment.kind === "selection" ? " · selection" : ""}</small>)}
+      {message.attachments?.map((attachment, index) => (
+        <small className="ai-message-attachment" key={index}>
+          <FileText size={11} /> {attachment.name}
+          {attachment.kind === "selection" ? " · selection" : ""}
+        </small>
+      ))}
+      {message.role === "user" && !!message.skills?.length && (
+        <div className="ai-message-skills">
+          {message.skills.map((skill) => (
+            <small key={skill.name} title={`Used ${skill.name}`}>
+              <BookOpen size={11} />
+              {skill.displayName}
+            </small>
+          ))}
+        </div>
+      )}
       <AIActivityLog message={message} openReference={openReference} />
-      {message.approvals?.map((request) => <Approval key={request.id} request={request} busy={answering} answer={(decision, answers) => answer(request, decision, answers)} />)}
-      {message.text && (message.role === "assistant" ? <AIMarkdown text={message.text} openReference={openReference} /> : <div className="ai-user-text">{message.text}</div>)}
-      {!!changedFiles.length && message.status !== "running" && <div className="ai-changed-files">{changedFiles.map((path) => <button type="button" key={path} title={`Open ${path}`} onClick={() => openReference(path)}><FileText size={12} /><span>{path.split("/").at(-1)}</span></button>)}</div>}
-      {message.diff && <details className="ai-turn-diff"><summary><FileText size={12} /> Review changes<ChevronRight size={12} className="ai-disclosure" /></summary><pre>{message.diff}</pre></details>}
-      {message.error && <p className="ai-message-error" role="alert">{message.error.message}{message.error.requestId && <small>Request: {message.error.requestId}</small>}</p>}
-      {message.text && message.status !== "running" && <div className="ai-message-footer"><CopyAction text={message.text} />{message.usage && <small className="ai-message-usage" title="Tokens reported for this run">{number(message.usage.inputTokens)} input · {number(message.usage.outputTokens)} output tokens</small>}{message.status === "cancelled" && <small>Stopped</small>}</div>}
+      {message.approvals?.map((request) => (
+        <Approval
+          key={request.id}
+          request={request}
+          busy={answering}
+          answer={(decision, answers) => answer(request, decision, answers)}
+        />
+      ))}
+      {message.text &&
+        (message.role === "assistant" ? (
+          <AIMarkdown text={message.text} openReference={openReference} />
+        ) : (
+          <div className="ai-user-text">{message.text}</div>
+        ))}
+      {!!changedFiles.length && message.status !== "running" && (
+        <div className="ai-changed-files">
+          {changedFiles.map((path) => (
+            <button
+              type="button"
+              key={path}
+              title={`Open ${path}`}
+              onClick={() => openReference(path)}
+            >
+              <FileText size={12} />
+              <span>{path.split("/").at(-1)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {message.diff && (
+        <details className="ai-turn-diff">
+          <summary>
+            <FileText size={12} /> Review changes
+            <ChevronRight size={12} className="ai-disclosure" />
+          </summary>
+          <pre>{message.diff}</pre>
+        </details>
+      )}
+      {message.error && (
+        <p className="ai-message-error" role="alert">
+          {message.error.message}
+          {message.error.requestId && (
+            <small>Request: {message.error.requestId}</small>
+          )}
+        </p>
+      )}
+      {message.text && message.status !== "running" && (
+        <div className="ai-message-footer">
+          <CopyAction text={message.text} />
+          {message.usage && (
+            <small
+              className="ai-message-usage"
+              title="Tokens reported for this run"
+            >
+              {number(message.usage.inputTokens)} input ·{" "}
+              {number(message.usage.outputTokens)} output tokens
+            </small>
+          )}
+          {message.status === "cancelled" && <small>Stopped</small>}
+        </div>
+      )}
     </article>
   );
 });
@@ -237,12 +336,19 @@ export default function AIPanel({
   const [operation, setOperation] = useState("");
   const [error, setError] = useState("");
   const [popover, setPopover] = useState<"account" | "usage" | null>(null);
+  const [skillsOpen, setSkillsOpen] = useState(false);
+  const [skillCatalog, setSkillCatalog] = useState<AISkillCatalog | null>(null);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsError, setSkillsError] = useState("");
+  const [selectedSkills, setSelectedSkills] = useState<AISkill[]>([]);
+  const skillRequest = useRef(0);
   const [showLatest, setShowLatest] = useState(false);
   const stateRef = useRef<AIState | null>(null);
   const modelRefresh = useRef("");
   const transcript = useRef<HTMLDivElement>(null);
   const transcriptContent = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const skillButton = useRef<HTMLButtonElement>(null);
   const stickToBottom = useRef(true);
   const wasRunning = useRef(false);
   const draftKey = `research-workbench.ai-draft.${state?.activeProfileId || "disconnected"}.${project.id}`;
@@ -269,6 +375,46 @@ export default function AIPanel({
     stateRef.current = next;
     setState(next);
   }, []);
+  const loadSkills = useCallback(
+    async (forceReload = false) => {
+      if (!window.research) return;
+      const request = ++skillRequest.current;
+      setSkillsLoading(true);
+      setSkillsError("");
+      try {
+        const catalog = await unwrap(
+          window.research.aiSkills(project.id, agentRoot, forceReload),
+        );
+        if (request === skillRequest.current) setSkillCatalog(catalog);
+      } catch (error) {
+        if (request === skillRequest.current)
+          setSkillsError((error as Error).message);
+      } finally {
+        if (request === skillRequest.current) setSkillsLoading(false);
+      }
+    },
+    [project.id, agentRoot],
+  );
+  useEffect(() => {
+    setSkillCatalog(null);
+    setSelectedSkills([]);
+    setSkillsOpen(false);
+    setSkillsError("");
+    return () => {
+      skillRequest.current++;
+    };
+  }, [project.id, agentRoot]);
+  useEffect(() => {
+    if (visible && root && !skillCatalog && !skillsLoading && !skillsError)
+      void loadSkills();
+  }, [visible, root, skillCatalog, skillsLoading, skillsError, loadSkills]);
+  useEffect(() => {
+    if (!visible || busy) setSkillsOpen(false);
+  }, [visible, busy]);
+  const closeSkills = () => {
+    setSkillsOpen(false);
+    input.current?.focus();
+  };
   useEffect(() => {
     const api = window.research;
     if (!api) {
@@ -303,15 +449,27 @@ export default function AIPanel({
         event.projectId === project.id &&
         event.profileId === stateRef.current?.activeProfileId
       ) {
-        deltas.set(event.requestId, (deltas.get(event.requestId) || "") + event.delta);
-        if (!deltaTimer) deltaTimer = setTimeout(() => {
-          const pending = new Map(deltas);
-          discardDeltas();
-          if (!disposed) setConversation((value) => ({
-            ...value,
-            messages: value.messages.map((message) => pending.has(message.id) ? { ...message, text: message.text + pending.get(message.id) } : message),
-          }));
-        }, 40);
+        deltas.set(
+          event.requestId,
+          (deltas.get(event.requestId) || "") + event.delta,
+        );
+        if (!deltaTimer)
+          deltaTimer = setTimeout(() => {
+            const pending = new Map(deltas);
+            discardDeltas();
+            if (!disposed)
+              setConversation((value) => ({
+                ...value,
+                messages: value.messages.map((message) =>
+                  pending.has(message.id)
+                    ? {
+                        ...message,
+                        text: message.text + pending.get(message.id),
+                      }
+                    : message,
+                ),
+              }));
+          }, 40);
       }
     });
     void unwrap(api.aiState())
@@ -414,7 +572,8 @@ export default function AIPanel({
   }, [state?.models, state?.activeProfileId]);
   useLayoutEffect(() => {
     const node = transcript.current;
-    if (stickToBottom.current && node && visible) node.scrollTop = node.scrollHeight;
+    if (stickToBottom.current && node && visible)
+      node.scrollTop = node.scrollHeight;
   }, [conversation, visible]);
   useLayoutEffect(() => {
     if (!input.current || !visible) return;
@@ -428,7 +587,9 @@ export default function AIPanel({
     const resize = new ResizeObserver(() => {
       if (!node.clientHeight) return;
       if (stickToBottom.current) node.scrollTop = node.scrollHeight;
-      setShowLatest(node.scrollHeight - node.scrollTop - node.clientHeight > 48);
+      setShowLatest(
+        node.scrollHeight - node.scrollTop - node.clientHeight > 48,
+      );
     });
     resize.observe(node);
     resize.observe(content);
@@ -442,32 +603,57 @@ export default function AIPanel({
   }, [busy, onFilesChanged, onRunning]);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPopover(null);
+      if (event.key === "Escape") {
+        setPopover(null);
+        setSkillsOpen(false);
+      }
     };
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
   }, []);
-  const perform = useCallback(async (name: string, fn: () => Promise<unknown>) => {
-    setOperation(name);
-    setError("");
-    try {
-      await fn();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setOperation("");
-    }
-  }, []);
-  const openReference = useCallback((reference: string) => {
-    setError("");
-    const open = /^https?:/i.test(reference)
-      ? window.research!.openLink(reference)
-      : onOpenReference(reference, conversation.agentRootId || agentRoot);
-    void open.catch((error: Error) => setError(error.message));
-  }, [onOpenReference, conversation.agentRootId, agentRoot]);
-  const answer = useCallback((request: AIApproval, decision: "accept" | "decline" | "answer", answers?: Record<string, { answers: string[] }>) => {
-    void perform("answer", () => unwrap(window.research!.aiAnswer({ projectId: project.id, id: request.id, decision, answers })));
-  }, [perform, project.id]);
+  const perform = useCallback(
+    async (name: string, fn: () => Promise<unknown>) => {
+      setOperation(name);
+      setError("");
+      try {
+        await fn();
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setOperation("");
+      }
+    },
+    [],
+  );
+  const openReference = useCallback(
+    (reference: string) => {
+      setError("");
+      const open = /^https?:/i.test(reference)
+        ? window.research!.openLink(reference)
+        : onOpenReference(reference, conversation.agentRootId || agentRoot);
+      void open.catch((error: Error) => setError(error.message));
+    },
+    [onOpenReference, conversation.agentRootId, agentRoot],
+  );
+  const answer = useCallback(
+    (
+      request: AIApproval,
+      decision: "accept" | "decline" | "answer",
+      answers?: Record<string, { answers: string[] }>,
+    ) => {
+      void perform("answer", () =>
+        unwrap(
+          window.research!.aiAnswer({
+            projectId: project.id,
+            id: request.id,
+            decision,
+            answers,
+          }),
+        ),
+      );
+    },
+    [perform, project.id],
+  );
   function accountAction(name: string, fn: () => Promise<unknown>) {
     setPopover(null);
     void perform(name, async () => {
@@ -488,11 +674,14 @@ export default function AIPanel({
           model,
           rootId: agentRoot,
           context,
+          skillIds: selectedSkills.map((skill) => skill.id),
         }),
       );
       setConversation(next);
       updateDraft("");
       setContext(undefined);
+      setSelectedSkills([]);
+      setSkillsOpen(false);
       input.current?.focus();
     });
   }
@@ -757,124 +946,143 @@ export default function AIPanel({
           </div>
         )}
       <div className="ai-conversation-area">
-      <div
-        className="ai-transcript"
-        ref={transcript}
-        onScroll={() => {
-          const node = transcript.current!;
-          const away = node.scrollHeight - node.scrollTop - node.clientHeight > 48;
-          stickToBottom.current = !away;
-          setShowLatest(away);
-        }}
-      >
-        <div className="ai-transcript-content" ref={transcriptContent}>
-        {!state ? (
-          <div className="ai-empty">
-            <LoaderCircle size={20} className="spin" />
-            <p>Loading AI connection…</p>
-          </div>
-        ) : !state.sharing && !conversation.messages.length ? (
-          <div className="ai-empty ai-connect">
-            <div className="ai-empty-mark">
-              <Sparkles size={20} />
-            </div>
-            <div>
-              <h3>Your research, with an agent</h3>
-              <p>
-                Edit project files, run experiments, and fix LaTeX builds using
-                your ChatGPT plan.
-              </p>
-            </div>
-            {state.status === "connecting" ? (
-              <div className="ai-connect-actions">
-                <span>
-                  <LoaderCircle size={13} className="spin" /> Finish sign-in in
-                  your browser
-                </span>
-                <button
-                  className="button small"
-                  onClick={() =>
-                    accountAction("cancel", () =>
-                      unwrap(window.research!.aiCancelSignIn()),
-                    )
-                  }
-                >
-                  Cancel
-                </button>
+        <div
+          className="ai-transcript"
+          ref={transcript}
+          onClickCapture={(event) => {
+            if ((event.target as HTMLElement).closest("summary"))
+              stickToBottom.current = false;
+          }}
+          onScroll={() => {
+            const node = transcript.current!;
+            const away =
+              node.scrollHeight - node.scrollTop - node.clientHeight > 48;
+            stickToBottom.current = !away;
+            setShowLatest(away);
+          }}
+        >
+          <div className="ai-transcript-content" ref={transcriptContent}>
+            {!state ? (
+              <div className="ai-empty">
+                <LoaderCircle size={20} className="spin" />
+                <p>Loading AI connection…</p>
               </div>
+            ) : !state.sharing && !conversation.messages.length ? (
+              <div className="ai-empty ai-connect">
+                <div className="ai-empty-mark">
+                  <Sparkles size={20} />
+                </div>
+                <div>
+                  <h3>Your research, with an agent</h3>
+                  <p>
+                    Edit project files, run experiments, and fix LaTeX builds
+                    using your ChatGPT plan.
+                  </p>
+                </div>
+                {state.status === "connecting" ? (
+                  <div className="ai-connect-actions">
+                    <span>
+                      <LoaderCircle size={13} className="spin" /> Finish sign-in
+                      in your browser
+                    </span>
+                    <button
+                      className="button small"
+                      onClick={() =>
+                        accountAction("cancel", () =>
+                          unwrap(window.research!.aiCancelSignIn()),
+                        )
+                      }
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="button primary small"
+                    disabled={actionDisabled}
+                    onClick={() =>
+                      accountAction("connect", () =>
+                        unwrap(
+                          window.research!.aiSignIn({ reconsent: !!profile }),
+                        ),
+                      )
+                    }
+                  >
+                    Continue with ChatGPT <ExternalLink size={12} />
+                  </button>
+                )}
+              </div>
+            ) : conversation.messages.length ? (
+              conversation.messages.map((message) => (
+                <Message
+                  key={message.id}
+                  message={message}
+                  modelLabel={
+                    state.models.find((model) => model.slug === message.model)
+                      ?.displayName
+                  }
+                  answering={operation === "answer"}
+                  answer={answer}
+                  openReference={openReference}
+                />
+              ))
             ) : (
-              <button
-                className="button primary small"
-                disabled={actionDisabled}
-                onClick={() =>
-                  accountAction("connect", () =>
-                    unwrap(window.research!.aiSignIn({ reconsent: !!profile })),
-                  )
-                }
-              >
-                Continue with ChatGPT <ExternalLink size={12} />
-              </button>
+              <div className="ai-empty ai-ready">
+                <Sparkles size={18} />
+                <div>
+                  <h3>What should we work on?</h3>
+                  <p>
+                    The agent can edit files and run commands in your attached
+                    project folders.
+                  </p>
+                  <div className="ai-starters">
+                    <button
+                      onClick={() =>
+                        updateDraft(
+                          "Compile the LaTeX manuscript, fix any build errors, and tell me what changed.",
+                        )
+                      }
+                    >
+                      Fix LaTeX build
+                    </button>
+                    <button
+                      onClick={() =>
+                        updateDraft(
+                          "Inspect this project, identify the relevant tests, and run them. Fix failures related to the current changes.",
+                        )
+                      }
+                    >
+                      Run tests
+                    </button>
+                    <button
+                      onClick={() =>
+                        updateDraft(
+                          "Review the manuscript for clarity and consistency. Propose and apply focused edits, then check that it still compiles.",
+                        )
+                      }
+                    >
+                      Improve the draft
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
-        ) : conversation.messages.length ? (
-          conversation.messages.map((message) => (
-            <Message
-              key={message.id}
-              message={message}
-              modelLabel={state.models.find((model) => model.slug === message.model)?.displayName}
-              answering={operation === "answer"}
-              answer={answer}
-              openReference={openReference}
-            />
-          ))
-        ) : (
-          <div className="ai-empty ai-ready">
-            <Sparkles size={18} />
-            <div>
-              <h3>What should we work on?</h3>
-              <p>
-                The agent can edit files and run commands in your attached
-                project folders.
-              </p>
-              <div className="ai-starters">
-                <button
-                  onClick={() =>
-                    updateDraft(
-                      "Compile the LaTeX manuscript, fix any build errors, and tell me what changed.",
-                    )
-                  }
-                >
-                  Fix LaTeX build
-                </button>
-                <button
-                  onClick={() =>
-                    updateDraft(
-                      "Inspect this project, identify the relevant tests, and run them. Fix failures related to the current changes.",
-                    )
-                  }
-                >
-                  Run tests
-                </button>
-                <button
-                  onClick={() =>
-                    updateDraft(
-                      "Review the manuscript for clarity and consistency. Propose and apply focused edits, then check that it still compiles.",
-                    )
-                  }
-                >
-                  Improve the draft
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
         </div>
-      </div>
-      {showLatest && <button className="ai-jump-latest" type="button" onClick={() => {
-        stickToBottom.current = true;
-        if (transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight;
-        setShowLatest(false);
-      }}><ArrowDown size={13} /> Jump to latest</button>}
+        {showLatest && (
+          <button
+            className="ai-jump-latest"
+            type="button"
+            onClick={() => {
+              stickToBottom.current = true;
+              if (transcript.current)
+                transcript.current.scrollTop = transcript.current.scrollHeight;
+              setShowLatest(false);
+            }}
+          >
+            <ArrowDown size={13} /> Jump to latest
+          </button>
+        )}
       </div>
       <form
         className="ai-composer"
@@ -884,122 +1092,210 @@ export default function AIPanel({
         }}
       >
         <div className="ai-composer-inner">
-        <div className="ai-context-bar">
-          <Folder size={11} />
-          <select
-            aria-label="Agent working folder"
-            value={agentRoot}
-            disabled={busy || !!conversation.messages.length}
-            title={root?.folder}
-            onChange={(event) => setAgentRoot(event.target.value)}
-          >
-            {!roots.length && (
-              <option value="primary">Attach a project folder</option>
+          <div className="ai-context-bar">
+            <Folder size={11} />
+            <select
+              aria-label="Agent working folder"
+              value={agentRoot}
+              disabled={busy || !!conversation.messages.length}
+              title={root?.folder}
+              onChange={(event) => setAgentRoot(event.target.value)}
+            >
+              {!roots.length && (
+                <option value="primary">Attach a project folder</option>
+              )}
+              {roots.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              title="Attach a snapshot of the current file"
+              disabled={busy || !file || !text.trim()}
+              onClick={() => attach("file")}
+            >
+              <FileText size={11} /> Current file
+            </button>
+            <button
+              type="button"
+              title="Attach selected text from the editor"
+              disabled={busy || !file || !selection.trim()}
+              onClick={() => attach("selection")}
+            >
+              <TextSelect size={11} /> Selection
+            </button>
+            {context && (
+              <span className="ai-context-chip" title="Attached text snapshot">
+                <FileText size={10} />
+                {context.file.split("/").at(-1)}
+                {context.kind === "selection" ? " · selection" : ""}
+                <button
+                  type="button"
+                  aria-label="Remove AI attachment"
+                  onClick={() => setContext(undefined)}
+                >
+                  <X size={10} />
+                </button>
+              </span>
             )}
-            {roots.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            title="Attach a snapshot of the current file"
-            disabled={busy || !file || !text.trim()}
-            onClick={() => attach("file")}
-          >
-            <FileText size={11} /> Current file
-          </button>
-          <button
-            type="button"
-            title="Attach selected text from the editor"
-            disabled={busy || !file || !selection.trim()}
-            onClick={() => attach("selection")}
-          >
-            <TextSelect size={11} /> Selection
-          </button>
-          {context && (
-            <span className="ai-context-chip" title="Attached text snapshot">
-              <FileText size={10} />
-              {context.file.split("/").at(-1)}
-              {context.kind === "selection" ? " · selection" : ""}
+            <div className="ai-skills-anchor">
               <button
                 type="button"
-                aria-label="Remove AI attachment"
-                onClick={() => setContext(undefined)}
+                ref={skillButton}
+                title="Use an installed skill for this run ($)"
+                aria-label="Choose skills"
+                aria-expanded={skillsOpen}
+                disabled={busy || !root}
+                onClick={() => {
+                  setSkillsOpen((open) => !open);
+                  setPopover(null);
+                }}
               >
-                <X size={10} />
+                <BookOpen size={11} /> Skills
+                {selectedSkills.length ? ` (${selectedSkills.length})` : ""}
               </button>
+              {skillsOpen && (
+                <>
+                  <AISkills
+                    anchor={skillButton.current}
+                    catalog={skillCatalog}
+                    loading={skillsLoading}
+                    error={skillsError}
+                    selected={selectedSkills}
+                    toggle={(skill) =>
+                      setSelectedSkills((selected) =>
+                        selected.some((item) => item.id === skill.id)
+                          ? selected.filter((item) => item.id !== skill.id)
+                          : [...selected, skill],
+                      )
+                    }
+                    refresh={() => void loadSkills(true)}
+                    close={closeSkills}
+                  />
+                </>
+              )}
+            </div>
+            <small>
+              {busy
+                ? "Agent working…"
+                : dirty
+                  ? "Current file will be saved before running"
+                  : state?.sharing
+                    ? "Using ChatGPT plan"
+                    : "Connect ChatGPT to start"}
+            </small>
+          </div>
+          {!!selectedSkills.length && (
+            <div
+              className="ai-selected-skills"
+              aria-label="Skills for next message"
+            >
+              {selectedSkills.map((skill) => (
+                <span
+                  className="ai-context-chip"
+                  key={skill.id}
+                  title={skill.description}
+                >
+                  <BookOpen size={11} />
+                  {skill.displayName}
+                  <button
+                    type="button"
+                    disabled={busy}
+                    aria-label={`Remove ${skill.name}`}
+                    onClick={() =>
+                      setSelectedSkills((selected) =>
+                        selected.filter((item) => item.id !== skill.id),
+                      )
+                    }
+                  >
+                    <X size={11} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="ai-input-row">
+            <textarea
+              ref={input}
+              aria-label="Message the AI agent"
+              value={draft}
+              placeholder={
+                busy
+                  ? "Draft your next request while the agent works…"
+                  : state?.sharing
+                    ? "Ask the agent to edit files, run a script, or fix a build…"
+                    : "Connect ChatGPT, then tell the agent what to work on…"
+              }
+              rows={1}
+              onChange={(event) => updateDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (
+                  event.key === "$" &&
+                  !draft &&
+                  !busy &&
+                  root &&
+                  !event.nativeEvent.isComposing
+                ) {
+                  event.preventDefault();
+                  setSkillsOpen(true);
+                  return;
+                }
+                if (
+                  event.key === "Enter" &&
+                  !event.shiftKey &&
+                  !event.nativeEvent.isComposing &&
+                  event.nativeEvent.keyCode !== 229
+                ) {
+                  event.preventDefault();
+                  void send();
+                }
+              }}
+            />
+            {busy ? (
+              <button
+                className="ai-send ai-stop"
+                type="button"
+                title="Stop agent"
+                aria-label="Stop AI agent"
+                disabled={operation === "stop"}
+                onClick={() =>
+                  void perform("stop", async () =>
+                    setConversation(
+                      await unwrap(window.research!.aiStop(project.id)),
+                    ),
+                  )
+                }
+              >
+                <Square size={13} fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                className="ai-send"
+                type="submit"
+                title="Send message (Enter)"
+                aria-label="Run AI agent"
+                disabled={
+                  !draft.trim() ||
+                  !model ||
+                  !state?.sharing ||
+                  !root ||
+                  actionDisabled ||
+                  !state.runtime.available
+                }
+              >
+                <ArrowUp size={16} />
+              </button>
+            )}
+          </div>
+          <div className="ai-composer-hint">
+            <span>
+              {busy
+                ? "Your draft will stay here until this run finishes."
+                : "Enter to send · Shift+Enter for a new line"}
             </span>
-          )}
-          <small>
-            {busy
-              ? "Agent working…"
-              : dirty
-                ? "Current file will be saved before running"
-                : state?.sharing
-                  ? "Using ChatGPT plan"
-                  : "Connect ChatGPT to start"}
-          </small>
-        </div>
-        <div className="ai-input-row">
-          <textarea
-            ref={input}
-            aria-label="Message the AI agent"
-            value={draft}
-            placeholder={
-              busy
-                ? "Draft your next request while the agent works…"
-                : state?.sharing
-                ? "Ask the agent to edit files, run a script, or fix a build…"
-                : "Connect ChatGPT, then tell the agent what to work on…"
-            }
-            rows={1}
-            onChange={(event) => updateDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
-                event.preventDefault();
-                void send();
-              }
-            }}
-          />
-          {busy ? (
-            <button
-              className="ai-send ai-stop"
-              type="button"
-              title="Stop agent"
-              aria-label="Stop AI agent"
-              disabled={operation === "stop"}
-              onClick={() =>
-                void perform("stop", async () =>
-                  setConversation(
-                    await unwrap(window.research!.aiStop(project.id)),
-                  ),
-                )
-              }
-            >
-              <Square size={13} fill="currentColor" />
-            </button>
-          ) : (
-            <button
-              className="ai-send"
-              type="submit"
-              title="Send message (Enter)"
-              aria-label="Run AI agent"
-              disabled={
-                !draft.trim() ||
-                !model ||
-                !state?.sharing ||
-                !root ||
-                actionDisabled ||
-                !state.runtime.available
-              }
-            >
-              <ArrowUp size={16} />
-            </button>
-          )}
-        </div>
-        <div className="ai-composer-hint"><span>{busy ? "Your draft will stay here until this run finishes." : "Enter to send · Shift+Enter for a new line"}</span></div>
+          </div>
         </div>
       </form>
     </section>

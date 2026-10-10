@@ -94,6 +94,7 @@ function createCodexAgent({
   accessToken,
   home,
   environment = process.env,
+  skillRoots = [],
   executable = codexExecutable(),
   spawnProcess = spawn,
 }) {
@@ -330,8 +331,10 @@ function createCodexAgent({
           title: "Research Workbench",
           version: "0.1.0",
         },
-      }).then((result) => {
+      }).then(async (result) => {
         send({ method: "initialized", params: {} });
+        if (skillRoots.length)
+          await rpc("skills/extraRoots/set", { extraRoots: skillRoots });
         return result;
       });
     return initialized;
@@ -345,11 +348,16 @@ function createCodexAgent({
     signal,
     onThread,
     onEvent,
+    skills = [],
   }) {
     await ready();
     signal.throwIfAborted();
     if (current)
       throw new AIError("agent_busy", "The project agent is already running.");
+    if (skills.length) {
+      await rpc("skills/list", { cwds: [cwd], forceReload: true });
+      signal.throwIfAborted();
+    }
     const settings = {
       model,
       modelProvider: "openai_chatgpt_plan",
@@ -399,7 +407,10 @@ function createCodexAgent({
           writableRoots,
           networkAccess: false,
         },
-        input: [{ type: "text", text }],
+        input: [
+          { type: "text", text },
+          ...skills.map(({ name, path }) => ({ type: "skill", name, path })),
+        ],
       });
       if (current) current.turnId = result.turn.id;
       if (signal.aborted) abort();
@@ -434,6 +445,10 @@ function createCodexAgent({
     approvals.delete(id);
     current.onEvent({ type: "approvalResolved", id });
   }
-  return { run, answer, close, ready, isClosed: () => disposed };
+  async function listSkills(cwd, forceReload = false) {
+    await ready();
+    return rpc("skills/list", { cwds: [cwd], forceReload });
+  }
+  return { run, answer, close, ready, listSkills, isClosed: () => disposed };
 }
 module.exports = { createCodexAgent, codexExecutable, agentArguments };

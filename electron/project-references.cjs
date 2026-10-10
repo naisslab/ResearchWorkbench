@@ -31,7 +31,12 @@ async function resolveProjectReference(project, reference, rootId = "primary") {
       const canonical = await fs.realpath(root.folder).catch(() => null);
       for (const base of [root.folder, canonical].filter(Boolean)) {
         const candidate = path.relative(base, file);
-        if (candidate && candidate !== ".." && !candidate.startsWith(`..${path.sep}`) && !path.isAbsolute(candidate)) {
+        if (
+          candidate &&
+          candidate !== ".." &&
+          !candidate.startsWith(`..${path.sep}`) &&
+          !path.isAbsolute(candidate)
+        ) {
           selected = root;
           relative = candidate;
           break;
@@ -52,7 +57,17 @@ async function resolveProjectReference(project, reference, rootId = "primary") {
   if (!pdf && !core.isTextFile(target))
     throw new Error("This file cannot be opened in the editor.");
   if (stat.size > (pdf ? 64 : 2) * 1024 * 1024)
-    throw new Error(pdf ? "PDF is too large (maximum 64 MB)." : "File is too large to edit (maximum 2 MB).");
-  return { kind: pdf ? "pdf" : "text", target, file: relative, rootId: selected.id, line };
+    throw new Error(
+      pdf
+        ? "PDF is too large (maximum 64 MB)."
+        : "File is too large to edit (maximum 2 MB).",
+    );
+  return {
+    kind: pdf ? "pdf" : "text",
+    target,
+    file: relative,
+    rootId: selected.id,
+    line,
+  };
 }
 module.exports = { resolveProjectReference };

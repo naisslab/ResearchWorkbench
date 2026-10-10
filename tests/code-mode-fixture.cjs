@@ -15,6 +15,17 @@ async function runCodeModeFixture({ createCodexAgent, root }) {
     "\\documentclass{article}\n\\begin{document}\n\\undefinedResearchCommand\n\\end{document}\n",
   );
   await fs.writeFile(path.join(cwd, "notes.txt"), "Before repair\n");
+  const skillRoot = path.join(root, "skills");
+  const skillPath = path.join(
+    skillRoot,
+    "workbench-fixture-writing",
+    "SKILL.md",
+  );
+  await fs.mkdir(path.dirname(skillPath), { recursive: true });
+  await fs.writeFile(
+    skillPath,
+    "---\nname: workbench-fixture-writing\ndescription: Test native skill loading without paid inference.\n---\nWORKBENCH_NATIVE_SKILL_2026: Preserve factual claims during this isolated test.\n",
+  );
   const requests = [],
     events = [];
   let serverError, agent;
@@ -37,6 +48,11 @@ async function runCodeModeFixture({ createCodexAgent, root }) {
         data = zlib.gunzipSync(data);
       const body = JSON.parse(data.toString());
       requests.push(body);
+      if (requests.length === 1)
+        assert.ok(
+          JSON.stringify(body.input).includes("WORKBENCH_NATIVE_SKILL_2026"),
+          "The native runtime must load the selected SKILL.md into model context",
+        );
       assert.equal(body.model, "gpt-6-astra");
       assert.equal(body.store, false);
       assert.equal(body.stream, true);
@@ -135,6 +151,7 @@ async function runCodeModeFixture({ createCodexAgent, root }) {
     agent = createCodexAgent({
       accessToken: "unused-code-mode-fixture",
       home: path.join(root, "agent-home"),
+      skillRoots: [skillRoot],
       environment: {
         ...Object.fromEntries(
           Object.entries(process.env).filter(
@@ -151,11 +168,18 @@ async function runCodeModeFixture({ createCodexAgent, root }) {
           config,
         ),
     });
+    const catalog = await agent.listSkills(cwd, true);
+    const skill = catalog.data
+      .find((entry) => entry.cwd === cwd)
+      .skills.find((item) => item.name === "workbench-fixture-writing");
+    assert.equal(skill.path, await fs.realpath(skillPath));
+    assert.equal(skill.enabled, true);
     const result = await agent.run({
       model: "gpt-6-astra",
       cwd,
       writableRoots: [cwd],
       text: "Compile main.tex, fix the undefined command, update notes.txt, and compile again. This is an isolated integration test.",
+      skills: [skill],
       signal: AbortSignal.timeout(45000),
       onThread: async () => {},
       onEvent: (event) => events.push(event),
@@ -199,6 +223,7 @@ async function runCodeModeFixture({ createCodexAgent, root }) {
       requests: requests.length,
       commands: executions.length,
       pdfBytes: pdf.length,
+      nativeSkill: skill.name,
     };
   } finally {
     await agent?.close();

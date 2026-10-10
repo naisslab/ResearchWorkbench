@@ -10,11 +10,17 @@ let threadId = "fixture-thread",
   turnId = 0,
   tokens = 0,
   pending;
+let skillRoots = [];
 async function work(params) {
   const current = `fixture-turn-${turnId}`;
   const notification = (method, data) =>
     send({ method, params: { threadId, turnId: current, ...data } });
   const text = params.input[0].text;
+  if (params.input.some((item) => item.type === "skill"))
+    await fs.writeFile(
+      path.join(params.cwd, "received-skills.json"),
+      JSON.stringify(params.input.filter((item) => item.type === "skill")),
+    );
   if (text.includes("wait-for-stop")) {
     pending = { current, params };
     return;
@@ -141,7 +147,35 @@ readline.createInterface({ input: process.stdin }).on("line", async (line) => {
   }
   if (message.method === "initialize")
     send({ id: message.id, result: { userAgent: "fixture" } });
-  else if (
+  else if (message.method === "skills/extraRoots/set") {
+    skillRoots = message.params.extraRoots;
+    send({ id: message.id, result: {} });
+  } else if (message.method === "skills/list") {
+    const skillPath = path.join(skillRoots[0], "scale-writing", "SKILL.md");
+    const enabled = await fs.access(skillPath).then(
+      () => true,
+      () => false,
+    );
+    send({
+      id: message.id,
+      result: {
+        data: message.params.cwds.map((cwd) => ({
+          cwd,
+          skills: [
+            {
+              name: "scale-writing",
+              description: "Revise research writing using paper exemplars.",
+              path: skillPath,
+              scope: "user",
+              enabled,
+              pluginId: null,
+            },
+          ],
+          errors: [],
+        })),
+      },
+    });
+  } else if (
     message.method === "thread/start" ||
     message.method === "thread/resume"
   ) {
