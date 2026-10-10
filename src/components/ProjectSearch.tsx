@@ -1,22 +1,30 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { ArrowRight, Folder, Search, LoaderCircle } from "lucide-react";
-import type { Area, Project, SearchHit, SearchPacket } from "../types";
+import {
+  ArrowRight,
+  Command as CommandIcon,
+  Folder,
+  Search,
+  LoaderCircle,
+} from "lucide-react";
+import { matchCommands } from "../commands";
+import type { Project, SearchHit, SearchPacket } from "../types";
 import Modal from "../Modal";
 import { matchesProject, StageBadge } from "./ui";
 
 export default function ProjectSearch({
   projects,
+  initialQuery = "",
   open,
   openResult,
   close,
 }: {
   projects: Project[];
-  areas: Area[];
+  initialQuery?: string;
   open(id: string): void;
   openResult(hit: SearchHit): void;
   close(): void;
 }) {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
   const [active, setActive] = useState(0);
   const [packet, setPacket] = useState<SearchPacket>({
     results: [],
@@ -28,7 +36,10 @@ export default function ProjectSearch({
   const [kind, setKind] = useState("all");
   const request = useRef("");
   const list = useId();
-  const searching = query.trim().length >= 2;
+  // A leading ">" lists commands instead of searching, as in code editors.
+  const commandMode = query.startsWith(">");
+  const searching = !commandMode && query.trim().length >= 2;
+  const commands = commandMode ? matchCommands(query.slice(1)) : [];
   const results = packet.results.filter(
     (hit) =>
       kind === "all" ||
@@ -36,8 +47,19 @@ export default function ProjectSearch({
       (kind === "pdf" && hit.kind === "annotation"),
   );
   const matches = projects.filter((p) => matchesProject(p, query));
-  const total = searching ? results.length : matches.length;
+  const total = commandMode
+    ? commands.length
+    : searching
+      ? results.length
+      : matches.length;
   const option = (index: number) => `${list}-${index}`;
+  const row = (index: number) => ({
+    id: option(index),
+    role: "option",
+    "aria-selected": index === active,
+    onMouseMove: () => setActive(index),
+    onClick: () => select(index),
+  });
   useEffect(() => {
     document
       .getElementById(option(active))
@@ -81,8 +103,12 @@ export default function ProjectSearch({
     };
   }, []);
   function select(index: number) {
-    if (searching && results[index]) openResult(results[index]);
-    else if (!searching && matches[index]) open(matches[index].id);
+    if (commandMode) {
+      close();
+      commands[index]?.run();
+    } else if (searching) {
+      if (results[index]) openResult(results[index]);
+    } else if (matches[index]) open(matches[index].id);
   }
   return (
     <Modal title="Search workspace" onClose={close} className="search-modal">
@@ -96,7 +122,7 @@ export default function ProjectSearch({
             total ? option(Math.min(active, total - 1)) : undefined
           }
           aria-label="Search workspace"
-          placeholder="Projects, files, PDF text, notes, conversations…"
+          placeholder="Projects, files, PDF text, notes, conversations… or > for commands"
           value={query}
           maxLength={200}
           onChange={(e) => setQuery(e.target.value)}
@@ -132,60 +158,62 @@ export default function ProjectSearch({
         <span>
           {busy
             ? `Searching · ${packet.scanned} files`
-            : searching
-              ? `${results.length} results`
-              : "Type at least 2 characters for full-text search"}
+            : commandMode
+              ? `${commands.length} commands`
+              : searching
+                ? `${results.length} results`
+                : "Type at least 2 characters for full-text search"}
         </span>
       </div>
       {error && <p role="alert">{error}</p>}
       <div className="search-results" role="listbox" id={list}>
-        {searching
-          ? results.map((hit, index) => (
-              <button
-                key={hit.id}
-                id={option(index)}
-                role="option"
-                aria-selected={index === active}
-                onMouseMove={() => setActive(index)}
-                onClick={() => select(index)}
-              >
-                <Search size={16} />
-                <div>
-                  <strong>
-                    {hit.title}
-                    {hit.page
-                      ? ` · p. ${hit.page}`
-                      : hit.line
-                        ? `:${hit.line}`
-                        : ""}
-                  </strong>
-                  <span>
-                    {hit.projectName} · {hit.kind}
-                  </span>
-                  <p className="search-snippet">{hit.snippet}</p>
-                </div>
-                <ArrowRight size={14} />
-              </button>
-            ))
-          : matches.map((p, index) => (
-              <button
-                key={p.id}
-                id={option(index)}
-                role="option"
-                aria-selected={index === active}
-                onMouseMove={() => setActive(index)}
-                onClick={() => open(p.id)}
-              >
-                <Folder size={17} />
-                <div>
-                  <strong>{p.name}</strong>
-                </div>
-                <StageBadge stage={p.stage} />
-                <ArrowRight size={14} />
-              </button>
-            ))}
+        {commands.map((command, index) => (
+          <button key={command.id} {...row(index)}>
+            <CommandIcon size={16} />
+            <div>
+              <strong>{command.title}</strong>
+              <span>{command.group}</span>
+            </div>
+            {command.shortcut && <kbd>{command.shortcut}</kbd>}
+          </button>
+        ))}
+        {!commandMode &&
+          (searching
+            ? results.map((hit, index) => (
+                <button key={hit.id} {...row(index)}>
+                  <Search size={16} />
+                  <div>
+                    <strong>
+                      {hit.title}
+                      {hit.page
+                        ? ` · p. ${hit.page}`
+                        : hit.line
+                          ? `:${hit.line}`
+                          : ""}
+                    </strong>
+                    <span>
+                      {hit.projectName} · {hit.kind}
+                    </span>
+                    <p className="search-snippet">{hit.snippet}</p>
+                  </div>
+                  <ArrowRight size={14} />
+                </button>
+              ))
+            : matches.map((p, index) => (
+                <button key={p.id} {...row(index)}>
+                  <Folder size={17} />
+                  <div>
+                    <strong>{p.name}</strong>
+                  </div>
+                  <StageBadge stage={p.stage} />
+                  <ArrowRight size={14} />
+                </button>
+              )))}
         {searching && !results.length && !busy && (
           <p className="search-empty">No matching text found.</p>
+        )}
+        {commandMode && !commands.length && (
+          <p className="search-empty">No matching commands.</p>
         )}
       </div>
       {!!packet.warnings.length && (

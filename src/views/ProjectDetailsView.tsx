@@ -378,6 +378,37 @@ export default function ProjectDetailsView({
             the entry file, otherwise pdfLaTeX.
           </p>
           <label>
+            Page limit <span className="optional">optional</span>
+            <BlurField
+              value={p.pageLimit ? String(p.pageLimit) : ""}
+              placeholder="Pages before references"
+              onCommit={(value) => {
+                const limit = Number(value);
+                update({
+                  pageLimit:
+                    Number.isInteger(limit) && limit >= 1 && limit <= 500
+                      ? limit
+                      : undefined,
+                });
+              }}
+            />
+          </label>
+          <label className="checkbox-field">
+            <input
+              type="checkbox"
+              checked={!!p.anonymousReview}
+              onChange={(e) =>
+                update({ anonymousReview: e.target.checked || undefined })
+              }
+            />
+            Double-blind review
+          </label>
+          <p className="form-help">
+            After each compile, the Build log checks the page limit, font
+            embedding and, for double-blind review, anything that names the
+            authors.
+          </p>
+          <label>
             SSH host <span className="optional">optional</span>
             <BlurField
               value={p.sshHost}

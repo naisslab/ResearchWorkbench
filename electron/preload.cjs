@@ -17,6 +17,11 @@ const listen = (channel) => (callback) => {
   return () => ipcRenderer.removeListener(channel, listener);
 };
 contextBridge.exposeInMainWorld("research", {
+  onMenuCommand: listen("menu:command"),
+  lookupReference: invoke("references:lookup"),
+  pdfReport: invoke("latex:pdf-report"),
+  compileDiff: invoke("latex:diff"),
+  referenceBibtex: invoke("references:bibtex"),
   search: invoke("search:query"),
   cancelSearch: invoke("search:cancel"),
   onSearchProgress: listen("search:progress"),

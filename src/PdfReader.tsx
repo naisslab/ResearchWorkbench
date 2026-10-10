@@ -822,7 +822,9 @@ export default memo(function PdfReader({
         try {
           const loaded = await task.promise;
           const size = (await loaded.getPage(1)).getViewport({ scale: 1 });
-          if (!data.updatedAt && !cancelled)
+          // Other PDFs keep a copy for restarts and search; the compiled
+          // manuscript is copied once it is annotated or sent to the agent.
+          if (!data.updatedAt && !data.compiled && !cancelled)
             await window.research!.savePdfAnnotations(
               projectId,
               pdf.url,

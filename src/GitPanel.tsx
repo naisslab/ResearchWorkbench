@@ -53,6 +53,7 @@ export default memo(function GitPanel({
   changed,
   onOpenFile,
   onOpenTerminal,
+  onCompare,
 }: {
   projectId: string;
   roots: ProjectFileRoot[];
@@ -62,6 +63,8 @@ export default memo(function GitPanel({
   changed(): Promise<void>;
   onOpenFile(file: string, rootId: string): void;
   onOpenTerminal(): void;
+  /** Builds a PDF that marks the manuscript's changes since `revision`. */
+  onCompare?(revision: string): void;
 }) {
   const [show, setShow] = useState(false);
   const [rootId, setRootId] = useState("primary");
@@ -479,6 +482,19 @@ export default memo(function GitPanel({
                         </small>
                       </span>
                       <code>{commit.hash}</code>
+                      {onCompare && rootId === "primary" && (
+                        <button
+                          className="git-compare"
+                          disabled={locked}
+                          title="Compile a PDF that marks changes since this commit (latexdiff)"
+                          onClick={() => {
+                            setShow(false);
+                            onCompare(commit.hash);
+                          }}
+                        >
+                          Track changes
+                        </button>
+                      )}
                     </div>
                   ))}
                 </section>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { History, Plus, Archive, ArchiveRestore } from "lucide-react";
-import type { AIChatSummary, AIConversation } from "./types";
+import { History, Plus, Archive, ArchiveRestore, Trash2 } from "lucide-react";
+import type { AIChatAction, AIChatSummary, AIConversation } from "./types";
 import { unwrap } from "./ai-result";
 import Modal from "./Modal";
 
@@ -23,6 +23,7 @@ export default function AIChats({
   const [archived, setArchived] = useState(false);
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState("");
   async function refresh() {
     setChats(await unwrap(window.research!.aiChats(projectId)));
   }
@@ -32,10 +33,7 @@ export default function AIChats({
   useEffect(() => {
     setTitle(conversation.title || "");
   }, [conversation.chatId, conversation.title]);
-  async function act(
-    action: "new" | "select" | "rename" | "archive" | "unarchive",
-    id?: string,
-  ) {
+  async function act(action: AIChatAction, id?: string) {
     if (busy || disabled) return;
     setBusy(true);
     try {
@@ -45,6 +43,7 @@ export default function AIChats({
         ),
       );
       await refresh();
+      setDeleting("");
       if (action === "new" || action === "select") setOpen(false);
     } catch (e) {
       report((e as Error).message);
@@ -79,7 +78,8 @@ export default function AIChats({
         <Modal title="Project conversations" onClose={() => setOpen(false)}>
           <p className="muted">
             Keep writing, experiments, and reviews in separate conversations.
-            Archived chats retain their changes.
+            Archived chats keep their change backups; deleting a chat removes
+            them.
           </p>
           <input
             aria-label="Search conversations"
@@ -147,6 +147,34 @@ export default function AIChats({
                     <Archive size={15} />
                   )}
                 </button>
+                {!c.active &&
+                  (deleting === c.id ? (
+                    <span className="chat-delete-confirm">
+                      <button
+                        className="button danger"
+                        disabled={disabled || busy}
+                        onClick={() => void act("delete", c.id)}
+                      >
+                        Delete
+                      </button>
+                      <button
+                        className="button"
+                        disabled={busy}
+                        onClick={() => setDeleting("")}
+                      >
+                        Cancel
+                      </button>
+                    </span>
+                  ) : (
+                    <button
+                      className="icon-button"
+                      disabled={disabled || busy}
+                      title="Delete conversation and its change backups"
+                      onClick={() => setDeleting(c.id)}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  ))}
               </div>
             ))}
             {!visibleChats.length && (

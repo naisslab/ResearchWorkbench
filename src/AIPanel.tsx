@@ -1,4 +1,4 @@
-import { readChatDraft } from "./workbench-state";
+import { useDraft } from "./useDraft";
 import AIChats from "./AIChats";
 import {
   memo,
@@ -32,6 +32,7 @@ import {
   ListPlus,
   Pause,
   Play,
+  ShieldCheck,
 } from "lucide-react";
 import type {
   AIApproval,
@@ -260,6 +261,11 @@ const Message = memo(function Message({
         )}
         <strong>{message.role === "assistant" ? "Agent" : "You"}</strong>
         {message.model && <span>{modelLabel || message.model}</span>}
+        {message.permissionNote && (
+          <span title={message.permissionNote}>
+            <ShieldCheck size={12} /> Default permissions
+          </span>
+        )}
         {message.status === "running" && (
           <span className="ai-run-state" role="status">
             <LoaderCircle size={12} className="spin" />
@@ -407,7 +413,6 @@ export default memo(function AIPanel({
     profileId: null,
     messages: [],
   });
-  const [draft, setDraft] = useState("");
   const [model, setModel] = useState("");
   const [agentRoot, setAgentRoot] = useState("primary");
   const [context, setContext] = useState<AIContext>();
@@ -438,7 +443,25 @@ export default memo(function AIPanel({
   const stickToBottom = useRef(true);
   const wasRunning = useRef(false);
   const submitting = useRef(false);
-  const draftKey = `research-workbench.ai-draft.${state?.activeProfileId || "disconnected"}.${project.id}.${conversation.chatId || "legacy"}`;
+  // Unknown while a signed-in chat loads; typing meanwhile stays in memory.
+  // Signed out, there is no chat, and drafts use one key per project.
+  const draftKey = conversation.chatId
+    ? `research-workbench.ai-draft.${state?.activeProfileId}.${project.id}.${conversation.chatId}`
+    : state && !state.activeProfileId
+      ? `research-workbench.ai-draft.disconnected.${project.id}.legacy`
+      : null;
+  const [draft, saveDraft] = useDraft(
+    draftKey,
+    conversation.chatId === "legacy"
+      ? `research-workbench.ai-draft.${state?.activeProfileId}.${project.id}`
+      : undefined,
+    // Context, skills and review belong to the chat being left.
+    () => {
+      setContext(undefined);
+      setSelectedSkills([]);
+      setReviewMessage(undefined);
+    },
+  );
   const running = conversation.messages.some(
     (message) => message.status === "running",
   );
@@ -622,11 +645,6 @@ export default memo(function AIPanel({
       profileId: state?.activeProfileId || null,
       messages: [],
     });
-    try {
-      setDraft(localStorage.getItem(draftKey) || "");
-    } catch {
-      setDraft("");
-    }
     if (window.research)
       void unwrap(window.research.aiConversation(project.id))
         .then((next) => {
@@ -639,24 +657,6 @@ export default memo(function AIPanel({
       disposed = true;
     };
   }, [project.id, state?.activeProfileId]);
-  useEffect(() => {
-    try {
-      setDraft(
-        readChatDraft(
-          localStorage,
-          draftKey,
-          conversation.chatId === "legacy"
-            ? `research-workbench.ai-draft.${state?.activeProfileId}.${project.id}`
-            : undefined,
-        ),
-      );
-    } catch {
-      setDraft("");
-    }
-    setContext(undefined);
-    setSelectedSkills([]);
-    setReviewMessage(undefined);
-  }, [draftKey]);
   useEffect(() => {
     if (!pdfContext) return;
     setContext(pdfContext.context);
@@ -685,15 +685,9 @@ export default memo(function AIPanel({
     }
   }, [searchTarget?.id, conversation.chatId, conversation.messages.length]);
   function updateDraft(value: string) {
-    setDraft(value);
+    saveDraft(value);
     setSkillCommand(null);
     dismissedSkillCommand.current = "";
-    try {
-      if (value) localStorage.setItem(draftKey, value);
-      else localStorage.removeItem(draftKey);
-    } catch {
-      /* Keep the draft in memory. */
-    }
   }
   useEffect(() => {
     if (!root && roots.length) setAgentRoot(roots[0].id);
@@ -915,6 +909,8 @@ export default memo(function AIPanel({
     direction?: -1 | 1,
   ) {
     void perform("queue", async () => {
+      // Resuming starts a run, so the editor is saved first, as for Send.
+      if (action === "resume") await prepare();
       setConversation(
         await unwrap(
           window.research!.aiQueue({

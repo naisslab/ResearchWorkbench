@@ -1585,3 +1585,8 @@
   opacity: 0.65;
   margin-top: 5px;
 }
+.chat-delete-confirm {
+  display: flex;
+  gap: 6px;
+  padding-right: 8px;
+}

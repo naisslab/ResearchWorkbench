@@ -167,3 +167,76 @@ test("quit can wait for annotation saves that are still being written", async (t
   assert.equal(reopened.annotations.length, marks.length);
   assert.equal((await saved).key, reopened.key);
 });
+test("at launch, superseded copies without annotations are pruned while annotated, newest and damaged copies stay", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "research-pdf-prune-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const version = async (text) => {
+    const document = await PDFDocument.create();
+    document.addPage([600, 800]).drawText(text, { x: 50, y: 680, size: 16 });
+    return Buffer.from(await document.save());
+  };
+  const [first, annotated, latest, other] = await Promise.all(
+    ["first", "annotated", "latest", "other"].map(version),
+  );
+  const compiled = "/paper/.research-build/main.pdf";
+  // Copies saved during a session stay until the next launch.
+  const keeper = createAnnotationStore(root);
+  const keyOf = async (bytes, source = compiled) =>
+    (await keeper.load("project-a", bytes, "main.pdf", source)).key;
+  await keeper.save("project-a", first, "main.pdf", compiled, [], 1);
+  await keeper.save(
+    "project-a",
+    annotated,
+    "main.pdf",
+    compiled,
+    [marks[0]],
+    1,
+  );
+  await keeper.save("project-a", other, "notes.pdf", "/notes.pdf", [], 1);
+  await keeper.flush();
+  // Damaged records are neither listed nor removed.
+  const damaged = ["d".repeat(64), "e".repeat(64)];
+  await fs.writeFile(path.join(root, `${damaged[0]}.json`), "null");
+  await fs.writeFile(
+    path.join(root, `${damaged[1]}.json`),
+    JSON.stringify({
+      key: damaged[1],
+      projectId: "project-a",
+      sourcePath: compiled,
+      updatedAt: "2020-01-01T00:00:00Z",
+    }),
+  );
+  await fs.writeFile(path.join(root, `${damaged[1]}.pdf`), "%PDF");
+  // A copy whose record is gone is reclaimed at startup.
+  await fs.writeFile(path.join(root, `${"f".repeat(64)}.pdf`), "%PDF");
+  assert.equal((await keeper.library("project-a")).length, 3);
+
+  await keeper.save("project-a", latest, "main.pdf", compiled, [], 1);
+  await keeper.flush();
+  assert.equal((await keeper.library("project-a")).length, 4);
+  // The next launch prunes.
+  const store = createAnnotationStore(root);
+  await store.pruneAll();
+  await store.idle();
+  const kept = new Set(await fs.readdir(root));
+  const [firstKey, annotatedKey, latestKey, otherKey] = await Promise.all([
+    keyOf(first),
+    keyOf(annotated),
+    keyOf(latest),
+    keyOf(other, "/notes.pdf"),
+  ]);
+  assert.ok(!kept.has(`${firstKey}.pdf`) && !kept.has(`${firstKey}.json`));
+  for (const key of [annotatedKey, latestKey, otherKey])
+    assert.ok(kept.has(`${key}.pdf`) && kept.has(`${key}.json`), key);
+  for (const key of damaged) assert.ok(kept.has(`${key}.json`), key);
+
+  // Annotating an old copy again does not make it the newest version.
+  await keeper.save("project-a", annotated, "main.pdf", compiled, [], 1);
+  await keeper.flush();
+  await store.pruneAll();
+  const after = new Set(await fs.readdir(root));
+  assert.ok(after.has(`${latestKey}.pdf`));
+  assert.ok(!after.has(`${annotatedKey}.pdf`));
+  assert.ok(!after.has(`${"f".repeat(64)}.pdf`));
+  assert.ok(after.has(`${damaged[1]}.pdf`));
+});

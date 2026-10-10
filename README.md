@@ -30,7 +30,7 @@ npm run package
 5. 在 **Project board** 拖动卡片，或用卡片菜单切换阶段：Idea Exploration、Experiments、Paper Writing、Submitted、Revision、Published。
 6. **Dates & deadlines** 的 My dates 汇总独立会议日期和个人事项；首次启动会从本机 `mac-ddl-count` 导入已保存的日期、状态和来源（`RESEARCH_MAC_DDL_DIR` 可指定其他目录）。CCF conferences 可搜索会议并添加 Abstract、Paper 等日期；Project milestones 保留每个项目的里程碑。左侧角标、Overview 和此页的计数来自同一份日期列表，角标表示 7 天内到期的数量。项目详情中关联的会议日期可直接点开编辑。删除日期、里程碑、任务或项目后，提示条提供 **Undo**。
 7. 右上角的月亮/太阳按钮切换浅色和深色；Workspace settings 的 Appearance 可选择 Light、Dark 或跟随系统。主题覆盖编辑器、终端和弹窗，并在重启后保留。
-8. 在 **Workspace settings** 管理研究方向，导入或导出项目资料。`⌘K` 搜索项目、文件正文、PDF 正文、笔记、批注和历史对话。
+8. 在 **Workspace settings** 管理研究方向，导入或导出项目资料。`⌘K` 搜索项目、文件正文、PDF 正文、笔记、批注和历史对话；输入 `>` 或按 `⇧⌘P` 只列出命令，例如 Compile、切换布局和 Add reference。菜单栏列出同样的命令及其快捷键。
 9. 应用会在 My dates 和项目里程碑到期前一周、前一天各发一次系统通知，已完成的日期不提醒。窗口关闭但应用仍在运行时同样提醒；点击通知打开窗口。Workspace settings 的 **Reminders** 可关闭提醒。
 
 启动时自动将 Current research 的 22 个项目加入工作区，按 ML Systems、Security and Privacy、Cyber-Physical Systems 分组显示在左侧，并进入 Project board。升级已有工作区时移除六个示例项目，保留已有真实项目的笔记、任务和阶段；全部迁移合并为一次写入，写入前保存一份备份。此操作只执行一次，之后删除的项目不会在重启时重新加入。
@@ -55,9 +55,9 @@ Project board 按研究时间线排列阶段：Idea Exploration → Experiments 
 
 每次请求结束后，**Review changes** 打开逐文件审阅窗口。**Diff** 显示增删颜色和修改前后的行号，点击行号跳回 source；**Before & after** 并排显示完整文件的预览。比较基于请求开始前的文件，包含通过命令改动的文件，并保留原有未提交编辑。停止的请求也能审阅其部分修改。
 
-点击 **Revert this run** 可一次还原该请求修改、新增或删除的文件。还原前保存当前编辑器内容，并核对所有文件；后续编辑、未结束的请求、正在执行的 Git 操作或编译会阻止还原。还原结束后刷新编辑器和文件树，历史 diff 仍可查看。备份保存在 Application Support 的 `Research Workbench/ai/changes/`，重启后仍可使用；工作区 JSON 导出不包含这些备份，完整备份包含它们。旧历史没有原始文件备份，只提供只读审阅。生成目录、依赖目录和 Git 历史不纳入还原；单文件快照最多 8 MiB，每个版本最多 128 MiB，超出限制或在保存时持续变化的文件（例如实验日志）会明确禁用该次请求的自动还原，请求本身照常执行。未修改的文件不会重复读取。**New AI chat** 创建独立对话并保留旧对话及修改备份。**Chats** 支持命名、搜索、归档和重新打开对话；归档不会删除备份。应用启动时仅清理不再被任何修改记录引用的文件版本。
+点击 **Revert this run** 可一次还原该请求修改、新增或删除的文件。还原前保存当前编辑器内容，并核对所有文件；后续编辑、未结束的请求、正在执行的 Git 操作或编译会阻止还原。还原结束后刷新编辑器和文件树，历史 diff 仍可查看。备份保存在 Application Support 的 `Research Workbench/ai/changes/`，重启后仍可使用；工作区 JSON 导出不包含这些备份，完整备份包含它们。旧历史没有原始文件备份，只提供只读审阅。生成目录、依赖目录和 Git 历史不纳入还原；单文件快照最多 8 MiB，每个版本最多 128 MiB，超出限制或在保存时持续变化的文件（例如实验日志）会明确禁用该次请求的自动还原，请求本身照常执行。未修改的文件不会重复读取。**New AI chat** 创建独立对话并保留旧对话及修改备份；当前对话还没有内容时直接沿用。**Chats** 支持命名、搜索、归档和重新打开对话；归档不会删除备份。删除非当前对话会同时删除它的修改备份，文件版本在下次启动时释放。请求运行中应用崩溃或被强制退出时，下次启动会保存这些文件当时的版本，该请求仍可审阅和还原；这些版本可能包含期间的其他编辑，因此还原前需要勾选确认。应用启动时仅清理不再被任何修改记录引用的文件版本。
 
-输入框底部使用 Codex 风格的权限和模型菜单。**Default permissions** 允许在项目目录内工作，额外访问由用户审批；**Approve for me** 保留项目目录限制，由 Codex 自动审查额外访问请求；**Read only** 用于检查文件，修改或额外访问需审批；**Full access** 允许访问本机文件和网络，无需逐次审批。模型菜单提供 **Reasoning Effort** 和 **Standard / Fast**，选项来自随应用打包的 Codex `model/list` 能力目录。推理强度只使用滑块，支持拖动、点击滑轨和键盘调整；重置按钮恢复模型默认值。菜单、选中标记和滑块具有过渡动画，并遵守系统减少动态效果设置。Fast 的速度和用量说明采用目录返回的文本；不支持 Fast 的模型仅显示 Standard。权限按账户和项目保存，推理强度与速度再按模型保存，重启后恢复。运行期间可以调整下一条指令的设置。
+输入框底部使用 Codex 风格的权限和模型菜单。**Default permissions** 允许在项目目录内工作，额外访问由用户审批；**Approve for me** 保留项目目录限制，由 Codex 自动审查额外访问请求；**Read only** 用于检查文件，修改或额外访问需审批；**Full access** 允许访问本机文件和网络，无需逐次审批。对话附加过 PDF 摘录后，即使选择 Full access 也按 Default permissions 运行，消息旁会注明；论文中的文字可能含有针对 Agent 的指令。Full access 下 Agent 自行打开的文件和网页仍被信任，处理来源不明的材料时请选择其他权限。模型菜单提供 **Reasoning Effort** 和 **Standard / Fast**，选项来自随应用打包的 Codex `model/list` 能力目录。推理强度只使用滑块，支持拖动、点击滑轨和键盘调整；重置按钮恢复模型默认值。菜单、选中标记和滑块具有过渡动画，并遵守系统减少动态效果设置。Fast 的速度和用量说明采用目录返回的文本；不支持 Fast 的模型仅显示 Standard。权限按账户和项目保存，推理强度与速度再按模型保存，重启后恢复。运行期间可以调整下一条指令的设置。
 
 Agent 运行期间，按 Enter 或点击 **Queue message** 可继续提交指令，最多等待 20 条。队列按顺序执行；每条指令保留提交时的模型、权限、推理强度、速度、附件快照和 Skills。输入框上方显示等待队列，可调整顺序、删除或 **Pause / Resume**。Pause 让当前任务继续完成；Stop 中断当前任务并暂停队列。任务失败、切换账户、关闭窗口或退出应用后，等待指令会保留并暂停，点击 Resume 继续；关闭窗口同时停止当前任务，重新打开窗口后 Agent 照常可用。开始执行前会重新检查模型、项目目录和 Skills；不可用时暂停并显示原因。队列按账户和项目保存，新建或切换对话前需要等待当前任务结束，并暂停正在运行的队列；旧对话保留自己的等待指令，重新打开后需手动 Resume。
 
@@ -81,9 +81,23 @@ Agent 回复支持 Markdown、列表、表格和带复制按钮的代码块。�
 
 入口文件所在目录有 `latexmkrc` 或 `.latexmkrc` 时，首次编译前会询问是否运行。这类文件是 Perl 程序，会以你的权限在 Agent 沙箱之外执行，所以 Agent 或协作者修改后会再次询问。选择 **Compile without it** 时跳过项目配置，仍使用 `~/.latexmkrc`，重启应用前不再询问；选择 **Trust and compile** 后，项目配置中的 `$pdf_mode` 可以在 Automatic 模式下设定引擎。信任的文件按项目保存在 Application Support 的 `Research Workbench/build-trust.json`。
 
+## 论文写作
+
+Outline、`\ref` 补全和字数覆盖整份稿件。应用从入口文件沿 `\input`、`\include`、`\subfile` 和 `\import` 读取各文件，Outline 按阅读顺序列出所有章节，点击即打开对应文件；状态栏同时显示当前文件和整份稿件的字数。
+
+`\cite{` 补全显示年份和题目，悬停引用键显示题目、作者、出处和所在的 .bib 行。Build log 无需编译即可列出重复的 BibTeX 键、在任何 .bib 中都找不到的引用以及从未引用的条目。参考文献文件取自 `\bibliography` 或 `\addbibresource`，未声明时使用项目目录中的全部 .bib；`\bibitem` 定义的键同样有效。引用键比较不区分大小写，与 BibTeX 一致。声明的 .bib 不在项目目录中或无法读取时，Build log 会说明原因，并暂停未定义和未引用条目的检查，以免误报。窗口重新获得焦点时会重新读取稿件和参考文献，Zotero 导出或终端中的 git pull 会随之生效。
+
+编辑器标签栏的 **Add reference** 接受 DOI、arXiv 编号或链接以及论文题目。DOI 通过 doi.org 获取 BibTeX，arXiv 编号使用 arxiv.org 的 BibTeX，题目在 arXiv 与 Crossref 中检索候选。新条目使用 `lewis2020retrieval` 形式的引用键，去掉 keywords、abstract 等字段，添加前可以编辑；已有相同 DOI 或 arXiv 编号的条目时，可直接引用原有的键。勾选 **Cite at the cursor** 会在光标处插入 `\cite`。DBLP 拒绝自动请求，请复制其记录中的 DOI。
+
+**Workbench setup** 可设置参考文献前的页数上限，并勾选 **Double-blind review**。每次编译成功后，Build log 检查正文页数、未嵌入字体和 Type 3 字体；参考文献是否从新的一页开始由 SyncTeX 判断。双盲模式下另外检查 PDF 元数据中的作者、`\author`（包括多行）、`\thanks`、致谢以及 GitHub 等个人链接。acmart 的 `anonymous` 选项会自动开启这项检查，并认可它自动隐藏的作者与 `acks`。PDF 在后台线程读取，不会阻塞界面。
+
+Git 面板 Recent commits 中的 **Track changes** 用 latexdiff 比较该提交与当前稿件，生成标出增删的 PDF，供修改稿和 rebuttal 使用。结果保存在 `.research-build/diff/`，项目文件和 Git 状态不受影响；该 PDF 不支持 Show in PDF，重新编译即回到稿件 PDF。
+
+`.tex`、`.md` 和 `.txt` 文件启用拼写检查，跳过命令、数学公式、引用键、标签和注释。右键拼错的词可选择建议或 Learn Spelling；Chromium 只检查编辑过的段落。状态栏的 **Spelling** 可以关闭。
+
 ## 数据与边界
 
-项目资料保存在 macOS 用户 Application Support 目录中的 `Research Workbench/workspace.json`；设置页显示实际路径。应用采用临时文件加重命名保存，导入前自动备份旧资料。
+项目资料保存在 macOS 用户 Application Support 目录中的 `Research Workbench/workspace.json`；设置页显示实际路径。应用采用临时文件加重命名保存，导入前自动备份旧资料。`workspace.json` 内容损坏时，启动会显示最近一份有效备份的时间，可选择恢复；损坏的文件另存为 `workspace.json.damaged-时间戳`。
 
 工作区导出包含项目资料和文件夹路径，**不包含项目文件**。请单独备份论文目录。移除项目不会删除论文文件。
 
@@ -99,9 +113,13 @@ npm run build
 npm run test:e2e
 npm run test:ai-ui
 npm run test:review-ui
+npm run test:continuity-ui
+npm run test:writing-ui
 ```
 
 `test:e2e` 依次运行 `test:ui`、`test:git-ui`、`test:deadlines`、`test:pdf-ui`、`test:synctex-ui` 和 `test:layout-ui`。核心测试验证数据保存、导入校验、目录边界、SSH 参数和实际 LaTeX 成功／失败编译。桌面集成测试在隔离数据目录启动 Electron，验证项目创建、任务、日期、阶段、PTY shell、PDF 响应、编译错误、文件保存及重启后的数据恢复；它们通过 `RESEARCH_MAC_DDL_DIR` 读取 `tests/fixtures/mac-ddl-count` 下的合成日期，不读取本机 `mac-ddl-count`。
+
+`test:writing-ui` 在合成稿件上验证跨文件 Outline 与字数、`\ref` 和 `\cite` 补全、悬停卡片、无需编译的参考文献检查、Add reference、真实编译后的投稿检查、latexdiff、拼写检查以及 ⌘K 和菜单命令。
 
 `test:synctex-ui` 使用真实 LaTeX 与 SyncTeX 验证双击和单击源码定位、子文件、缩放、旋转、布局切换、未保存修改保护，以及缺少源码映射或预览过期时的提示。
 
@@ -143,7 +161,7 @@ Project Files 以可展开的目录树显示项目的 Manuscript、Code 和其�
 
 在 PDF 中选中文字后，点击 **Ask Agent about selection**，或在批注列表选择 **Ask Agent to address this**。输入框会附带原文、评论、PDF 版本和页码；存在可用 SyncTeX 数据时附带源码行。附件先放入输入框，由用户提交；现有 diff 审阅、编译和还原流程继续适用。
 
-**Annotated PDF versions** 中的 **Copy highlights to current PDF…** 可预览旧版高亮在当前文档中的匹配。确认后只复制原文能够唯一匹配的高亮与评论。重复文字、找不到的原文、便签和画笔仍保留在旧版；复制不会修改旧版，可以撤销。打开过的 PDF 会保存本地快照，供重启恢复和搜索使用。
+**Annotated PDF versions** 中的 **Copy highlights to current PDF…** 可预览旧版高亮在当前文档中的匹配。确认后只复制原文能够唯一匹配的高亮与评论。重复文字、找不到的原文、便签和画笔仍保留在旧版；复制不会修改旧版，可以撤销。打开过的 PDF 会保存本地快照，供重启恢复和搜索使用；项目自己编译的 PDF 本就在磁盘上，只在添加批注或发给 Agent 时保存快照。没有批注的旧快照在同一 PDF 有更新版本后，于下次启动时清理；有批注的版本一直保留。
 
 **⌘K** 输入至少两个字符，后台搜索所有关联项目的项目资料、笔记、任务、文件名、文本文件正文、PDF 正文、PDF 批注及当前账户的历史对话（包括归档）。结果显示文本片段、项目和位置；点击文件跳到源码行，点击对话跳到消息，点击 PDF 跳到对应页和文字区域，并高亮命中文字。可按结果类型筛选。PDF 自搜索后被修改时会要求重新搜索，以免跳到旧位置。
 

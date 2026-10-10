@@ -84,9 +84,16 @@ function dueReminders(state, sent, now = Date.now()) {
 }
 function createReminders(file, notify) {
   async function check(state, now = Date.now()) {
+    // A damaged record can repeat a reminder once; it never stops them.
     const saved = await fs
       .readFile(file, "utf8")
-      .then(JSON.parse, () => ({ sent: [] }));
+      .then(JSON.parse)
+      .then((value) => ({
+        sent: Array.isArray(value?.sent)
+          ? value.sent.filter((id) => typeof id === "string")
+          : [],
+      }))
+      .catch(() => ({ sent: [] }));
     // Reminders for past dates are dropped, which keeps the record small.
     const sent = new Set(
       saved.sent.filter((id) => Number(id.split("\0")[1]) >= now),

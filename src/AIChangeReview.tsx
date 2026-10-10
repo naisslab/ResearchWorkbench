@@ -64,6 +64,8 @@ export default function AIChangeReview({
   const [fileError, setFileError] = useState("");
   const [checking, setChecking] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  // A recovered run can include the user's own later edits.
+  const [confirmed, setConfirmed] = useState(false);
   useEffect(() => {
     let current = true;
     void unwrap(window.research!.aiReview(projectId, messageId))
@@ -325,6 +327,16 @@ export default function AIChangeReview({
             .map((warning) => (
               <small key={warning}>{warning}</small>
             ))}
+          {review?.interrupted && review.canRevert && (
+            <label className="ai-revert-confirm">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                onChange={(event) => setConfirmed(event.target.checked)}
+              />
+              I checked the diff; revert every listed change
+            </label>
+          )}
         </div>
         <button
           type="button"
@@ -340,6 +352,7 @@ export default function AIChangeReview({
           className="ai-revert-action"
           disabled={
             !review?.canRevert ||
+            (review.interrupted && !confirmed) ||
             agentBusy ||
             restoring ||
             checking ||

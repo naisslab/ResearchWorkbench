@@ -228,6 +228,13 @@
 .outline button:hover {
   background: var(--hover);
 }
+.outline button.current {
+  color: var(--text);
+}
+.outline button small {
+  margin-left: 6px;
+  color: var(--muted);
+}
 .file-sidebar-bottom {
   display: flex;
   flex-direction: column;
@@ -514,7 +521,7 @@
   border-bottom: 1px solid var(--border);
   list-style: none;
 }
-.build-problems button {
+.build-problems :is(button, div) {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -539,6 +546,9 @@
 }
 .problem-warning {
   color: var(--warning);
+}
+.problem-ok {
+  color: var(--success);
 }
 .log-error {
   background: color-mix(in srgb, var(--danger) 14%, transparent);
@@ -872,4 +882,80 @@
     font-size: 10px;
     padding: 4px 6px;
   }
+}
+.cm-citation-card {
+  max-width: 440px;
+  padding: 6px 9px;
+  color: var(--text);
+  font: var(--text-xs) / 1.45 var(--font-sans);
+}
+.reference-search {
+  display: flex;
+  gap: 8px;
+}
+.reference-search input {
+  flex: 1;
+  min-width: 0;
+}
+.reference-error {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  color: var(--danger);
+  font-size: var(--text-xs);
+}
+.reference-candidates {
+  max-height: 40vh;
+  margin: 12px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+.reference-candidates button {
+  display: block;
+  width: 100%;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.reference-candidates button:hover {
+  background: var(--hover);
+}
+.reference-candidates strong,
+.reference-candidates small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.reference-candidates small {
+  margin-top: 4px;
+  color: var(--muted);
+}
+.reference-draft {
+  width: 100%;
+  min-height: 180px;
+  margin-top: 12px;
+  font: var(--text-xs) / 1.5 var(--font-mono);
+}
+.reference-link {
+  padding: 0;
+  color: var(--accent);
+}
+.modal-actions label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+  font-size: var(--text-xs);
+}
+.spelling-toggle {
+  margin-right: 12px;
+  padding: 0;
+  color: var(--muted);
+  font-size: inherit;
+}
+.spelling-toggle[aria-pressed="true"] {
+  color: var(--text-secondary);
+}
+.spelling-toggle:hover {
+  color: var(--text);
 }

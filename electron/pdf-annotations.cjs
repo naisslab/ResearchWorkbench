@@ -106,6 +106,8 @@ function createAnnotationStore(directory) {
   // A document's bytes never change, so each Buffer is hashed once.
   const hashes = new WeakMap();
   const snapshots = new Set();
+  const createdAt = new Map();
+  let pruning = Promise.resolve();
   function identify(projectId, bytes) {
     if (!hashes.has(bytes)) hashes.set(bytes, digest(bytes));
     const hash = hashes.get(bytes);
@@ -139,6 +141,21 @@ function createAnnotationStore(directory) {
       pageCount: stored?.pageCount || 0,
     };
   }
+  // Damaged or foreign records are preserved on disk and left out.
+  const isRecord = (value, key) =>
+    !!value &&
+    typeof value === "object" &&
+    value.key === key &&
+    Array.isArray(value.annotations) &&
+    typeof value.updatedAt === "string";
+  async function readRecord(key) {
+    try {
+      const value = JSON.parse(await fs.readFile(file(key, "json"), "utf8"));
+      return isRecord(value, key) ? value : null;
+    } catch {
+      return null;
+    }
+  }
   async function save(projectId, bytes, name, sourcePath, input, pageCount) {
     const annotations = validateAnnotations(input, pageCount);
     const { hash, key } = identify(projectId, bytes);
@@ -149,10 +166,20 @@ function createAnnotationStore(directory) {
         } catch (error) {
           if (error.code !== "ENOENT") throw error;
           await atomicWrite(file(key, "pdf"), bytes);
+          createdAt.set(key, new Date().toISOString());
         }
         snapshots.add(key);
       }
       const updatedAt = new Date().toISOString();
+      // The first save of a version fixes when it was created.
+      if (!createdAt.has(key))
+        createdAt.set(
+          key,
+          await readRecord(key).then(
+            (previous) =>
+              previous?.createdAt || previous?.updatedAt || updatedAt,
+          ),
+        );
       await atomicWrite(
         file(key, "json"),
         JSON.stringify(
@@ -163,6 +190,7 @@ function createAnnotationStore(directory) {
             documentHash: hash,
             name,
             sourcePath,
+            createdAt: createdAt.get(key),
             updatedAt,
             pageCount,
             annotations,
@@ -174,7 +202,7 @@ function createAnnotationStore(directory) {
       return { key, updatedAt };
     }, key);
   }
-  async function library(projectId) {
+  async function records() {
     let names;
     try {
       names = await fs.readdir(directory);
@@ -182,23 +210,82 @@ function createAnnotationStore(directory) {
       if (error.code === "ENOENT") return [];
       throw error;
     }
-    const documents = [];
-    for (const name of names.filter((name) =>
-      keyPattern.test(path.basename(name, ".json")),
-    )) {
-      const entry = JSON.parse(
-        await fs.readFile(path.join(directory, name), "utf8"),
-      );
-      if (entry.projectId === projectId)
-        documents.push({
-          key: entry.key,
-          name: entry.name,
-          updatedAt: entry.updatedAt,
-          count: entry.annotations.length,
-          pageCount: entry.pageCount,
-        });
-    }
-    return documents.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const keys = names
+      .filter((name) => name.endsWith(".json"))
+      .map((name) => name.slice(0, -5))
+      .filter((key) => keyPattern.test(key));
+    return (await Promise.all(keys.map(readRecord))).filter(Boolean);
+  }
+  // Copies without annotations, such as a PDF that was only opened or an
+  // excerpt sent to the agent, go at launch once a newer copy of the same PDF
+  // exists. Annotated copies stay.
+  const removable = (entry) => entry.annotations.length === 0;
+  const firstSaved = (entry) => entry.createdAt || entry.updatedAt;
+  const removeIfUnannotated = (key) =>
+    queue(async () => {
+      const entry = await readRecord(key);
+      if (!entry || !removable(entry)) return;
+      // Without its record, a leftover copy is removed at the next launch.
+      await fs.rm(file(key, "json"), { force: true });
+      await dropCopy(key);
+    }, key);
+  async function dropCopy(key) {
+    await fs.rm(file(key, "pdf"), { force: true });
+    snapshots.delete(key);
+    createdAt.delete(key);
+  }
+  async function prune(entries, projectId, sourcePath, newest) {
+    for (const entry of entries)
+      if (
+        entry.projectId === projectId &&
+        entry.sourcePath === sourcePath &&
+        entry.key !== newest &&
+        removable(entry)
+      )
+        await removeIfUnannotated(entry.key);
+  }
+  // Also removes copies whose record is gone.
+  function pruneAll() {
+    pruning = (async () => {
+      const entries = await records();
+      const newest = new Map();
+      for (const entry of entries) {
+        if (typeof entry.sourcePath !== "string") continue;
+        const group = entry.projectId + "\0" + entry.sourcePath;
+        const current = newest.get(group);
+        if (!current || firstSaved(entry) > firstSaved(current))
+          newest.set(group, entry);
+      }
+      for (const entry of newest.values())
+        await prune(entries, entry.projectId, entry.sourcePath, entry.key);
+      for (const name of await fs.readdir(directory).catch(() => [])) {
+        const key = name.slice(0, -4);
+        if (!name.endsWith(".pdf") || !keyPattern.test(key)) continue;
+        await queue(async () => {
+          // A save writes the copy before its record, under the same key.
+          try {
+            await fs.access(file(key, "json"));
+          } catch (error) {
+            if (error.code === "ENOENT") await dropCopy(key);
+          }
+        }, key);
+      }
+    })().catch((error) =>
+      console.error("Older PDF copies were kept:", error.message),
+    );
+    return pruning;
+  }
+  async function library(projectId) {
+    return (await records())
+      .filter((entry) => entry.projectId === projectId)
+      .map((entry) => ({
+        key: entry.key,
+        name: entry.name,
+        updatedAt: entry.updatedAt,
+        count: entry.annotations.length,
+        pageCount: entry.pageCount,
+      }))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
   async function archived(projectId, key) {
     const entry = JSON.parse(await fs.readFile(file(key, "json"), "utf8"));
@@ -215,7 +302,14 @@ function createAnnotationStore(directory) {
     save,
     library,
     archived,
+    pruneAll,
+    // Quit waits only for saves; an unfinished prune resumes next launch.
     flush: queue.settled,
+    // Backups also wait for the launch prune.
+    async idle() {
+      await pruning;
+      await queue.settled();
+    },
   };
 }
 async function exportAnnotated(bytes, input, pageCount) {

@@ -4,7 +4,7 @@ const os = require("node:os");
 const crypto = require("node:crypto");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
-const { atomicWrite } = require("./core.cjs");
+const { atomicWrite, exists } = require("./core.cjs");
 const { protectedWrite, AIError } = require("./chatgpt.cjs");
 const execute = promisify(execFile);
 const hash = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
@@ -57,11 +57,6 @@ function createChangeStore(
   // keeps them across restarts.
   const known = new Map();
   const indexFile = path.join(directory, "index.json");
-  const exists = (file) =>
-    fs.access(file).then(
-      () => true,
-      () => false,
-    );
   const listOrEmpty = (folder) =>
     fs
       .readdir(folder)
@@ -219,8 +214,8 @@ function createChangeStore(
     }
     return entry;
   }
+  // Callers wait for collect first, except startup recovery inside collect.
   async function capture(roots) {
-    await collected();
     const entries = {},
       directories = [];
     const budget = { bytes: 0 };
@@ -269,6 +264,7 @@ function createChangeStore(
           (other) => other !== root && root.startsWith(other + path.sep),
         ),
     );
+    await collected();
     const before = await capture(roots);
     await save(id, {
       version: 1,
@@ -278,8 +274,15 @@ function createChangeStore(
     });
   }
   async function finish(id) {
+    await collected();
+    return complete(id);
+  }
+  // `interrupted`: saved at the next launch, so the final versions can
+  // include edits made after the app closed.
+  async function complete(id, interrupted = false) {
     const { before, ...value } = await load(id);
     const after = await capture(value.roots);
+    if (interrupted) value.interrupted = true;
     value.changes = [
       ...new Set([
         ...Object.keys(before.entries),
@@ -297,13 +300,21 @@ function createChangeStore(
     await save(id, value);
     return { files: value.changes.length };
   }
-  // Removes the runs of a cleared chat; their versions go at the next collect.
+  // The review record for a run that was interrupted before it finished.
+  async function summary(id) {
+    await collected();
+    const value = await load(id).catch(() => null);
+    return value?.changes
+      ? { files: value.changes.length, interrupted: !!value.interrupted }
+      : null;
+  }
+  // Removes the runs of a deleted chat; their versions go at the next collect.
   async function discard(ids) {
     for (const id of ids) await fs.rm(manifestFile(id), { force: true });
   }
-  // Deletes saved versions that no run or cached capture needs, shrinks older
-  // run records, and drops captures a closed app never finished. Runs before
-  // any capture.
+  // Finishes runs a closed app left open, deletes saved versions that no run
+  // or cached capture needs, shrinks older run records, and drops captures
+  // that can no longer be finished. Runs before any capture.
   function collect() {
     collecting = (async () => {
       // A damaged index is only a lost cache.
@@ -319,7 +330,15 @@ function createChangeStore(
         const id = path.basename(name, ".json");
         if (!/^[a-f0-9]{64}\.json$/.test(name)) continue;
         // An unreadable run might need any version, so nothing is deleted.
-        const value = await load(id);
+        let value = await load(id);
+        // A run the app never finished, after a crash, force quit or the quit
+        // time limit, gets its current files as final versions so Review and
+        // Revert keep working. Nothing else runs this early.
+        if (!value.changes)
+          value = await complete(id, true).then(
+            () => load(id),
+            () => value,
+          );
         if (!value.changes) {
           const { mtimeMs } = await fs.stat(manifestFile(id));
           if (Date.now() - mtimeMs > 60 * 60 * 1000) {
@@ -425,7 +444,13 @@ function createChangeStore(
       canRevert: !reason,
       reason,
       revertedAt: value.revertedAt,
+      interrupted: !!value.interrupted,
       warnings: [
+        ...(value.interrupted
+          ? [
+              "The app closed before this run finished. Its final versions were saved at the next launch and can include edits made in between.",
+            ]
+          : []),
         "Generated folders, dependencies, and Git history are excluded.",
       ],
     };
@@ -615,7 +640,7 @@ function createChangeStore(
       locks.delete(id);
     }
   }
-  return { begin, finish, discard, collect, review, file, revert };
+  return { begin, finish, summary, discard, collect, review, file, revert };
 }
 // Older conversations saved patches but no original bytes. Keep them reviewable
 // without implying that their changes can be restored.

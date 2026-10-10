@@ -13,11 +13,29 @@ import { EditorState, Prec, type Extension } from "@codemirror/state";
 import { tags } from "@lezer/highlight";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { fileLanguage } from "./syntax";
+import { useManuscript } from "./useManuscript";
+import { bibliographyFiles, useBibliography } from "./useBibliography";
 import {
-  citationKeys,
+  appendEntry,
+  bibliographyProblems,
+  citationOptions,
+  describeEntry,
+  foldKey,
+  parseBibliography,
+  type BibEntry,
+} from "./bibliography.ts";
+import {
+  manuscriptLabels,
+  manuscriptOutline,
+  manuscriptWords,
+  normalize,
+} from "./latex-project.ts";
+import {
   countWords,
-  forgetCitations,
+  citationHover,
   latexCompletion,
+  openCitation,
+  takesKeys,
   outline,
   parseProblems,
 } from "./latex";
@@ -41,7 +59,17 @@ import {
   Maximize2,
   PanelsTopLeft,
   Sparkles,
+  BookPlus,
 } from "lucide-react";
+import AddReference from "./AddReference";
+import { useCommands } from "./commands";
+import { spellChecked, spelling } from "./spelling";
+import {
+  referencesLocation,
+  submissionChecks,
+  type PdfReport,
+  type SubmissionCheck,
+} from "./submission.ts";
 import type { Project, ProjectFileRoot } from "./types";
 import GitPanel from "./GitPanel";
 import PdfReader from "./PdfReader";
@@ -176,6 +204,43 @@ function useStableCallback<A extends unknown[], R>(
   return useCallback((...args: A) => latest.current(...args), []);
 }
 type BottomTab = "terminal" | "ai" | "build";
+const spellingKey = "research-workbench.spelling";
+// Storage can be unavailable; the editor then uses the default.
+const readPreference = (key: string) => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+const writePreference = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+};
+// CodeMirror tells completion sources apart by identity, so each editor
+// configuration keeps one; a new function per lookup never finishes.
+function latexSupport(
+  bibliography: { current: BibEntry[] },
+  labels: { current: string[] },
+) {
+  const autocomplete = latexCompletion(
+    () => citationOptions(bibliography.current),
+    () => labels.current,
+  );
+  const describe = (key: string) => {
+    const entry = bibliography.current.find(
+      (e) => foldKey(e.key) === foldKey(key),
+    );
+    return entry
+      ? `${describeEntry(entry)} — ${entry.file}:${entry.line}`
+      : `'${key}' is not in the manuscript's .bib files.`;
+  };
+  return [
+    EditorState.languageData.of(() => [{ autocomplete }]),
+    citationHover(describe),
+  ];
+}
 function Workbench({
   project,
   searchTarget,
@@ -210,6 +275,11 @@ function Workbench({
   );
   const [roots, setRoots] = useState<ProjectFileRoot[]>([]);
   const [fileRevision, setFileRevision] = useState(0);
+  // Bumped when a .bib is written, so other saves do not re-read references.
+  const [bibRevision, setBibRevision] = useState(0);
+  // Files can change outside the app (Zotero exports, git in a terminal), so
+  // the manuscript and bibliography are re-read when they may have.
+  const [externalRevision, setExternalRevision] = useState(0);
   const [activeRoot, setActiveRoot] = useState("primary");
   const [folderModal, setFolderModal] = useState(false);
   const [folderLabel, setFolderLabel] = useState("Code");
@@ -254,6 +324,16 @@ function Workbench({
     to: string;
   }>();
   const [trashing, setTrashing] = useState<{ rootId: string; path: string }>();
+  const [addingReference, setAddingReference] = useState(false);
+  const [checkSpelling, setCheckSpelling] = useState(
+    () => readPreference(spellingKey) !== "off",
+  );
+  const toggleSpelling = () => {
+    writePreference(spellingKey, checkSpelling ? "off" : "on");
+    setCheckSpelling(!checkSpelling);
+  };
+  // Facts about the compiled PDF; the checks combine them with the sources.
+  const [pdfFacts, setPdfFacts] = useState<PdfReport | Error | null>(null);
   const [expandedPdf, setExpandedPdf] = useState(false);
   const [expandedAI, setExpandedAI] = useState(false);
   const aiFocused = expandedAI && bottomTab === "ai" && showTerminal;
@@ -292,22 +372,67 @@ function Workbench({
   const dirty = text !== savedText;
   const isTex = /\.(tex|ltx)$/.test(active);
   const deferredText = useDeferredValue(text);
+  const manuscript = useManuscript(
+    project.id,
+    project.mainFile,
+    roots,
+    fileRevision,
+    { file: active, rootId: activeRoot, text: deferredText },
+    externalRevision,
+  );
+  // Inside the manuscript, the outline and counts cover every included file.
   const sections = useMemo(
-    () => (isTex ? outline(deferredText) : []),
-    [isTex, deferredText],
+    () =>
+      manuscript.includesActive
+        ? manuscriptOutline(manuscript.sources, project.mainFile!)
+        : isTex
+          ? outline(deferredText).map((s) => ({ ...s, file: active }))
+          : [],
+    [manuscript, project.mainFile, isTex, deferredText, active],
   );
   const topSection = Math.min(...sections.map((section) => section.depth));
-  const stats = useMemo(
+  const stats = useMemo(() => {
+    if (!isTex) return `${deferredText.split("\n").length} lines`;
+    const words = `${countWords(deferredText).toLocaleString()} words`;
+    return manuscript.includesActive && manuscript.sources.length > 1
+      ? `${words} · ${manuscriptWords(manuscript.sources).toLocaleString()} in manuscript`
+      : words;
+  }, [isTex, deferredText, manuscript]);
+  const projectLabels = useRef<string[]>([]);
+  projectLabels.current = useMemo(
+    () => [...manuscriptLabels(manuscript.sources).keys()],
+    [manuscript.sources],
+  );
+  const primaryRoot = roots.find((root) => root.id === "primary");
+  const bibFiles = useMemo(
     () =>
-      isTex
-        ? `${countWords(deferredText).toLocaleString()} words`
-        : `${deferredText.split("\n").length} lines`,
-    [isTex, deferredText],
+      bibliographyFiles(
+        manuscript.sources,
+        project.mainFile || "",
+        primaryRoot,
+      ),
+    [manuscript.sources, project.mainFile, primaryRoot],
   );
-  const problems = useMemo(
-    () => parseProblems(log, project.mainFile),
-    [log, project.mainFile],
+  const loadedBibliography = useBibliography(
+    project.id,
+    bibFiles.files,
+    roots,
+    bibRevision,
   );
+  const bibliography = loadedBibliography?.entries ?? null;
+  const bibliographyRef = useRef<BibEntry[]>([]);
+  bibliographyRef.current = bibliography || [];
+  // Build errors first, then bibliography checks that need no compile.
+  const problems = useMemo(() => {
+    const built = parseProblems(log, project.mainFile);
+    return [
+      ...built,
+      ...bibliographyProblems(bibliography, manuscript.sources, built, [
+        ...bibFiles.missing,
+        ...(loadedBibliography?.unreadable || []),
+      ]),
+    ];
+  }, [log, project.mainFile, bibFiles, loadedBibliography, manuscript.sources]);
   // Read when a new PDF mounts the reader, so scrolling does not re-render it.
   const initialView = useMemo(
     () => (pdf ? session.pdfs[pdf.name] : undefined),
@@ -422,8 +547,14 @@ function Workbench({
     return () => cancelIdleCallback(id);
   }, []);
   useEffect(() => onStatus({ file: active, dirty }), [active, dirty]);
+  // The agent's edits on disk win while it works; callers stop here too.
   async function save(manual = false) {
     if (!active) return;
+    if (agentRunning) {
+      const message = "Wait for the agent to finish before saving.";
+      report(message);
+      throw new Error(message);
+    }
     setSaving(true);
     try {
       mtime.current = await window.research!.writeFile(
@@ -435,8 +566,8 @@ function Workbench({
       );
       setSavedText(text);
       setDiskConflict(false);
-      if (active.endsWith(".bib")) forgetCitations(project.id);
       setFileRevision((revision) => revision + 1);
+      if (active.endsWith(".bib")) setBibRevision((revision) => revision + 1);
       if (
         manual &&
         project.compileOnSave &&
@@ -489,13 +620,23 @@ function Workbench({
       .catch(() => 0);
     if (!time || time === mtime.current) return;
     if (dirty) setDiskConflict(true);
-    else await reloadActive();
+    else {
+      await reloadActive();
+      noteExternalChange();
+    }
   });
+  // Unsaved edits are never replaced: they get the Reload / Keep mine choice.
   const filesChanged = useStableCallback(async () => {
     await reload();
-    await reloadActive();
-    setFileRevision((revision) => revision + 1);
+    if (dirty) setDiskConflict(true);
+    else await reloadActive();
+    noteExternalChange();
   });
+  const noteExternalChange = () => {
+    setFileRevision((revision) => revision + 1);
+    setExternalRevision((revision) => revision + 1);
+    setBibRevision((revision) => revision + 1);
+  };
   // Stable callbacks keep the memoized Git and AI panels out of each keystroke.
   const openTerminal = useStableCallback(() => {
     showTab("terminal");
@@ -513,13 +654,27 @@ function Workbench({
       await filesChanged();
       const latestPdf = await window.research!.lastPdf(project.id);
       if (latestPdf) setPdf(latestPdf);
+      // The agent may have compiled a new PDF.
+      checkWhenRead();
     } catch (error) {
       report((error as Error).message);
     }
   }, [filesChanged, project.id, report]);
   const onWindowEvent = useStableCallback((event: Event) => {
-    if (event.type === "focus") void checkDisk();
-    else if (event instanceof KeyboardEvent) {
+    if (event.type === "focus") {
+      void checkDisk();
+      // The file list first, so files created meanwhile (a Zotero export, a
+      // git pull) are known before the manuscript and bibliography re-read.
+      // A folder that is gone is reported when it is used, not on each focus.
+      const reread = (next?: ProjectFileRoot[]) => {
+        if (next) setRoots(next);
+        setExternalRevision((revision) => revision + 1);
+        setBibRevision((revision) => revision + 1);
+      };
+      void window
+        .research!.projectFiles(project.id)
+        .then(reread, () => reread());
+    } else if (event instanceof KeyboardEvent) {
       if (event.defaultPrevented || !(event.metaKey || event.ctrlKey)) return;
       const key = event.key.toLowerCase();
       const typing = (event.target as Element).closest?.(
@@ -527,7 +682,7 @@ function Workbench({
       );
       if (key === "s") {
         event.preventDefault();
-        if (!agentRunning) void save(true).catch(() => {});
+        void save(true).catch(() => {});
       } else if (key === "enter" && !typing) {
         event.preventDefault();
         void compile();
@@ -608,6 +763,61 @@ function Workbench({
       }
     },
   );
+  // An open .bib keeps its unsaved edits: the entry joins the buffer.
+  const addReference = useStableCallback(
+    async (file: string, bibtex: string) => {
+      if (agentRunning)
+        throw new Error(
+          "Wait for the agent to finish before adding references.",
+        );
+      const editor = view.current;
+      if (file === active && activeRoot === "primary" && editor) {
+        const doc = editor.state.doc.toString();
+        editor.dispatch({
+          changes: {
+            from: doc.length,
+            insert: appendEntry(doc, bibtex).slice(doc.length),
+          },
+        });
+        return;
+      }
+      const api = window.research!;
+      const [time, current] = await Promise.all([
+        api.fileMtime(project.id, file, "primary"),
+        api.readFile(project.id, file, "primary"),
+      ]);
+      await api.writeFile(
+        project.id,
+        file,
+        appendEntry(current, bibtex),
+        "primary",
+        time,
+      );
+      setFileRevision((revision) => revision + 1);
+      setBibRevision((revision) => revision + 1);
+    },
+  );
+  // Inside \cite{...} the key joins the list; elsewhere a new \cite is added.
+  const citeAtCursor = useStableCallback((key: string) => {
+    const editor = view.current;
+    if (!editor) return;
+    const { head } = editor.state.selection.main;
+    const line = editor.state.doc.lineAt(head);
+    const inside = openCitation.exec(line.text.slice(0, head - line.from));
+    // A key already after the cursor stays separate from the new one.
+    const after = line.text.slice(head - line.from);
+    const insert =
+      inside && takesKeys(inside[1])
+        ? (inside[2].trim() && !/,\s*$/.test(inside[2]) ? ", " : "") +
+          key +
+          (/^\s*[},]/.test(after) ? "" : ", ")
+        : `\\cite{${key}}`;
+    editor.dispatch({
+      changes: { from: head, insert },
+      selection: { anchor: head + insert.length },
+    });
+    editor.focus();
+  });
   const removeRoot = useStableCallback(async (rootId: string) => {
     try {
       if (dirty) await save();
@@ -643,6 +853,7 @@ function Workbench({
         active,
         line.number,
         activeRoot,
+        pdf.url,
       );
       if (!target) return;
       setShowPdf(true);
@@ -724,35 +935,74 @@ function Workbench({
       }
     })().catch((error) => report(error.message));
   }, [searchTarget?.id, project.id, loading, pdf]);
-  const compile = useStableCallback(async (fromSave = false) => {
-    if (busy || agentRunning || !project.folder) return;
-    clearError("compile");
-    if (!project.mainFile) {
-      report("Set your LaTeX entry file in project details first.", "compile");
-      return;
-    }
+  // Reads the compiled PDF; a project without one shows no checks. Only the
+  // latest request's result is kept.
+  const checkRun = useRef(0);
+  const checkSubmission = useStableCallback(async () => {
+    const run = ++checkRun.current;
+    if (!project.mainFile) return setPdfFacts(null);
+    const facts = await window
+      .research!.pdfReport(
+        project.id,
+        project.pageLimit ? referencesLocation(manuscript.sources) : null,
+      )
+      .catch((error: Error) => error);
+    if (run === checkRun.current) setPdfFacts(facts);
+  });
+  // Source checks follow the manuscript as it changes.
+  const checks = useMemo<SubmissionCheck[] | null>(
+    () =>
+      pdfFacts instanceof Error
+        ? [{ status: "warn", message: pdfFacts.message }]
+        : pdfFacts &&
+          submissionChecks(pdfFacts, manuscript.sources, {
+            pageLimit: project.pageLimit,
+            anonymous: project.anonymousReview,
+          }),
+    [pdfFacts, manuscript.sources, project.pageLimit, project.anonymousReview],
+  );
+  // After an agent run, the PDF is checked once its edits have been re-read,
+  // so the bibliography's position matches what was compiled.
+  const checkAfterRead = useRef(false);
+  const checkWhenRead = useStableCallback(() => {
+    if (manuscript.settled) void checkSubmission();
+    else checkAfterRead.current = true;
+  });
+  useEffect(() => {
+    if (!checkAfterRead.current || !manuscript.settled) return;
+    checkAfterRead.current = false;
+    void checkSubmission();
+  }, [manuscript]);
+  // The sources must belong to the current entry file, which can change.
+  const manuscriptReady =
+    manuscript.sources[0]?.file === normalize(project.mainFile || "");
+  // Results never outlive the manuscript they describe.
+  useEffect(() => {
+    if (!manuscriptReady) setPdfFacts(null);
+    else if (!busy) void checkSubmission();
+  }, [
+    project.id,
+    project.folder,
+    project.mainFile,
+    project.pageLimit,
+    project.anonymousReview,
+    manuscriptReady,
+  ]);
+  type BuildResult = { ok: boolean; log: string; pdf: string | null };
+  // Compile and its latexdiff variant share the busy state, log and errors.
+  async function build(
+    start: () => Promise<BuildResult>,
+    done: (result: BuildResult) => void | Promise<void>,
+  ) {
     setBusy(true);
     setLog("");
     setBuildState("idle");
-    if (showTerminal && !sideTools && !fromSave)
-      changeLayout({ bottomTab: "build" });
     try {
       if (dirty) await save();
-      const result = await window.research!.compile(project.id);
+      const result = await start();
       setLog(result.log);
       setBuildState(result.ok ? "ok" : "error");
-      if (result.pdf) {
-        setPdf({
-          url: result.pdf,
-          name: project.mainFile.replace(/^.*\/|\.tex$/g, "") + ".pdf",
-        });
-        setShowPdf(true);
-      } else if (!result.ok) {
-        // A failed build restores the old PDF and map on disk. Refresh its
-        // session because copying the PDF back changes its modification time.
-        const previous = await window.research!.lastPdf(project.id);
-        if (previous) setPdf(previous);
-      }
+      await done(result);
       if (!result.ok) showTab("build");
     } catch (error) {
       setBuildState("error");
@@ -761,6 +1011,51 @@ function Workbench({
     } finally {
       setBusy(false);
     }
+  }
+  // A latexdiff PDF for revision letters; the manuscript's own PDF stays.
+  const compareWith = useStableCallback(async (revision: string) => {
+    if (busy || agentRunning || !project.folder || !project.mainFile) return;
+    clearError("compile");
+    showTab("build");
+    await build(
+      () => window.research!.compileDiff(project.id, revision),
+      (result) => {
+        if (!result.pdf) return;
+        setPdf({
+          url: result.pdf,
+          name: `Changes since ${revision.slice(0, 7)}.pdf`,
+        });
+        setShowPdf(true);
+      },
+    );
+  });
+  const compile = useStableCallback(async (fromSave = false) => {
+    if (busy || agentRunning || !project.folder) return;
+    clearError("compile");
+    if (!project.mainFile) {
+      report("Set your LaTeX entry file in project details first.", "compile");
+      return;
+    }
+    if (showTerminal && !sideTools && !fromSave)
+      changeLayout({ bottomTab: "build" });
+    await build(
+      () => window.research!.compile(project.id),
+      async (result) => {
+        if (result.ok) void checkSubmission();
+        if (result.pdf) {
+          setPdf({
+            url: result.pdf,
+            name: project.mainFile.replace(/^.*\/|\.tex$/g, "") + ".pdf",
+          });
+          setShowPdf(true);
+        } else if (!result.ok) {
+          // A failed build restores the old PDF and map on disk. Refresh its
+          // session because copying the PDF back changes its modification time.
+          const previous = await window.research!.lastPdf(project.id);
+          if (previous) setPdf(previous);
+        }
+      },
+    );
   });
   useEffect(() => {
     if (busy || !buildAfterSave.current) return;
@@ -851,6 +1146,80 @@ function Workbench({
       report((error as Error).message);
     }
   }
+  useCommands(() => [
+    {
+      id: "compile",
+      group: "Manuscript",
+      title: "Compile",
+      shortcut: "⌘↵",
+      run: () => void compile(),
+    },
+    {
+      id: "save",
+      group: "Manuscript",
+      title: "Save file",
+      shortcut: "⌘S",
+      run: () => void save(true).catch(() => {}),
+    },
+    ...(isTex
+      ? [
+          {
+            id: "show-in-pdf",
+            group: "Manuscript",
+            title: "Show cursor in PDF",
+            shortcut: "⇧⌘J",
+            run: () => void showInPdf(),
+          },
+        ]
+      : []),
+    ...(isTex || active.endsWith(".bib")
+      ? [
+          {
+            id: "add-reference",
+            group: "Manuscript",
+            title: "Add reference from DOI, arXiv or title",
+            run: () => setAddingReference(true),
+          },
+        ]
+      : []),
+    ...(spellChecked(active)
+      ? [
+          {
+            id: "toggle-spelling",
+            group: "Manuscript",
+            title: checkSpelling
+              ? "Turn spell check off"
+              : "Turn spell check on",
+            run: toggleSpelling,
+          },
+        ]
+      : []),
+    ...(
+      [
+        ["agent", "Agent + PDF"],
+        ["edit", "Source + PDF"],
+        ["columns", "Source + Agent + PDF"],
+        ["combined", "All panels"],
+      ] as const
+    ).map(([mode, title]) => ({
+      id: `layout-${mode}`,
+      group: "Layout",
+      title,
+      run: () => switchMode(mode),
+    })),
+    ...(
+      [
+        ["build", "Show build log"],
+        ["terminal", "Show terminal"],
+        ["ai", "Show AI panel"],
+      ] as const
+    ).map(([tab, title]) => ({
+      id: `panel-${tab}`,
+      group: "Panels",
+      title,
+      run: () => showTab(tab),
+    })),
+  ]);
   const extensions = useMemo(
     () => [
       EditorView.lineWrapping,
@@ -867,17 +1236,10 @@ function Workbench({
         ]),
       ),
       support,
-      isTex
-        ? EditorState.languageData.of(() => [
-            {
-              autocomplete: latexCompletion(() =>
-                citationKeys(project.id, roots),
-              ),
-            },
-          ])
-        : [],
+      isTex ? latexSupport(bibliographyRef, projectLabels) : [],
+      checkSpelling && spellChecked(active) ? spelling(active) : [],
     ],
-    [support, isTex, roots],
+    [support, isTex, checkSpelling, active],
   );
   return (
     <div
@@ -991,6 +1353,7 @@ function Workbench({
             save={gitSave}
             changed={filesChanged}
             onOpenTerminal={openTerminal}
+            onCompare={busy || agentRunning ? undefined : compareWith}
           />
           {!agentMode && (
             <button
@@ -1084,18 +1447,25 @@ function Workbench({
                 <ChevronRight size={12} />
                 Outline
               </summary>
-              {sections.map((section) => (
+              {sections.map((section, index) => (
                 <button
-                  key={section.line}
-                  title={section.title}
+                  key={`${section.file}:${section.line}`}
+                  title={`${section.title} · ${section.file}:${section.line}`}
+                  className={section.file === active ? "current" : ""}
                   style={{
                     paddingLeft: 14 + (section.depth - topSection) * 12,
                   }}
                   onClick={() =>
-                    view.current && place(view.current, section.line)
+                    section.file === active
+                      ? view.current && place(view.current, section.line)
+                      : openFile(section.file, "primary", section.line)
                   }
                 >
                   {section.title}
+                  {section.file !== sections[index - 1]?.file &&
+                    section.file !== active && (
+                      <small>{section.file.split("/").pop()}</small>
+                    )}
                 </button>
               ))}
             </details>
@@ -1143,11 +1513,26 @@ function Workbench({
                 <Crosshair size={13} />
               </button>
             )}
+            {(isTex || active.endsWith(".bib")) && (
+              <button
+                className="icon-button"
+                title="Add reference from a DOI, arXiv ID or title"
+                aria-label="Add reference"
+                disabled={agentRunning}
+                onClick={() => setAddingReference(true)}
+              >
+                <BookPlus size={13} />
+              </button>
+            )}
           </div>
           {diskConflict && (
             <div className="disk-conflict" role="alert">
               <span>{active} changed on disk</span>
-              <button onClick={() => void reloadActive()}>Reload</button>
+              <button
+                onClick={() => void reloadActive().then(noteExternalChange)}
+              >
+                Reload
+              </button>
               <button
                 onClick={() => {
                   mtime.current = 0;
@@ -1193,6 +1578,16 @@ function Workbench({
                 : dirty && "Unsaved changes"}
             </span>
             <span>
+              {spellChecked(active) && (
+                <button
+                  className="spelling-toggle"
+                  aria-pressed={checkSpelling}
+                  title="Underline misspelled words in prose; right-click one for suggestions"
+                  onClick={toggleSpelling}
+                >
+                  Spelling {checkSpelling ? "on" : "off"}
+                </button>
+              )}
               {isTex && selection
                 ? `${countWords(selection).toLocaleString()} / `
                 : ""}
@@ -1426,12 +1821,28 @@ function Workbench({
             state={buildState}
             log={log}
             problems={problems}
+            checks={checks}
             open={openFile}
             compileOnSave={!!project.compileOnSave}
             setCompileOnSave={setCompileOnSave}
           />
         </div>
       </div>
+      {addingReference && (
+        <AddReference
+          files={bibFiles.files}
+          entries={
+            // An open .bib may hold entries that are not saved yet.
+            active.endsWith(".bib") && activeRoot === "primary"
+              ? [...(bibliography || []), ...parseBibliography(text, active)]
+              : bibliography || []
+          }
+          canCite={isTex}
+          add={addReference}
+          cite={citeAtCursor}
+          onClose={() => setAddingReference(false)}
+        />
+      )}
       {folderModal && (
         <Modal
           title="Add a local folder"

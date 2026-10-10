@@ -266,6 +266,13 @@ button.ai-diff-number:hover {
   border-radius: 6px;
   border: 1px solid var(--border);
 }
+.ai-revert-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: var(--text-xs);
+}
 .ai-revert-action {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 8%, var(--surface));

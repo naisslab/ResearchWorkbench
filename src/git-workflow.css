@@ -308,6 +308,17 @@
   gap: 10px;
   padding: 8px 0;
 }
+.git-compare {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  white-space: nowrap;
+}
+.git-compare:hover:not(:disabled) {
+  background: var(--hover);
+}
 .git-history > div > svg {
   color: var(--muted);
 }

@@ -32,6 +32,8 @@ export interface PdfAnnotation {
 }
 export interface AnnotatedPdfData {
   archived?: boolean;
+  /** The project's own compiled PDF, which stays on disk and is rebuilt. */
+  compiled?: boolean;
   key: string;
   name: string;
   data: Uint8Array;

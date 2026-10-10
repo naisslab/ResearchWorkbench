@@ -383,3 +383,140 @@ test("project file roots include manuscript and code and reject unknown attachme
     /inside/,
   );
 });
+
+test("the newest backup that still validates is offered when the workspace is damaged", async (t) => {
+  const folder = await fs.mkdtemp(path.join(os.tmpdir(), "research-recover-"));
+  t.after(() => fs.rm(folder, { recursive: true, force: true }));
+  const store = path.join(folder, "workspace.json");
+  assert.equal(await core.newestValidBackup(store), null);
+  const state = core.seedWorkspace();
+  const older = `${store}.before-import-1.bak`,
+    newer = `${store}.before-migration-2.bak`,
+    damaged = `${store}.before-restore-3.bak`;
+  await fs.writeFile(older, JSON.stringify({ ...state, appearance: "light" }));
+  await fs.writeFile(newer, JSON.stringify({ ...state, appearance: "dark" }));
+  await fs.writeFile(damaged, "{");
+  await fs.writeFile(
+    path.join(folder, "other.json.bak"),
+    JSON.stringify(state),
+  );
+  const at = (seconds) =>
+    new Date(Date.parse("2026-10-10T00:00:00Z") + seconds * 1000);
+  await fs.utimes(older, at(1), at(1));
+  await fs.utimes(newer, at(2), at(2));
+  await fs.utimes(damaged, at(3), at(3));
+  const backup = await core.newestValidBackup(store);
+  assert.equal(backup.file, newer);
+  assert.equal(backup.state.appearance, "dark");
+});
+test("latexdiff against a commit compiles a marked-up PDF and leaves the project untouched", async (t) => {
+  const root = await temporary(t);
+  const folder = path.join(root, "paper");
+  await fs.mkdir(path.join(folder, "sections"), { recursive: true });
+  const write = (file, text) => fs.writeFile(path.join(folder, file), text);
+  await write(
+    "main.tex",
+    "\\documentclass{article}\n\\begin{document}\nOld sentence \\cite{a}.\n\\input{sections/method}\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n",
+  );
+  await write("sections/method.tex", "The index is built once.\n");
+  await write("refs.bib", "@misc{a, title={A}, author={B, C}, year={2020}}\n");
+  const git = (...args) =>
+    require("node:child_process")
+      .execFileSync("git", args, {
+        cwd: root,
+        env: {
+          ...env,
+          GIT_AUTHOR_NAME: "t",
+          GIT_AUTHOR_EMAIL: "t@t",
+          GIT_COMMITTER_NAME: "t",
+          GIT_COMMITTER_EMAIL: "t@t",
+        },
+      })
+      .toString()
+      .trim();
+  git("init", "-q");
+  git("add", "-A");
+  git("commit", "-qm", "draft");
+  const revision = git("rev-parse", "HEAD");
+  await write("sections/method.tex", "The index is rebuilt incrementally.\n");
+  const project = { folder, mainFile: "main.tex", localFolders: [] };
+  const result = await core.compileDiff(project, revision, undefined, env);
+  assert.equal(result.ok, true, result.log);
+  assert.equal(
+    result.pdf,
+    path.join(await fs.realpath(folder), ".research-build", "diff", "diff.pdf"),
+  );
+  const diff = await fs.readFile(
+    path.join(folder, ".research-build", "diff", "diff.tex"),
+    "utf8",
+  );
+  assert.match(diff, /\\DIFadd\{rebuilt incrementally/);
+  assert.match(diff, /\\DIFdel\{built once/);
+  assert.doesNotMatch(
+    await fs.readFile(
+      path.join(folder, ".research-build", "diff", "diff.log"),
+      "utf8",
+    ),
+    /Citation `a' .* undefined/,
+  );
+  // Only the test's own edit and the build folder differ from the commit;
+  // HEAD, the index and the source files are as they were.
+  assert.deepEqual(
+    git("status", "--porcelain", "--untracked-files=all")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => !line.startsWith("?? paper/.research-build/"))
+      .sort(),
+    ["M paper/sections/method.tex"],
+  );
+  assert.equal(git("rev-parse", "HEAD"), revision);
+  await assert.rejects(
+    core.compileDiff(project, "not-a-commit", undefined, env),
+    /Choose a commit/,
+  );
+  await assert.rejects(
+    core.compileDiff(project, "0000000", undefined, env),
+    /not in this repository/,
+  );
+});
+test("SyncTeX finds where a bibliography starts, across pages and columns", async (t) => {
+  const folder = await temporary(t);
+  // Seventy entries span several pages, so the list's last page differs
+  // from its first.
+  await fs.writeFile(
+    path.join(folder, "refs.bib"),
+    Array.from(
+      { length: 70 },
+      (_, i) =>
+        `@misc{r${i}, title={A Reasonably Long Title for Reference Number ${i}}, author={Author, First and Writer, Second}, year={2020}}`,
+    ).join("\n"),
+  );
+  const project = { folder, mainFile: "main.tex", localFolders: [] };
+  const build = async (body, options = "") => {
+    await fs.writeFile(
+      path.join(folder, "main.tex"),
+      `\\documentclass${options}{article}\n\\begin{document}\n${body}\\nocite{*}\n\\bibliographystyle{plain}\n\\bibliography{refs}\n\\end{document}\n`,
+    );
+    const result = await core.compile(project, undefined, env);
+    assert.equal(result.ok, true, result.log);
+    const text = await fs.readFile(path.join(folder, "main.tex"), "utf8");
+    const line =
+      text.split("\n").findIndex((l) => l.startsWith("\\bibliography{")) + 1;
+    return core.referencesStart(project, "main.tex", line, env);
+  };
+  // A paragraph of body text, then the list on the same page.
+  assert.deepEqual(await build("Body text. ".repeat(40)), {
+    page: 1,
+    opensPage: false,
+  });
+  assert.deepEqual(
+    await build("First page.\\newpage Second page.\\clearpage"),
+    { page: 3, opensPage: true },
+  );
+  // In two columns the right column's top can already be bibliography while
+  // the left column still holds body text.
+  assert.deepEqual(await build("Body text. ".repeat(250), "[twocolumn]"), {
+    page: 1,
+    opensPage: false,
+  });
+});

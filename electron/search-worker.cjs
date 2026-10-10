@@ -16,7 +16,7 @@ async function pdfPages(file, cancelled = () => false) {
   };
   check();
   const stat = await fs.stat(file);
-  if (stat.size > 64 * 1024 * 1024) throw new Error("PDF exceeds 64 MB");
+  if (stat.size > core.MAX_PDF_BYTES) throw new Error("PDF exceeds 64 MB");
   const stamp = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.ino}:${stat.size}`;
   if (cache.get(file)?.stamp === stamp) return cache.get(file).value;
   pdfjs ||= await import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -87,6 +87,9 @@ async function* files(root, warnings) {
       )
         continue;
       const target = path.join(dir, entry.name);
+      // Track changes output repeats the manuscript with diff markup.
+      if (entry.name === "diff" && path.basename(dir) === ".research-build")
+        continue;
       if (entry.isDirectory()) {
         if (depth < 8) queue.push({ dir: target, depth: depth + 1 });
         else warnings.add(`Depth limit reached: ${target}`);

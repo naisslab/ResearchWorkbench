@@ -1,6 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AlertCircle, AlertTriangle } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { errorPattern, type Problem } from "./latex";
+import type { SubmissionCheck } from "./submission.ts";
 
 export default memo(function BuildLog({
   projectId,
@@ -8,6 +9,7 @@ export default memo(function BuildLog({
   state,
   log,
   problems,
+  checks,
   open,
   compileOnSave,
   setCompileOnSave,
@@ -18,6 +20,8 @@ export default memo(function BuildLog({
   /** The finished build's log; output streams in while `busy`. */
   log: string;
   problems: Problem[];
+  /** The submission check of the last compiled PDF. */
+  checks: SubmissionCheck[] | null;
   open(file: string, rootId: string, line: number): void;
   compileOnSave: boolean;
   setCompileOnSave(on: boolean): void;
@@ -84,22 +88,26 @@ export default memo(function BuildLog({
       {problems.length > 0 && (
         <ul className="build-problems">
           {problems.map((problem) => (
-            <li key={`${problem.file}:${problem.line}:${problem.message}`}>
-              <button
-                disabled={problem.file.startsWith("/")}
-                onClick={() => open(problem.file, "primary", problem.line)}
-              >
-                {problem.error ? (
-                  <AlertCircle size={13} className="problem-error" />
-                ) : (
-                  <AlertTriangle size={13} className="problem-warning" />
-                )}
-                <span>{problem.message}</span>
-                <small>
-                  {problem.file}:{problem.line}
-                </small>
-              </button>
-            </li>
+            <ProblemRow
+              key={`${problem.file}:${problem.line}:${problem.message}`}
+              status={problem.error ? "fail" : "warn"}
+              {...problem}
+              open={open}
+            />
+          ))}
+        </ul>
+      )}
+      {!busy && checks && checks.length > 0 && (
+        <ul
+          className="build-problems submission-checks"
+          aria-label="Submission check"
+        >
+          {checks.map((check) => (
+            <ProblemRow
+              key={`${check.message}:${check.file}:${check.line}`}
+              {...check}
+              open={open}
+            />
           ))}
         </ul>
       )}
@@ -120,3 +128,43 @@ export default memo(function BuildLog({
     </div>
   );
 });
+
+// A row opens its source line when the file is in the project.
+function ProblemRow({
+  status,
+  message,
+  file,
+  line,
+  open,
+}: SubmissionCheck & {
+  open(file: string, rootId: string, line: number): void;
+}) {
+  const content = (
+    <>
+      {status === "ok" ? (
+        <CheckCircle2 size={13} className="problem-ok" />
+      ) : status === "fail" ? (
+        <AlertCircle size={13} className="problem-error" />
+      ) : (
+        <AlertTriangle size={13} className="problem-warning" />
+      )}
+      <span>{message}</span>
+      {file && (
+        <small>
+          {file}:{line}
+        </small>
+      )}
+    </>
+  );
+  return (
+    <li>
+      {file && !file.startsWith("/") ? (
+        <button onClick={() => open(file, "primary", line || 1)}>
+          {content}
+        </button>
+      ) : (
+        <div>{content}</div>
+      )}
+    </li>
+  );
+}

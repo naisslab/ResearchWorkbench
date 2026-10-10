@@ -1,5 +1,22 @@
-import type { CompletionContext } from "@codemirror/autocomplete";
-import type { ProjectFileRoot } from "./types";
+import type { Completion, CompletionContext } from "@codemirror/autocomplete";
+import { hoverTooltip } from "@codemirror/view";
+
+/** Comments removed, line breaks kept so positions map to lines. */
+export const withoutComments = (text: string) =>
+  text.replace(/(^|[^\\])%.*$/gm, "$1");
+/** Counts lines up to each increasing offset, so a scan stays linear. */
+export function lineCounter(text: string) {
+  let line = 1,
+    counted = 0;
+  return (offset: number) => {
+    for (; counted < offset; counted++)
+      if (text.charCodeAt(counted) === 10) line++;
+    return line;
+  };
+}
+/** The folder part of a project-relative path, with its trailing slash. */
+export const directory = (file: string) =>
+  file.slice(0, file.lastIndexOf("/") + 1);
 
 export interface Problem {
   file: string;
@@ -19,7 +36,7 @@ export const errorPattern = /^(.+?\.(?:tex|ltx|sty|cls|bib|dtx)):(\d+): (.*)$/m;
  * log are tracked as a stack. Paths are relative to the entry file.
  */
 export function parseProblems(log: string, mainFile: string): Problem[] {
-  const dir = mainFile.slice(0, mainFile.lastIndexOf("/") + 1);
+  const dir = directory(mainFile);
   const resolve = (file: string) =>
     file.startsWith("/") ? file : dir + file.replace(/^\.\//, "");
   const problems = new Map<string, Problem>();
@@ -64,8 +81,7 @@ export function parseProblems(log: string, mainFile: string): Problem[] {
 
 export function countWords(text: string) {
   return (
-    text
-      .replace(/(^|[^\\])%.*/gm, "$1")
+    withoutComments(text)
       .replace(
         /\$\$[\s\S]*?\$\$|\$(?:\\.|[^$\\])*\$|\\\[[\s\S]*?\\\]|\\begin\{(equation|align|gather|multline)\*?\}[\s\S]*?\\end\{\1\*?\}/g,
         " ",
@@ -99,63 +115,109 @@ export function outline(text: string) {
   return sections;
 }
 
-const citations = new Map<string, Promise<string[]>>();
-/** BibTeX keys from the project's .bib files, read once per app session. */
-export function citationKeys(projectId: string, roots: ProjectFileRoot[]) {
-  if (!citations.has(projectId) && roots.length)
-    citations.set(
-      projectId,
-      Promise.all(
-        roots.flatMap((root) =>
-          root.files
-            .filter((file) => file.endsWith(".bib"))
-            .map((file) =>
-              window.research!.readFile(projectId, file, root.id).then(
-                (bib) =>
-                  Array.from(
-                    bib.matchAll(
-                      /@(?!string|comment|preamble)\w+\s*[{(]\s*([^,\s]+)\s*,/gi,
-                    ),
-                    (match) => match[1],
-                  ),
-                () => [],
-              ),
-            ),
-        ),
-      ).then((keys) => [...new Set(keys.flat())]),
-    );
-  return citations.get(projectId) ?? Promise.resolve([]);
+// Citation commands: \cite, \citep*, \Citet, \parencites, \nocite and so on.
+const citeName = String.raw`\\([a-zA-Z]*[cC]ite[a-zA-Z]*)\*?`;
+/**
+ * Style settings, \citetext, \newcites-style declarations and biblatex's
+ * volume citations (whose first argument is a volume) are not plain key lists.
+ */
+export const takesKeys = (name: string) =>
+  !/style|text$|^(?:new|declare)|vol/i.test(name);
+/** A citation key list still open at the end of the text before the cursor. */
+export const openCitation = new RegExp(
+  citeName + String.raw`(?:\[[^\]]*\])*\{([^}]*)$`,
+);
+/**
+ * Each key group of each citation in `text`, with its offset. Optional
+ * [notes] and, for multi-citations, (global notes) are skipped.
+ */
+export function* citeGroups(text: string) {
+  for (const match of text.matchAll(new RegExp(citeName, "g"))) {
+    if (!takesKeys(match[1])) continue;
+    const many = /cites$/i.test(match[1]);
+    let at = match.index + match[0].length;
+    for (;;) {
+      while (/\s/.test(text[at] || "")) at++;
+      if (text[at] === "[" || (many && text[at] === "(")) {
+        const end = text.indexOf(text[at] === "[" ? "]" : ")", at);
+        if (end < 0) break;
+        at = end + 1;
+        continue;
+      }
+      const end = text[at] === "{" ? text.indexOf("}", at) : -1;
+      if (end < 0) break;
+      yield {
+        command: match.index,
+        from: at + 1,
+        keys: text.slice(at + 1, end),
+      };
+      at = end + 1;
+      if (!many) break;
+    }
+  }
 }
-export const forgetCitations = (projectId: string) =>
-  citations.delete(projectId);
 
 const environments =
   "abstract algorithm align align* center description document enumerate equation equation* figure figure* itemize minipage proof quote table table* tabular theorem verbatim".split(
     " ",
   );
 export const latexCompletion =
-  (keys: () => Promise<string[]>) => async (context: CompletionContext) => {
+  (citations: () => Completion[], projectLabels: () => string[] = () => []) =>
+  async (context: CompletionContext) => {
+    const cite = context.matchBefore(openCitation);
+    if (cite)
+      return takesKeys(openCitation.exec(cite.text)![1])
+        ? {
+            from: context.pos - /[^{,\s]*$/.exec(cite.text)![0].length,
+            options: citations(),
+            validFor: /^[^},\s]*$/,
+          }
+        : null;
     const match = context.matchBefore(
-      /\\(\w*cite\w*|\w*ref|begin)\*?(?:\[[^\]]*\])*\{[^}]*/,
+      /\\(\w*ref|begin)\*?(?:\[[^\]]*\])*\{[^}]*/,
     );
     if (!match) return null;
-    const command = match.text.slice(1, match.text.search(/[*[{]/));
-    const labels =
-      command === "begin"
-        ? environments
-        : command.endsWith("ref")
-          ? [
-              ...new Set(
-                Array.from(
-                  context.state.doc.toString().matchAll(/\\label\{([^}]+)\}/g),
-                  (label) => label[1],
-                ),
-              ),
-            ]
-          : await keys();
+    const labels = match.text.startsWith("\\begin")
+      ? environments
+      : [
+          ...new Set([
+            ...Array.from(
+              context.state.doc.toString().matchAll(/\\label\{([^}]+)\}/g),
+              (label) => label[1],
+            ),
+            ...projectLabels(),
+          ]),
+        ];
     return {
       from: context.pos - /[^{,\s]*$/.exec(match.text)![0].length,
       options: labels.map((label) => ({ label })),
       validFor: /^[^},\s]*$/,
     };
   };
+
+/** Hovering a key inside \cite{...} shows what `describe` says about it. */
+export const citationHover = (describe: (key: string) => string) =>
+  hoverTooltip((view, pos) => {
+    const line = view.state.doc.lineAt(pos);
+    for (const group of citeGroups(line.text)) {
+      let from = line.from + group.from;
+      for (const part of group.keys.split(",")) {
+        const start = from + part.length - part.trimStart().length;
+        const key = part.trim();
+        from += part.length + 1;
+        if (pos < start || pos > start + key.length) continue;
+        return {
+          pos: start,
+          end: start + key.length,
+          above: true,
+          create: () => {
+            const dom = document.createElement("div");
+            dom.className = "cm-citation-card";
+            dom.textContent = describe(key);
+            return { dom };
+          },
+        };
+      }
+    }
+    return null;
+  });

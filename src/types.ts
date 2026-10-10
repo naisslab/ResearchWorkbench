@@ -1,3 +1,4 @@
+import type { PdfReport } from "./submission.ts";
 export type Stage =
   | "exploration"
   | "experiments"
@@ -145,6 +146,10 @@ export interface Project {
   compileOnSave?: boolean;
   /** Unset reads `% !TEX program` from the entry file, then uses pdfLaTeX. */
   latexEngine?: "pdflatex" | "xelatex" | "lualatex";
+  /** Pages allowed before the references, checked after each compile. */
+  pageLimit?: number;
+  /** Double-blind review: the check looks for anything naming the authors. */
+  anonymousReview?: boolean;
 }
 export interface ResearchCandidate {
   id: string;
@@ -202,6 +207,14 @@ export interface BackupStatus {
   files: number;
   skipped: string[];
 }
+export interface ReferenceCandidate {
+  kind: "doi" | "arxiv";
+  id: string;
+  title: string;
+  authors: string[];
+  year: string;
+  venue: string;
+}
 export interface ResearchAPI {
   cancelBackup(): Promise<void>;
   onBackupProgress(
@@ -225,6 +238,16 @@ export interface ResearchAPI {
   } | null>;
   restartRestored(): Promise<void>;
 
+  /** A command chosen in the application menu, by command id. */
+  onMenuCommand(callback: (id: string) => void): () => void;
+  lookupReference(
+    input: string,
+  ): Promise<{ bibtex?: string; candidates?: ReferenceCandidate[] }>;
+  referenceBibtex(kind: "doi" | "arxiv", id: string): Promise<string>;
+  pdfReport(
+    projectId: string,
+    references: { file: string; line: number } | null,
+  ): Promise<PdfReport | null>;
   search(query: string, id: string): Promise<SearchPacket>;
   cancelSearch(): Promise<void>;
   onSearchProgress(callback: (packet: SearchPacket) => void): () => void;
@@ -248,7 +271,7 @@ export interface ResearchAPI {
   aiChats(projectId: string): Promise<AIResult<AIChatSummary[]>>;
   aiManageChat(
     projectId: string,
-    action: "new" | "select" | "rename" | "archive" | "unarchive",
+    action: AIChatAction,
     chatId?: string,
     title?: string,
   ): Promise<AIResult<AIConversation>>;
@@ -407,12 +430,19 @@ export interface ResearchAPI {
   compile(
     id: string,
   ): Promise<{ ok: boolean; log: string; pdf: string | null }>;
+  /** Compiles a latexdiff against `revision` into .research-build/diff. */
+  compileDiff(
+    id: string,
+    revision: string,
+  ): Promise<{ ok: boolean; log: string; pdf: string | null }>;
   cancelCompile(id: string): Promise<void>;
+  /** `url` is the PDF on screen, which must be the compiled manuscript. */
   synctexForward(
     id: string,
     file: string,
     line: number,
-    rootId?: string,
+    rootId: string,
+    url: string,
   ): Promise<import("./pdf-types").PdfTarget | null>;
   synctexInverse(
     id: string,
@@ -516,6 +546,7 @@ export interface AIMessage {
   createdAt: string;
   model?: string;
   permissionMode?: AIPermissionMode;
+  permissionNote?: string;
   reasoningEffort?: string;
   serviceTier?: string;
   status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
@@ -547,6 +578,8 @@ export interface AIChangeReview {
   canRevert: boolean;
   reason?: string;
   revertedAt?: string;
+  /** Final versions were saved at the next launch, after the app closed. */
+  interrupted?: boolean;
   warnings: string[];
 }
 export interface AIReviewedFile extends AIChangedFile {
@@ -606,6 +639,8 @@ export interface AIApproval {
     options?: { label: string; description?: string }[];
   }[];
 }
+export type AIChatAction =
+  "new" | "select" | "rename" | "archive" | "unarchive" | "delete";
 export interface AIChatSummary {
   id: string;
   title: string;
@@ -652,17 +687,20 @@ export const stages: { id: Stage; name: string }[] = [
 export const stageName = Object.fromEntries(
   stages.map((s) => [s.id, s.name]),
 ) as Record<Stage, string>;
-export type View =
-  | "overview"
-  | "board"
-  | "deadlines"
-  | "details"
-  | "workbench"
-  | "settings"
-  | "collection";
+export const VIEWS = [
+  "overview",
+  "board",
+  "deadlines",
+  "details",
+  "workbench",
+  "settings",
+  "collection",
+] as const;
+export type View = (typeof VIEWS)[number];
 export type Navigate = (
   view: View,
-  options?: { projectId?: string; area?: string },
+  /** `then` runs once the view is shown, after any unsaved-edits prompt. */
+  options?: { projectId?: string; area?: string; then?: () => void },
 ) => void;
 /** Resolves false when the save failed; the failure is already reported. */
 export type Commit = (

@@ -339,6 +339,13 @@ function createAI({
                   message:
                     "Generation stopped when the app closed. Partial text was preserved.",
                 };
+                // Startup saved the run's final versions, so it stays
+                // reviewable.
+                if (m.role === "assistant" && !m.review)
+                  m.review =
+                    (await changes.summary(
+                      reviewKey(data.profileId, projectId, m.id),
+                    )) || undefined;
               }
           } catch (error) {
             if (error.code !== "ENOENT")
@@ -512,6 +519,13 @@ function createAI({
       await validateContext(projectId, context);
       attachment = { name: context.file, kind: context.kind };
     }
+    // PDF text can carry instructions from whoever wrote the PDF, and the
+    // chat keeps it in context, so such a chat never runs without approvals.
+    const pdfText =
+      context?.kind === "pdf" ||
+      value.messages.some((m) => m.attachments?.some((a) => a.kind === "pdf"));
+    const appliedPermissions =
+      permissionMode === "full-access" && pdfText ? "default" : permissionMode;
     const engine = ENGINES[p.latexEngine]?.name;
     const projectContext = `Project: ${p.name}\nResearch question: ${p.summary || ""}\nStage: ${p.stage}\nTarget venue: ${p.venue || ""}${engine ? `\nLaTeX engine: ${engine}` : ""}`;
     const inputText = `${projectContext}\n\n${context ? `Attached ${context.kind}: ${context.file}\n<attached_text>\n${context.text}\n</attached_text>\n\n` : ""}${message.trim()}`;
@@ -536,7 +550,11 @@ function createAI({
       role: "assistant",
       text: "",
       model,
-      permissionMode,
+      permissionMode: appliedPermissions,
+      ...(appliedPermissions !== permissionMode && {
+        permissionNote:
+          "Ran with Default permissions because this chat includes PDF text.",
+      }),
       reasoningEffort: effort,
       serviceTier,
       createdAt,
@@ -1090,9 +1108,15 @@ function createAI({
     });
     const result = new Map();
     for (const name of names.filter((name) => name.endsWith(".json"))) {
-      const item = JSON.parse(
-        await fs.readFile(chatFile(value, name.slice(0, -5)), "utf8"),
-      );
+      let item;
+      try {
+        item = JSON.parse(
+          await fs.readFile(chatFile(value, name.slice(0, -5)), "utf8"),
+        );
+      } catch {
+        // A damaged chat stays on disk; the others remain usable.
+        continue;
+      }
       if (
         item.profileId === value.profileId &&
         item.projectId === value.projectId
@@ -1131,11 +1155,29 @@ function createAI({
           "agent_busy",
           "Pause the queue and wait for the agent before switching conversations.",
         );
-      if (!["new", "select", "rename", "archive", "unarchive"].includes(action))
+      if (
+        !["new", "select", "rename", "archive", "unarchive", "delete"].includes(
+          action,
+        )
+      )
         throw new AIError("invalid_chat", "Unknown conversation action.");
+      // An untouched chat is reused by New and not kept when left.
+      const untouched =
+        !value.messages.length && !value.queue?.length && !value.title;
+      if (action === "new" && untouched) return publicConversation(value);
       let target = value;
       if (action !== "new" && chatId !== value.chatId) {
-        target = JSON.parse(await fs.readFile(chatFile(value, chatId), "utf8"));
+        try {
+          target = JSON.parse(
+            await fs.readFile(chatFile(value, chatId), "utf8"),
+          );
+        } catch (error) {
+          if (error instanceof AIError) throw error;
+          throw new AIError(
+            "chat_storage_error",
+            "This conversation could not be read. Its file has been preserved.",
+          );
+        }
         if (
           target.profileId !== value.profileId ||
           target.projectId !== projectId
@@ -1144,6 +1186,24 @@ function createAI({
             "invalid_chat",
             "Conversation does not belong to this account and project.",
           );
+      }
+      if (action === "delete") {
+        if (target === value)
+          throw new AIError(
+            "invalid_chat",
+            "Switch to another conversation before deleting this one.",
+          );
+        // The chat goes first: leftover run records are harmless, while a
+        // chat without them could no longer be reviewed. Their file versions
+        // are freed at the next launch.
+        await fs.rm(chatFile(value, target.chatId), { force: true });
+        await changes.discard(
+          target.messages
+            .filter((m) => m.role === "assistant")
+            .map((m) => reviewKey(value.profileId, projectId, m.id)),
+        );
+        publishConversation(value);
+        return publicConversation(value);
       }
       if (action === "rename") {
         if (typeof title !== "string" || !title.trim() || title.length > 120)
@@ -1167,10 +1227,11 @@ function createAI({
         action === "select" ||
         (action === "archive" && target === value)
       ) {
-        await protectedWrite(
-          chatFile(value, value.chatId),
-          JSON.stringify(value),
-        );
+        if (!untouched)
+          await protectedWrite(
+            chatFile(value, value.chatId),
+            JSON.stringify(value),
+          );
         const next =
           action === "select"
             ? target

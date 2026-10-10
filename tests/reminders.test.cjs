@@ -83,6 +83,24 @@ test("sent reminders survive a restart and past ones are pruned", async (t) => {
   await createReminders(file, () => {}).check(workspace, now + 10 * DAY);
   assert.deepEqual(JSON.parse(await fs.readFile(file, "utf8")).sent, []);
 });
+test("a damaged reminder record does not stop reminders", async (t) => {
+  const folder = await fs.mkdtemp(path.join(os.tmpdir(), "research-remind-"));
+  t.after(() => fs.rm(folder, { recursive: true, force: true }));
+  const file = path.join(folder, "reminders.json");
+  for (const damaged of ["{", "null", '{"sent":3}', '{"sent":[null,1]}']) {
+    await fs.writeFile(file, damaged);
+    const shown = [];
+    const workspace = state(new Date(now + 2 * DAY).toISOString());
+    assert.equal(
+      await createReminders(file, (item) => shown.push(item.title)).check(
+        workspace,
+        now,
+      ),
+      1,
+    );
+    assert.deepEqual(shown, ["ICDE paper"]);
+  }
+});
 test("a calendar-day milestone is reminded at 9:00 a week and a day before, in calendar days", () => {
   const milestone = { ...state(), trackedDeadlines: [] };
   const at = (day, hour) => new Date(2026, 9, day, hour).getTime();

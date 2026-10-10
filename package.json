@@ -25,7 +25,8 @@
     "package": "npm run build && electron-builder --mac dir",
     "dist": "npm run build && electron-builder --mac dmg",
     "format": "prettier --write src electron scripts/*.mjs tests vite.config.ts package.json tsconfig.json",
-    "test:continuity-ui": "node scripts/continuity-smoke.mjs"
+    "test:continuity-ui": "node scripts/continuity-smoke.mjs",
+    "test:writing-ui": "node scripts/writing-smoke.mjs"
   },
   "dependencies": {
     "@openai/codex": "0.160.0",
@@ -80,7 +81,10 @@
       "dist/**/*",
       "electron/**/*",
       "package.json",
-      "!node_modules/pdf-lib/{dist,es,src,ts3.4}/**"
+      "!node_modules/pdf-lib/{dist,es,src,ts3.4}/**",
+      "!node_modules/pdfjs-dist/{build,web,image_decoders,types}/**",
+      "!node_modules/pdfjs-dist/legacy/{web,image_decoders}/**",
+      "!node_modules/pdfjs-dist/legacy/build/{*.map,*.min.mjs,pdf.sandbox*}"
     ],
     "asarUnpack": [
       "node_modules/node-pty/**/*",

@@ -749,6 +749,11 @@ h1 {
   font-weight: 500;
   line-height: 1.4;
 }
+:is(.detail-card, .modal) label.checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 /* Kept at low specificity so specific fields below can restyle their inputs. */
 :where(.detail-card, .modal)
   :is(input:not([type="color"], [type="checkbox"]), textarea, select) {
@@ -929,6 +934,11 @@ h1 {
 }
 .search-results > button > div {
   flex: 1;
+}
+.search-results kbd {
+  color: var(--muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
 }
 .search-results [aria-selected="true"] {
   background: var(--selection);

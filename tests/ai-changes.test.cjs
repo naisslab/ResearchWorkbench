@@ -307,6 +307,28 @@ test("interrupted captures and unchanged turns explain why revert is unavailable
   );
 });
 
+test("a run the app never finished is finished at the next launch and stays revertible", async (t) => {
+  const f = await fixture(t);
+  await f.write("draft.txt", "before");
+  await f.store.begin(f.id, [f.folder]);
+  await f.write("draft.txt", "agent edit");
+  // The app quits before finish; the record is older than any grace period.
+  const stale = new Date(Date.now() - 2 * 60 * 60 * 1000);
+  await fs.utimes(path.join(f.storage, "runs", f.id + ".json"), stale, stale);
+  const restarted = createChangeStore(f.storage);
+  await restarted.collect();
+  assert.deepEqual(await restarted.summary(f.id), {
+    files: 1,
+    interrupted: true,
+  });
+  const review = await restarted.review(f.id, [f.folder]);
+  assert.equal(review.canRevert, true);
+  assert.equal(review.interrupted, true);
+  assert.match(review.warnings[0], /app closed before this run finished/);
+  await restarted.revert(f.id, [f.folder]);
+  assert.equal((await f.read("draft.txt")).toString(), "before");
+});
+
 test("older multi-file patches are reviewable without inventing original file versions", () => {
   const { files, review } = legacyReview({
     diff:
@@ -376,8 +398,12 @@ test("collecting keeps versions that reviews need and removes the rest", async (
   await f.store.begin(f.id, [f.folder]);
   await f.write("draft.txt", "after");
   await f.store.finish(f.id);
+  // A crashed run whose folder is gone can no longer be finished.
   const unfinished = reviewKey("profile", "project", "crashed");
-  await f.store.begin(unfinished, [f.folder]);
+  const gone = path.join(path.dirname(f.folder), "gone");
+  await fs.mkdir(gone);
+  await f.store.begin(unfinished, [gone]);
+  await fs.rm(gone, { recursive: true });
   const stale = new Date(Date.now() - 2 * 60 * 60 * 1000);
   await fs.utimes(
     path.join(f.storage, "runs", unfinished + ".json"),

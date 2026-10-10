@@ -9,6 +9,7 @@ const {
   net,
   session,
   Notification,
+  Menu,
 } = require("electron");
 app.setName("Research Workbench");
 const fs = require("node:fs/promises");
@@ -17,6 +18,9 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const core = require("./core.cjs");
 const backup = require("./backup.cjs");
+const { createReferences } = require("./references.cjs");
+const { pdfReportInWorker } = require("./pdf-report.cjs");
+const { applicationMenu, editMenu } = require("./menu.cjs");
 const { resolveProjectReference } = require("./project-references.cjs");
 const catalog = require("./catalog.cjs");
 const git = require("./git.cjs");
@@ -67,6 +71,31 @@ function updateState(transform, backup) {
     await writeJson(store, next);
     return (state = next);
   });
+}
+// A damaged workspace is kept; the user can start from the newest valid copy.
+// Unreadable files (permissions, disk errors) are not replaced.
+async function recoverWorkspace(error) {
+  const backup = error.code ? null : await core.newestValidBackup(store);
+  if (!backup) {
+    dialog.showErrorBox(
+      "Workspace could not be loaded",
+      `Your data has been preserved at ${store}.\n${error.message}`,
+    );
+    return null;
+  }
+  const damaged = `${store}.damaged-${Date.now()}`;
+  const { response } = await dialog.showMessageBox({
+    type: "warning",
+    buttons: ["Quit", "Restore backup"],
+    defaultId: 0,
+    cancelId: 0,
+    message: "Workspace could not be loaded",
+    detail: `${error.message}\n\nThe newest valid backup was saved ${new Date(backup.modified).toLocaleString()}; changes made after it are not included. Restoring keeps the damaged file as ${path.basename(damaged)}.`,
+  });
+  if (response !== 1) return null;
+  await fs.copyFile(store, damaged);
+  await writeJson(store, backup.state);
+  return backup.state;
 }
 async function feedResult(refresh = false) {
   const feed = await (refresh
@@ -144,7 +173,7 @@ async function pdfDocument(id, url) {
   pdfs.set(url, document);
   if (!document.bytes) {
     const metadata = await fs.stat(document.file);
-    if (metadata.size > 64 * 1024 * 1024)
+    if (metadata.size > core.MAX_PDF_BYTES)
       throw new Error("PDF is too large to annotate (maximum 64 MB).");
     document.bytes = await fs.readFile(document.file);
   }
@@ -185,6 +214,7 @@ function createWindow() {
     },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  editMenu(win);
   win.webContents.on("will-navigate", (event) => event.preventDefault());
   win.webContents.on("will-prevent-unload", (event) => {
     const response = dialog.showMessageBoxSync(win, {
@@ -231,12 +261,11 @@ app
       saved = core.validateState(JSON.parse(await fs.readFile(store, "utf8")));
     } catch (error) {
       if (error.code !== "ENOENT") {
-        dialog.showErrorBox(
-          "Workspace could not be loaded",
-          `Your data has been preserved at ${store}.\n${error.message}`,
-        );
-        app.quit();
-        return;
+        saved = await recoverWorkspace(error);
+        if (!saved) {
+          app.quit();
+          return;
+        }
       }
     }
     state = await runMigrations(saved || core.seedWorkspace(), {
@@ -250,6 +279,11 @@ app
       await writeJson(store, state);
     }
     applyAppearance();
+    const references = createReferences((url, options) =>
+      net.fetch(url, options),
+    );
+    handle("references:lookup", (input) => references.lookup(input));
+    handle("references:bibtex", (kind, id) => references.bibtex(kind, id));
     handle("deadlines:feed", () => feedResult());
     handle("deadlines:refresh", () => feedResult(true));
     handle("deadlines:updates", async () =>
@@ -302,7 +336,7 @@ app
         name = path.basename(target);
         sourcePath = target;
       }
-      if ((await fs.stat(target)).size > 64 * 1024 * 1024)
+      if ((await fs.stat(target)).size > core.MAX_PDF_BYTES)
         throw new Error("PDF exceeds 64 MB.");
       if (
         hit.version &&
@@ -541,6 +575,7 @@ app
     const annotationStore = createAnnotationStore(
       path.join(app.getPath("userData"), "pdf-annotations"),
     );
+    void annotationStore.pruneAll();
     // will-quit comes after every window has closed, so the quit can no longer
     // be cancelled and the reader's last save is already queued.
     let shutDown = false;
@@ -553,7 +588,11 @@ app
       // Every window is closed by now, so exit skips the quit events instead
       // of asking Electron to quit again while it unwinds this one.
       void Promise.race([
-        Promise.allSettled([annotationStore.flush(), ai?.dispose()]),
+        Promise.allSettled([
+          queue.settled(),
+          annotationStore.flush(),
+          ai?.dispose(),
+        ]),
         limit,
       ]).finally(() => app.exit());
     });
@@ -592,7 +631,7 @@ app
       let lastProgress = 0;
       try {
         await queue.settled();
-        await annotationStore.flush();
+        await annotationStore.idle();
         await ai.flush();
         checkIdle();
         const result = await backup.createBackup({
@@ -655,7 +694,7 @@ app
       maintenance = true;
       try {
         await queue.settled();
-        await annotationStore.flush();
+        await annotationStore.idle();
         await ai.flush();
         checkIdle();
         stopTerminals();
@@ -689,10 +728,15 @@ app
         document.name,
         document.sourcePath,
       );
+      const main = await core
+        .safeFile(project(id).folder, project(id).mainFile)
+        .catch(() => null);
       return {
         key: metadata.key,
         archived:
           path.resolve(document.file) !== path.resolve(document.sourcePath),
+        compiled:
+          !!main && path.resolve(document.sourcePath) === core.pdfPath(main),
         name: metadata.name,
         data: document.bytes,
         annotations: metadata.annotations,
@@ -723,7 +767,7 @@ app
         /\.pdf$/i.test(archived.sourcePath)
       ) {
         const stat = await fs.stat(archived.sourcePath).catch(() => null);
-        if (stat?.isFile() && stat.size <= 64 * 1024 * 1024)
+        if (stat?.isFile() && stat.size <= core.MAX_PDF_BYTES)
           return {
             url: pdfUrl(archived.sourcePath, id, archived.name),
             name: archived.name,
@@ -775,8 +819,13 @@ app
     // renderer saves cannot change them. Any edit to the file, including an
     // agent's, asks again. Skipping it lasts until the app restarts.
     const trustFile = path.join(app.getPath("userData"), "build-trust.json");
+    // A damaged record only means asking again.
     const readTrust = () =>
-      fs.readFile(trustFile, "utf8").then(JSON.parse, () => ({}));
+      fs
+        .readFile(trustFile, "utf8")
+        .then(JSON.parse)
+        .then((value) => (value && typeof value === "object" ? value : {}))
+        .catch(() => ({}));
     const skipped = new Map();
     async function confirmBuildConfig(id, config) {
       const key = `${id}\0${config.directory}`;
@@ -802,7 +851,9 @@ app
       }, "build-trust");
       return true;
     }
-    handle("latex:compile", async (id) => {
+    // Compile and its latexdiff variant share the build slot, output stream
+    // and latexmkrc trust.
+    const build = async (id, run) => {
       if (ai?.isRunning(id))
         throw new Error(
           "Wait for the project agent to finish or stop it before compiling.",
@@ -815,24 +866,69 @@ app
         100,
       );
       try {
-        const result = await core.compile(
-          project(id),
-          output,
-          environment,
-          controller.signal,
-          (config) => confirmBuildConfig(id, config),
+        const result = await run(output, controller.signal, (config) =>
+          confirmBuildConfig(id, config),
         );
         return { ...result, pdf: result.pdf ? pdfUrl(result.pdf, id) : null };
       } finally {
         output.flush();
         builds.delete(id);
       }
-    });
-    handle("latex:cancel", (id) => builds.get(id)?.abort());
-    handle("synctex:forward", (id, file, line, rootId) =>
-      core.synctexForward(project(id), file, line, rootId, environment),
+    };
+    handle("latex:compile", (id) =>
+      build(id, (output, signal, confirm) =>
+        core.compile(project(id), output, environment, signal, confirm),
+      ),
     );
-    handle("synctex:inverse", async (id, page, x, y, url) => {
+    handle("latex:diff", (id, revision) =>
+      build(id, (output, signal, confirm) =>
+        core.compileDiff(
+          project(id),
+          revision,
+          output,
+          environment,
+          signal,
+          confirm,
+        ),
+      ),
+    );
+    handle("latex:cancel", (id) => builds.get(id)?.abort());
+    // The compiled PDF's pages, fonts and metadata for the submission check.
+    // The compiled PDF's pages, fonts and metadata for the submission check,
+    // reused until the PDF changes. `references` is given only when a page
+    // limit needs the bibliography's position.
+    let lastReport = { version: "", report: null };
+    handle("latex:pdf-report", async (id, references) => {
+      const p = project(id);
+      const main = await core.safeFile(p.folder, p.mainFile);
+      const file = core.pdfPath(main);
+      const stat = await fs.stat(file).catch(() => null);
+      if (!stat?.isFile()) return null;
+      if (stat.size > core.MAX_PDF_BYTES)
+        throw new Error("The PDF exceeds 64 MB and was not checked.");
+      const version = [file, stat.size, stat.mtimeMs].join("\0");
+      const [report, at] = await Promise.all([
+        lastReport.version === version
+          ? lastReport.report
+          : pdfReportInWorker(file).then((report) => {
+              lastReport = { version, report };
+              return report;
+            }),
+        typeof references?.file === "string" &&
+        Number.isInteger(references?.line)
+          ? core
+              .referencesStart(p, references.file, references.line, environment)
+              .catch(() => null)
+          : null,
+      ]);
+      return {
+        ...report,
+        references: at && at.page <= report.pages ? at : null,
+      };
+    });
+    // SyncTeX maps only the project's compiled PDF; a latexdiff, an older
+    // version or another document has no map of the manuscript.
+    async function compiledPdf(id, url) {
       const p = project(id);
       const document = pdfs.get(url);
       if (!document || document.projectId !== id)
@@ -846,6 +942,14 @@ app
         throw new Error(
           "Source lookup requires this project's compiled PDF. Compile the manuscript and use its PDF preview.",
         );
+      return { p, document };
+    }
+    handle("synctex:forward", async (id, file, line, rootId, url) => {
+      const { p } = await compiledPdf(id, url);
+      return core.synctexForward(p, file, line, rootId, environment);
+    });
+    handle("synctex:inverse", async (id, page, x, y, url) => {
+      const { p, document } = await compiledPdf(id, url);
       const metadata = await fs.stat(document.file).catch(() => null);
       const version =
         metadata &&
@@ -1005,7 +1109,13 @@ app
         if (context.kind === "pdf") {
           if (!Number.isInteger(context.page) || context.page < 1)
             throw new AIError("invalid_context", "Choose a PDF page.");
-          await annotationStore.archived(id, context.documentKey);
+          // The excerpt carries its own text, so a copy pruned since it was
+          // attached does not block the request.
+          await annotationStore
+            .archived(id, context.documentKey)
+            .catch((error) => {
+              if (error.code !== "ENOENT") throw error;
+            });
           return;
         }
         const file = await core.safeFile(
@@ -1051,6 +1161,9 @@ app
           return { ok: false, error: publicError(error) };
         }
       });
+    Menu.setApplicationMenu(
+      applicationMenu((id) => win?.webContents.send("menu:command", id)),
+    );
     createWindow();
     nativeTheme.on("updated", () =>
       win?.setBackgroundColor(windowBackground()),

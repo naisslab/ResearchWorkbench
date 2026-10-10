@@ -155,6 +155,16 @@ function validateState(value) {
       throw new Error("Invalid compileOnSave.");
     if (p.latexEngine !== undefined && !Object.hasOwn(ENGINES, p.latexEngine))
       throw new Error("Invalid LaTeX engine.");
+    if (
+      p.pageLimit !== undefined &&
+      (!Number.isInteger(p.pageLimit) || p.pageLimit < 1 || p.pageLimit > 500)
+    )
+      throw new Error("Invalid page limit.");
+    if (
+      p.anonymousReview !== undefined &&
+      typeof p.anonymousReview !== "boolean"
+    )
+      throw new Error("Invalid review setting.");
     if (p.localFolders !== undefined) {
       if (!Array.isArray(p.localFolders) || p.localFolders.length > 30)
         throw new Error("Invalid local folders.");
@@ -440,6 +450,176 @@ async function latexmkOptions(project, main, confirmConfig) {
       "\n",
   };
 }
+// The largest PDF the reader, search and checks open.
+const MAX_PDF_BYTES = 64 * 1024 * 1024;
+const exists = (file) =>
+  fs.access(file).then(
+    () => true,
+    () => false,
+  );
+// Runs latexmk in its own process group so Stop and the time limit end every
+// tool it started. Resolves with the exit status and the (trimmed) log.
+function runLatexmk(file, flags, { cwd, env, signal, onOutput, log = "" }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      "latexmk",
+      [
+        ...flags,
+        "-interaction=nonstopmode",
+        "-halt-on-error",
+        "-no-shell-escape",
+        "-file-line-error",
+        file,
+      ],
+      { cwd, env, detached: true },
+    );
+    let stopped = "";
+    let forceTimer;
+    const append = (data) => {
+      const text = data.toString();
+      // Trimming only past twice the limit keeps appends linear.
+      log += text;
+      if (log.length > 300000) log = log.slice(-150000);
+      onOutput?.(text);
+    };
+    child.stdout.on("data", append);
+    child.stderr.on("data", append);
+    const kill = (signal) => {
+      try {
+        process.kill(-child.pid, signal);
+      } catch {}
+    };
+    const stop = (reason) => {
+      stopped = reason;
+      if (!child.pid) return;
+      kill("SIGTERM");
+      forceTimer = setTimeout(() => kill("SIGKILL"), 2000);
+    };
+    const abort = () => stop("Build canceled.");
+    signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(
+      () => stop("Compilation stopped after 5 minutes."),
+      5 * 60 * 1000,
+    );
+    const settle = () => {
+      clearTimeout(timer);
+      clearTimeout(forceTimer);
+      signal?.removeEventListener("abort", abort);
+    };
+    child.once("error", (error) => {
+      settle();
+      reject(
+        new Error(
+          error.code === "ENOENT"
+            ? "latexmk is missing. Install MacTeX or add your TeX tools to PATH, then restart the app."
+            : error.message,
+        ),
+      );
+    });
+    child.once("close", (code) => {
+      settle();
+      resolve(
+        stopped
+          ? { ok: false, log: `${log}\n${stopped}` }
+          : { ok: code === 0, log },
+      );
+    });
+  });
+}
+/**
+ * Compiles a latexdiff of the manuscript against a commit into
+ * .research-build/diff/. The commit's folder is exported with `git archive`
+ * into a temporary folder; the project's files and Git state are untouched.
+ */
+async function compileDiff(
+  project,
+  revision,
+  onOutput,
+  env = process.env,
+  signal,
+  confirmConfig = async () => false,
+) {
+  if (typeof revision !== "string" || !/^[0-9a-f]{7,40}$/i.test(revision))
+    throw new Error("Choose a commit to compare with.");
+  if (!project.mainFile.endsWith(".tex"))
+    throw new Error("Select a .tex entry file first.");
+  const main = await safeFile(project.folder, project.mainFile);
+  const folder = path.dirname(main);
+  const git = (args, cwd = folder) =>
+    runFile("git", args, { cwd, env, signal, maxBuffer: 1024 * 1024 }).then(
+      (result) => result.stdout.trim(),
+    );
+  const repository = await fs.realpath(
+    await git(["rev-parse", "--show-toplevel"]).catch(() => {
+      throw new Error("The manuscript folder is not in a Git repository.");
+    }),
+  );
+  await git(["rev-parse", "--verify", `${revision}^{commit}`]).catch(() => {
+    throw new Error("That commit is not in this repository.");
+  });
+  const relative = path.relative(repository, await fs.realpath(folder));
+  const previous = await fs.mkdtemp(path.join(os.tmpdir(), "research-diff-"));
+  try {
+    const archive = path.join(previous, "commit.tar");
+    await git(
+      [
+        "archive",
+        "--format=tar",
+        "-o",
+        archive,
+        revision,
+        "--",
+        relative || ".",
+      ],
+      repository,
+    ).catch(() => {
+      throw new Error("The manuscript folder did not exist in that commit.");
+    });
+    await runFile("tar", ["-xf", archive, "-C", previous], { env, signal });
+    const before = path.join(previous, relative, path.basename(main));
+    if (!(await fs.stat(before).catch(() => null))?.isFile())
+      throw new Error(
+        `${project.mainFile} did not exist in commit ${revision.slice(0, 7)}.`,
+      );
+    const output = path.join(folder, ".research-build", "diff");
+    await fs.mkdir(output, { recursive: true });
+    onOutput?.(`latexdiff ${revision.slice(0, 7)} → working copy\n`);
+    const { stdout } = await runFile("latexdiff", ["--flatten", before, main], {
+      cwd: folder,
+      env,
+      signal,
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: 120000,
+    }).catch((error) => {
+      if (signal?.aborted) throw new Error("Build canceled.");
+      throw new Error(
+        error.code === "ENOENT"
+          ? "latexdiff is missing. It comes with MacTeX."
+          : `latexdiff failed: ${String(error.stderr || error.message)
+              .trim()
+              .slice(-2000)}`,
+      );
+    });
+    const source = path.join(output, "diff.tex");
+    await fs.writeFile(source, stdout);
+    // Stop pressed during latexdiff: no latexmkrc question for this build.
+    if (signal?.aborted) throw new Error("Build canceled.");
+    const options = await latexmkOptions(project, main, confirmConfig);
+    if (signal?.aborted) throw new Error("Build canceled.");
+    onOutput?.(options.summary);
+    // Built from the manuscript folder, so figures and .bib files resolve.
+    const result = await runLatexmk(
+      "./" + path.relative(folder, source),
+      [...options.args, `-outdir=${output}`],
+      { cwd: folder, env, signal, onOutput, log: options.summary },
+    );
+    const pdf = path.join(output, "diff.pdf");
+    const built = result.ok && (await exists(pdf));
+    return { ok: built, log: result.log, pdf: built ? pdf : null };
+  } finally {
+    await fs.rm(previous, { recursive: true, force: true });
+  }
+}
 async function compile(
   project,
   onOutput,
@@ -492,80 +672,14 @@ async function compile(
       }
     }
     started = true;
-    const result = await new Promise((resolve, reject) => {
-      const child = spawn(
-        "latexmk",
-        [
-          ...options.args,
-          "-interaction=nonstopmode",
-          "-halt-on-error",
-          "-no-shell-escape",
-          "-file-line-error",
-          "-synctex=1",
-          `-outdir=${output}`,
-          "./" + path.basename(main),
-        ],
-        { cwd: path.dirname(main), env, detached: true },
-      );
-      let log = options.summary;
-      let stopped = "";
-      let forceTimer;
-      const append = (data) => {
-        const text = data.toString();
-        // Trimming only past twice the limit keeps appends linear.
-        log += text;
-        if (log.length > 300000) log = log.slice(-150000);
-        onOutput?.(text);
-      };
-      child.stdout.on("data", append);
-      child.stderr.on("data", append);
-      const kill = (signal) => {
-        try {
-          process.kill(-child.pid, signal);
-        } catch {}
-      };
-      const stop = (reason) => {
-        stopped = reason;
-        if (!child.pid) return;
-        kill("SIGTERM");
-        forceTimer = setTimeout(() => kill("SIGKILL"), 2000);
-      };
-      const abort = () => stop("Build canceled.");
-      signal?.addEventListener("abort", abort, { once: true });
-      const timer = setTimeout(
-        () => stop("Compilation stopped after 5 minutes."),
-        5 * 60 * 1000,
-      );
-      const settle = () => {
-        clearTimeout(timer);
-        clearTimeout(forceTimer);
-        signal?.removeEventListener("abort", abort);
-      };
-      child.once("error", (error) => {
-        settle();
-        reject(
-          new Error(
-            error.code === "ENOENT"
-              ? "latexmk is missing. Install MacTeX or add your TeX tools to PATH, then restart the app."
-              : error.message,
-          ),
-        );
-      });
-      child.once("close", async (code) => {
-        settle();
-        if (stopped)
-          return resolve({ ok: false, log: `${log}\n${stopped}`, pdf: null });
-        const ok =
-          code === 0 &&
-          (await fs.access(pdf).then(
-            () => true,
-            () => false,
-          ));
-        resolve({ ok, log, pdf: ok ? pdf : null });
-      });
-    });
-    if (!result.ok) await restore();
-    return result;
+    const result = await runLatexmk(
+      "./" + path.basename(main),
+      [...options.args, "-synctex=1", `-outdir=${output}`],
+      { cwd: path.dirname(main), env, signal, onOutput, log: options.summary },
+    );
+    const ok = result.ok && (await exists(pdf));
+    if (!ok) await restore();
+    return { ok, log: result.log, pdf: ok ? pdf : null };
   } catch (error) {
     await restore();
     throw error;
@@ -606,6 +720,45 @@ async function synctexForward(project, file, line, rootId, env) {
   return r.Page
     ? { page: Number(r.Page), x: Number(r.x), y: Number(r.y) }
     : null;
+}
+/**
+ * The page where the bibliography starts and whether it opens that page.
+ * BibTeX's entries are typeset from the .bbl, whose first line marks where
+ * the list starts; the \bibliography line itself maps to the list's last
+ * page. What is typeset near the top of both columns tells whether body text
+ * precedes the list there. `top` is in PDF points from the top.
+ */
+async function referencesStart(project, file, line, env, top = 110) {
+  const main = await builtMain(project);
+  if (!main) return null;
+  const pdf = pdfPath(main);
+  const source = await safeFile(fileRoot(project, "primary"), file);
+  const bbl = pdf.replace(/\.pdf$/, ".bbl");
+  let at = (await exists(bbl))
+    ? await synctex(["view", "-i", `1:0:${bbl}`, "-o", pdf], env)
+    : {};
+  if (!at.Page)
+    at = await synctex(["view", "-i", `${line}:0:${source}`, "-o", pdf], env);
+  const page = Number(at.Page);
+  if (!page) return null;
+  const bibliographyAt = async (x) => {
+    const first = await synctex(
+      ["edit", "-o", `${page}:${x}:${top}:${pdf}`],
+      env,
+    );
+    if (!first.Input) return false;
+    const input = await fs
+      .realpath(path.resolve(path.dirname(main), first.Input))
+      .catch(() => path.resolve(path.dirname(main), first.Input));
+    return (
+      /\.bbl$/i.test(input) || (input === source && Number(first.Line) >= line)
+    );
+  };
+  // Left and right of the gutter, so a second column is seen too.
+  return {
+    page,
+    opensPage: (await bibliographyAt(150)) && (await bibliographyAt(450)),
+  };
 }
 async function synctexInverse(project, page, x, y, env) {
   if (
@@ -648,6 +801,27 @@ function seedWorkspace() {
     projects: [],
   };
 }
+// The copies saved before imports, migrations and restores, newest first.
+async function newestValidBackup(store) {
+  const folder = path.dirname(store),
+    prefix = path.basename(store) + ".";
+  const candidates = [];
+  for (const name of await fs.readdir(folder).catch(() => []))
+    if (name.startsWith(prefix) && name.endsWith(".bak")) {
+      const file = path.join(folder, name);
+      const stat = await fs.stat(file).catch(() => null);
+      if (stat?.isFile()) candidates.push({ file, modified: stat.mtimeMs });
+    }
+  candidates.sort((a, b) => b.modified - a.modified);
+  for (const candidate of candidates)
+    try {
+      const state = validateState(
+        JSON.parse(await fs.readFile(candidate.file, "utf8")),
+      );
+      return { ...candidate, state };
+    } catch {}
+  return null;
+}
 module.exports = {
   DEFAULT_AREAS,
   ENGINES,
@@ -665,7 +839,12 @@ module.exports = {
   sshArgs,
   pdfPath,
   compile,
+  compileDiff,
   synctexForward,
   synctexInverse,
+  referencesStart,
   seedWorkspace,
+  newestValidBackup,
+  MAX_PDF_BYTES,
+  exists,
 };

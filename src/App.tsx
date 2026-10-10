@@ -30,6 +30,7 @@ import type {
   View,
   Workspace,
 } from "./types";
+import { VIEWS } from "./types";
 import { dueSoon, monthDay, upcomingItems, type DatedItem } from "./dates";
 import PanelDivider from "./PanelDivider";
 import { clamp, defaultPanelLayout } from "./panel-layout";
@@ -53,6 +54,7 @@ import BoardView from "./views/BoardView";
 import ProjectDetailsView from "./views/ProjectDetailsView";
 import SettingsView from "./views/SettingsView";
 import { useTopDialog } from "./Modal";
+import { runCommand, useCommands } from "./commands";
 
 const loadWorkbench = () => import("./Workbench");
 const Workbench = lazy(loadWorkbench);
@@ -96,6 +98,11 @@ export default function App() {
   const [searchTarget, setSearchTarget] =
     useState<import("./types").SearchHit>();
   const [searchOpen, setSearchOpen] = useState(false);
+  // ">" opens the palette with commands only.
+  const [searchStart, setSearchStart] = useState("");
+  useEffect(() => {
+    if (!searchOpen) setSearchStart("");
+  }, [searchOpen]);
   // One toast at a time; a newer one replaces it.
   const [toast, setToast] = useState<Toast | null>(null);
   const [info, setInfo] = useState<{ dataPath: string; version: string }>();
@@ -212,9 +219,9 @@ export default function App() {
   );
 
   const navigate = useCallback<Navigate>(
-    (next, { projectId = selected, area = areaFilter } = {}) => {
+    (next, { projectId = selected, area = areaFilter, then } = {}) => {
       if (next === view && projectId === selected && area === areaFilter)
-        return;
+        return then?.();
       const go = () => {
         try {
           localStorage.setItem(
@@ -227,6 +234,7 @@ export default function App() {
         setAreaFilter(area);
         setToast((t) => (t?.tone === "danger" ? null : t));
         setManuscriptStatus(null);
+        then?.();
       };
       // A listener that cancels the event takes over and calls `proceed` later.
       const event = new CustomEvent("research:navigate", {
@@ -268,15 +276,7 @@ export default function App() {
           );
           if (
             saved &&
-            [
-              "overview",
-              "board",
-              "deadlines",
-              "settings",
-              "collection",
-              "details",
-              "workbench",
-            ].includes(saved.view) &&
+            VIEWS.includes(saved.view) &&
             (!saved.projectId ||
               next.projects.some((p) => p.id === saved.projectId))
           ) {
@@ -309,6 +309,62 @@ export default function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [rail, changeLayout]);
+  useEffect(
+    () =>
+      window.research?.onMenuCommand((id) => {
+        if (id === "search" || id === "commands") {
+          setSearchStart(id === "commands" ? ">" : "");
+          setSearchOpen(true);
+        } else runCommand(id);
+      }),
+    [],
+  );
+  useCommands(() => [
+    ...(
+      [
+        ["overview", "Overview"],
+        ["board", "Project board"],
+        ["deadlines", "Dates & deadlines"],
+        ["collection", "Research collection"],
+        ["settings", "Workspace settings"],
+      ] as const
+    ).map(([target, title]) => ({
+      id: `go-${target}`,
+      group: "Go to",
+      title,
+      run: () => navigate(target),
+    })),
+    ...(selected
+      ? [
+          {
+            id: "go-workbench",
+            group: "Go to",
+            title: "Workbench of the current project",
+            run: () => navigate("workbench", { projectId: selected }),
+          },
+        ]
+      : []),
+    {
+      id: "new-project",
+      group: "Project",
+      title: "New project",
+      run: newProject,
+    },
+    {
+      id: "toggle-sidebar",
+      group: "View",
+      title: "Toggle sidebar",
+      shortcut: "⌘\\",
+      run: () => changeLayout({ sidebarCollapsed: !rail }),
+    },
+    {
+      id: "toggle-theme",
+      group: "View",
+      title: dark ? "Switch to light mode" : "Switch to dark mode",
+      run: () =>
+        void commit((s) => ({ ...s, appearance: dark ? "light" : "dark" })),
+    },
+  ]);
   const ordered = useMemo(
     () =>
       state
@@ -643,30 +699,15 @@ export default function App() {
       )}
       {searchOpen && (
         <ProjectSearch
+          key={searchStart}
           projects={ordered}
-          areas={state.areas}
+          initialQuery={searchStart}
           openResult={(hit) => {
             setSearchOpen(false);
-            const go = () => {
-              try {
-                localStorage.setItem(
-                  "research-workbench.navigation",
-                  JSON.stringify({
-                    view: hit.kind === "project" ? "details" : "workbench",
-                    projectId: hit.projectId,
-                    area: areaFilter,
-                  }),
-                );
-              } catch {}
-              setSearchTarget({ ...hit, id: crypto.randomUUID() });
-              setView(hit.kind === "project" ? "details" : "workbench");
-              setSelected(hit.projectId);
-            };
-            const event = new CustomEvent("research:navigate", {
-              cancelable: true,
-              detail: { proceed: go },
+            navigate(hit.kind === "project" ? "details" : "workbench", {
+              projectId: hit.projectId,
+              then: () => setSearchTarget({ ...hit, id: crypto.randomUUID() }),
             });
-            if (window.dispatchEvent(event)) go();
           }}
           open={(id) => {
             setSearchOpen(false);

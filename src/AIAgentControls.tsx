@@ -42,7 +42,8 @@ const permissions = [
   {
     id: "full-access",
     label: "Full access",
-    description: "Access files and the network without asking for approval.",
+    description:
+      "Access files and the network without asking for approval. A chat with an attached PDF excerpt still asks first; files and pages the agent opens itself are trusted.",
     icon: ShieldOff,
   },
 ] as const;
