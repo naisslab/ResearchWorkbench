@@ -1171,6 +1171,10 @@ await smoke("ai", async (root) => {
     null,
     "Execution details should start collapsed",
   );
+  assert.match(
+    await page.locator(".ai-work-log > summary").innerText(),
+    /1 command · 2 files changed/,
+  );
   await page.locator(".ai-work-log > summary").click();
   await page.locator(".ai-activity").first().locator("summary").click();
   await page.getByText("checks passed", { exact: true }).waitFor();

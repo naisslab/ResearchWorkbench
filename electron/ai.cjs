@@ -15,6 +15,7 @@ const {
 } = require("./chatgpt.cjs");
 const { createCodexAgent, codexExecutable } = require("./codex-agent.cjs");
 const { createResponseGateway } = require("./response-gateway.cjs");
+const { createTaskQueue } = require("./task-queue.cjs");
 const {
   createChangeStore,
   reviewKey,
@@ -39,15 +40,15 @@ function createAI({
   let modelError;
   let usage = {};
   let loadedUsage;
-  let usageQueue = Promise.resolve();
-  let accountQueue = Promise.resolve();
+  const usageQueue = createTaskQueue();
+  const accountQueue = createTaskQueue();
+  const writes = createTaskQueue();
+  const mutations = createTaskQueue();
   let accountChanges = 0;
   let skillAgent;
   let disposed = false;
   const conversations = new Map(),
     running = new Map(),
-    writes = new Map(),
-    mutations = new Map(),
     loads = new Map(),
     agents = new Map();
   const changes = createChangeStore(path.join(directory, "changes"));
@@ -157,20 +158,16 @@ function createAI({
   }
   function queuedAccount(operation) {
     accountChanges++;
-    accountQueue = accountQueue
-      .catch(() => {})
-      .then(operation)
-      .finally(() => {
+    return accountQueue(async () => {
+      try {
+        return await operation();
+      } finally {
         accountChanges--;
-      });
-    return accountQueue;
+      }
+    });
   }
   function mutate(id, operation) {
-    const next = (mutations.get(id) || Promise.resolve())
-      .catch(() => {})
-      .then(operation);
-    mutations.set(id, next);
-    return next;
+    return mutations(operation, id);
   }
   async function stopAll() {
     await Promise.all(
@@ -377,16 +374,14 @@ function createAI({
   async function saveConversation(value) {
     const id = key(value.profileId, value.projectId);
     const contents = JSON.stringify(value);
-    const next = (writes.get(id) || Promise.resolve())
-      .catch(() => {})
-      .then(() =>
+    await writes(
+      () =>
         protectedWrite(
           path.join(directory, "conversations", `${id}.json`),
           contents,
         ),
-      );
-    writes.set(id, next);
-    await next;
+      id,
+    );
   }
   function publishConversation(value) {
     emit("conversation", publicConversation(value));
@@ -1003,12 +998,9 @@ function createAI({
           if (!assistant.usage) totals.unreportedRequests++;
           totals.lastUsedAt = new Date().toISOString();
           const contents = JSON.stringify(usage);
-          usageQueue = usageQueue
-            .catch(() => {})
-            .then(() =>
-              protectedWrite(path.join(directory, "ai-usage.json"), contents),
-            );
-          await usageQueue;
+          await usageQueue(() =>
+            protectedWrite(path.join(directory, "ai-usage.json"), contents),
+          );
         } catch {
           assistant.error = {
             code: "usage_storage_error",

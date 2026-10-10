@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PDFDocument, PDFName, degrees } from "pdf-lib";
-import { launchApp, smoke, stubDialogs, useProject } from "./smoke-harness.mjs";
+import {
+  closeApp,
+  launchApp,
+  smoke,
+  stubDialogs,
+  useProject,
+} from "./smoke-harness.mjs";
 let projectId;
 async function makePdf(revised = false) {
   const pdf = await PDFDocument.create();
@@ -260,7 +266,7 @@ await smoke("pdf-annotations", async (root) => {
   assert.equal(library[0].name, "paper.pdf");
   await page.getByTitle("Switch to dark mode").click();
   await page.screenshot({ path: "output/playwright/pdf-annotations-dark.png" });
-  await app.close();
+  await closeApp();
   ({ app, page } = await launchApp());
   await stubDialogs(app, dialogs);
   await open(page);

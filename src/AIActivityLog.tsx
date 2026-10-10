@@ -10,9 +10,11 @@ import { plural } from "./components/ui";
 
 export default function AIActivityLog({
   message,
+  changedFileCount,
   openReference,
 }: {
   message: AIMessage;
+  changedFileCount: number;
   openReference(reference: string): void;
 }) {
   const activities = message.activities || [];
@@ -20,18 +22,13 @@ export default function AIActivityLog({
   const commands = activities.filter(
     (activity) => activity.type === "commandExecution",
   );
-  const files = new Set(
-    activities.flatMap(
-      (activity) => activity.changes?.map((change) => change.path) || [],
-    ),
-  );
   const running = message.status === "running";
   const active = [...activities]
     .reverse()
     .find((activity) => activity.status === "inProgress");
   const counts = [
     commands.length ? plural(commands.length, "command") : "",
-    files.size ? `${plural(files.size, "file")} changed` : "",
+    changedFileCount ? `${plural(changedFileCount, "file")} changed` : "",
   ]
     .filter(Boolean)
     .join(" · ");

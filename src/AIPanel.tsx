@@ -57,6 +57,14 @@ import AIAgentControls, {
 import "./ai.css";
 
 const number = (value: number) => value.toLocaleString("en-US");
+const starterRequests = {
+  "Fix LaTeX build":
+    "Compile the LaTeX manuscript, fix any build errors, and tell me what changed.",
+  "Run tests":
+    "Inspect this project, identify the relevant tests, and run them. Fix failures related to the current changes.",
+  "Improve the draft":
+    "Review the manuscript for clarity and consistency. Propose and apply focused edits, then check that it still compiles.",
+};
 
 function Approval({
   request,
@@ -243,7 +251,11 @@ const Message = memo(function Message({
           ))}
         </div>
       )}
-      <AIActivityLog message={message} openReference={openReference} />
+      <AIActivityLog
+        message={message}
+        changedFileCount={changedFiles.length}
+        openReference={openReference}
+      />
       {message.approvals?.map((request) => (
         <Approval
           key={request.id}
@@ -1173,33 +1185,11 @@ export default function AIPanel({
                     project folders.
                   </p>
                   <div className="ai-starters">
-                    <button
-                      onClick={() =>
-                        updateDraft(
-                          "Compile the LaTeX manuscript, fix any build errors, and tell me what changed.",
-                        )
-                      }
-                    >
-                      Fix LaTeX build
-                    </button>
-                    <button
-                      onClick={() =>
-                        updateDraft(
-                          "Inspect this project, identify the relevant tests, and run them. Fix failures related to the current changes.",
-                        )
-                      }
-                    >
-                      Run tests
-                    </button>
-                    <button
-                      onClick={() =>
-                        updateDraft(
-                          "Review the manuscript for clarity and consistency. Propose and apply focused edits, then check that it still compiles.",
-                        )
-                      }
-                    >
-                      Improve the draft
-                    </button>
+                    {Object.entries(starterRequests).map(([label, request]) => (
+                      <button key={label} onClick={() => updateDraft(request)}>
+                        {label}
+                      </button>
+                    ))}
                   </div>
                 </div>
               </div>

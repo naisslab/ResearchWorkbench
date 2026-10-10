@@ -2,6 +2,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { atomicWrite } = require("./core.cjs");
+const { createTaskQueue } = require("./task-queue.cjs");
 const COLORS = {
   yellow: [0.96, 0.78, 0.24],
   green: [0.3, 0.68, 0.43],
@@ -101,7 +102,7 @@ function createAnnotationStore(directory) {
     if (!keyPattern.test(key)) throw new Error("Invalid document identifier.");
     return path.join(directory, `${key}.${extension}`);
   };
-  const queues = new Map();
+  const queue = createTaskQueue();
   // A document's bytes never change, so each Buffer is hashed once.
   const hashes = new WeakMap();
   const snapshots = new Set();
@@ -141,46 +142,37 @@ function createAnnotationStore(directory) {
   async function save(projectId, bytes, name, sourcePath, input, pageCount) {
     const annotations = validateAnnotations(input, pageCount);
     const { hash, key } = identify(projectId, bytes);
-    const previous = queues.get(key) || Promise.resolve();
-    const next = previous
-      .catch(() => {})
-      .then(async () => {
-        if (!snapshots.has(key)) {
-          try {
-            await fs.access(file(key, "pdf"));
-          } catch (error) {
-            if (error.code !== "ENOENT") throw error;
-            await atomicWrite(file(key, "pdf"), bytes);
-          }
-          snapshots.add(key);
+    return queue(async () => {
+      if (!snapshots.has(key)) {
+        try {
+          await fs.access(file(key, "pdf"));
+        } catch (error) {
+          if (error.code !== "ENOENT") throw error;
+          await atomicWrite(file(key, "pdf"), bytes);
         }
-        const updatedAt = new Date().toISOString();
-        await atomicWrite(
-          file(key, "json"),
-          JSON.stringify(
-            {
-              version: 1,
-              key,
-              projectId,
-              documentHash: hash,
-              name,
-              sourcePath,
-              updatedAt,
-              pageCount,
-              annotations,
-            },
-            null,
-            2,
-          ),
-        );
-        return { key, updatedAt };
-      });
-    queues.set(key, next);
-    try {
-      return await next;
-    } finally {
-      if (queues.get(key) === next) queues.delete(key);
-    }
+        snapshots.add(key);
+      }
+      const updatedAt = new Date().toISOString();
+      await atomicWrite(
+        file(key, "json"),
+        JSON.stringify(
+          {
+            version: 1,
+            key,
+            projectId,
+            documentHash: hash,
+            name,
+            sourcePath,
+            updatedAt,
+            pageCount,
+            annotations,
+          },
+          null,
+          2,
+        ),
+      );
+      return { key, updatedAt };
+    }, key);
   }
   async function library(projectId) {
     let names;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { launchApp, macDdlDir, smoke } from "./smoke-harness.mjs";
+import { closeApp, launchApp, macDdlDir, smoke } from "./smoke-harness.mjs";
 const source = JSON.parse(
   await fs.readFile(path.join(macDdlDir, "tracker.json"), "utf8"),
 );
@@ -218,7 +218,7 @@ E = mc^2 + \alpha
     });
     await window.research.save(state);
   }, manuscript);
-  await app.close();
+  await closeApp();
   ({ app, page } = await launchApp());
   await page.waitForFunction(
     () => document.documentElement.dataset.theme === "dark",

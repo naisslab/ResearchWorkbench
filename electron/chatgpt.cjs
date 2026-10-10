@@ -3,6 +3,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const http = require("node:http");
 const { atomicWrite } = require("./core.cjs");
+const { createTaskQueue } = require("./task-queue.cjs");
 
 const ISSUER = "https://auth.openai.com";
 const RESOURCE = "https://api.openai.com/v1";
@@ -157,7 +158,7 @@ function createChatGPT({
   let hostId;
   let initialized;
   let discovery;
-  let saveQueue = Promise.resolve();
+  const saveQueue = createTaskQueue();
   let pending;
   let lastError;
   const refreshing = new Map();
@@ -246,17 +247,14 @@ function createChatGPT({
   async function persist() {
     // Capture at enqueue time; serialize replacements so refreshes cannot overwrite newer data.
     const contents = JSON.stringify(saved);
-    saveQueue = saveQueue
-      .catch(() => {})
-      .then(async () => {
-        if (!encryption.isAvailable())
-          throw new AIError(
-            "secure_storage_unavailable",
-            "Secure credential storage is unavailable.",
-          );
-        await protectedWrite(authFile, await encryption.encrypt(contents));
-      });
-    await saveQueue;
+    await saveQueue(async () => {
+      if (!encryption.isAvailable())
+        throw new AIError(
+          "secure_storage_unavailable",
+          "Secure credential storage is unavailable.",
+        );
+      await protectedWrite(authFile, await encryption.encrypt(contents));
+    });
   }
   async function config() {
     if (!discovery)

@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { PDFDocument } from "pdf-lib";
 import {
+  closeApp,
   dragDivider,
   launchApp,
   resizeWindow,
@@ -260,7 +261,7 @@ Review the source, ask the agent, and read the manuscript side by side.
     .getByRole("button", { name: "Save", exact: false })
     .waitFor({ state: "visible" });
   await page.waitForFunction(() => !document.querySelector(".unsaved-dot"));
-  await app.close();
+  await closeApp();
   ({ app, page } = await launchApp());
   await resize(2200, 1100);
   await page

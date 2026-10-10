@@ -26,6 +26,7 @@ const { migrateAreaLabels, runMigrations } = require("./migrations.cjs");
 const pty = require("node-pty");
 const { createAI } = require("./ai.cjs");
 const { AIError, publicError } = require("./chatgpt.cjs");
+const { createTaskQueue } = require("./task-queue.cjs");
 if (process.env.RESEARCH_TEST_DATA)
   app.setPath("userData", path.resolve(process.env.RESEARCH_TEST_DATA));
 if (!process.env.RESEARCH_TEST_DATA && !app.requestSingleInstanceLock())
@@ -38,7 +39,8 @@ app.on("second-instance", () => {
 });
 let state;
 let store;
-let saveQueue = Promise.resolve();
+// Workspace writes run one at a time, in request order.
+const queue = createTaskQueue();
 let deadlineFeed;
 let feedTimer;
 const windowBackground = () =>
@@ -49,10 +51,6 @@ function applyAppearance() {
 }
 const writeJson = (file, value) =>
   core.atomicWrite(file, JSON.stringify(value, null, 2));
-// Workspace writes run one at a time, in request order.
-function queue(task) {
-  return (saveQueue = saveQueue.catch(() => {}).then(task));
-}
 function updateState(transform, backup) {
   return queue(async () => {
     const next = core.validateState(await transform(state));

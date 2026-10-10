@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
+  closeApp,
   dragDivider,
   launchApp,
   resizeWindow,
@@ -29,9 +30,10 @@ await smoke("ui", async (root) => {
     exact: true,
   });
   const initialSidebar = (await page.locator(".sidebar").boundingBox()).width;
+  const draggedSidebar = await dragDivider(page, "Resize research sidebar", 48);
   assert.ok(
-    (await dragDivider(page, "Resize research sidebar", 48)) >
-      initialSidebar + 40,
+    draggedSidebar > initialSidebar + 40,
+    `Sidebar drag should add 48px: started at ${initialSidebar}, ended at ${draggedSidebar}`,
   );
   await sidebarDivider.dblclick();
   assert.equal((await page.locator(".sidebar").boundingBox()).width, 248);
@@ -385,7 +387,7 @@ This manuscript exists only in the automated test workspace.
   const savedLayout = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("research-workbench.panels.v1")),
   );
-  await app.close();
+  await closeApp();
   ({ app, page } = await launchApp());
   assert.deepEqual(
     await page.evaluate(() =>
@@ -502,7 +504,7 @@ This manuscript exists only in the automated test workspace.
   await page
     .getByRole("heading", { name: "Sources & manuscripts", exact: false })
     .waitFor();
-  await app.close();
+  await closeApp();
   ({ app, page } = await launchApp());
   importedResearch = await page.evaluate(
     async () => (await window.research.load()).projects,

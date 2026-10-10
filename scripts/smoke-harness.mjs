@@ -45,6 +45,13 @@ export const stubDialogs = (app, paths) =>
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: save });
   }, paths);
 
+// Fixture data has already been saved when a test requests a restart. An
+// unsaved scratch buffer must not leave a native close dialog waiting for input.
+export async function closeApp() {
+  await app?.evaluate(({ app }) => app.exit()).catch(() => {});
+  await app?.close().catch(() => {});
+}
+
 export async function dragDivider(page, name, dx, dy = 0) {
   const divider = page.getByRole("separator", { name, exact: true });
   const box = await divider.boundingBox();
@@ -123,9 +130,7 @@ export async function smoke(name, body) {
       .catch(() => {});
     throw error;
   } finally {
-    // This is an isolated fixture process. Unsaved test files must not block cleanup.
-    await app?.evaluate(({ app }) => app.exit()).catch(() => {});
-    await app?.close().catch(() => {});
+    await closeApp();
     await fs.rm(root, { recursive: true, force: true });
   }
 }
