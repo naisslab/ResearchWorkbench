@@ -485,7 +485,29 @@ export interface AIApproval {
   cwd?: string;
   grantRoot?: string;
   network?: { host?: string; protocol?: string };
-  permissions?: unknown;
+  permissions?: {
+    network?: { enabled?: boolean | null };
+    fileSystem?: {
+      read?: string[] | null;
+      write?: string[] | null;
+      entries?:
+        | {
+            access: "read" | "write" | "deny";
+            path:
+              | { type: "path"; path: string }
+              | { type: "glob_pattern"; pattern: string }
+              | {
+                  type: "special";
+                  value: {
+                    kind: string;
+                    path?: string;
+                    subpath?: string | null;
+                  };
+                };
+          }[]
+        | null;
+    };
+  };
   canAccept?: boolean;
   questions?: {
     id: string;

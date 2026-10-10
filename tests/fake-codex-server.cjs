@@ -53,6 +53,30 @@ async function work(params) {
     });
     return;
   }
+  if (text.includes("request-permissions") && !params.approved) {
+    pending = { current, params };
+    send({
+      id: "fixture-permissions",
+      method: "item/permissions/requestApproval",
+      params: {
+        threadId,
+        turnId: current,
+        itemId: "git-access",
+        cwd: params.cwd,
+        reason: "Fetch and commit the requested Git changes",
+        permissions: {
+          network: { enabled: true },
+          fileSystem: {
+            write: [path.join(params.cwd, ".git")],
+            entries: [
+              { access: "read", path: { type: "path", path: params.cwd } },
+            ],
+          },
+        },
+      },
+    });
+    return;
+  }
   await fs.writeFile(
     path.join(params.cwd, "draft.tex"),
     "Revised manuscript\n",
@@ -163,6 +187,28 @@ async function work(params) {
 }
 readline.createInterface({ input: process.stdin }).on("line", async (line) => {
   const message = JSON.parse(line);
+  if (message.id === "fixture-permissions" && message.result) {
+    await fs.writeFile(
+      path.join(pending.params.cwd, "permission-decision.json"),
+      JSON.stringify(message.result),
+    );
+    send({
+      method: "serverRequest/resolved",
+      params: { threadId, requestId: message.id },
+    });
+    if (message.result.permissions?.network?.enabled)
+      await work({ ...pending.params, approved: true });
+    else
+      send({
+        method: "turn/completed",
+        params: {
+          threadId,
+          turn: { id: pending.current, status: "interrupted" },
+        },
+      });
+    pending = undefined;
+    return;
+  }
   if (message.id === "fixture-approval" && message.result) {
     send({
       method: "serverRequest/resolved",

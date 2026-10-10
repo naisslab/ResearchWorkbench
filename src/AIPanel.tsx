@@ -79,6 +79,26 @@ function Approval({
   ): void;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
+  const fileAccess = request.permissions?.fileSystem;
+  const accessLabels = { read: "Read", write: "Write", deny: "Blocked" };
+  const requestedFiles = [
+    ...(fileAccess?.read || []).map((path) => `Read: ${path}`),
+    ...(fileAccess?.write || []).map((path) => `Write: ${path}`),
+    ...(fileAccess?.entries || []).map(({ access, path }) => {
+      const target =
+        path.type === "path"
+          ? path.path
+          : path.type === "glob_pattern"
+            ? path.pattern
+            : [
+                path.value.path || path.value.kind.replaceAll("_", " "),
+                path.value.subpath,
+              ]
+                .filter(Boolean)
+                .join("/");
+      return `${accessLabels[access]}: ${target}`;
+    }),
+  ];
   return (
     <div className="ai-approval">
       <strong>
@@ -103,6 +123,13 @@ function Approval({
           {request.network.protocol} · {request.network.host}
         </small>
       )}
+      {request.permissions?.network?.enabled && (
+        <small>
+          Network access for this{" "}
+          {request.kind === "permissions" ? "turn" : "command"}
+        </small>
+      )}
+      {requestedFiles.length > 0 && <pre>{requestedFiles.join("\n")}</pre>}
       {request.kind === "question" ? (
         <form
           onSubmit={(event) => {
@@ -167,13 +194,15 @@ function Approval({
         </form>
       ) : (
         <div className="ai-approval-actions">
-          {request.kind !== "permissions" && request.canAccept !== false && (
+          {request.canAccept !== false && (
             <button
               className="button primary small"
               disabled={busy}
               onClick={() => answer("accept")}
             >
-              Allow once
+              {request.kind === "permissions"
+                ? "Allow for this turn"
+                : "Allow once"}
             </button>
           )}
           <button

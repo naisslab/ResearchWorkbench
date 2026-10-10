@@ -403,10 +403,20 @@ await smoke("ai", async (root) => {
                 ? [
                     {
                       id: "approval-fixture",
-                      kind: "command",
+                      kind: "permissions",
                       command: "node check.cjs",
                       cwd: folder,
                       reason: "Run the project's validation script",
+                      permissions: {
+                        network: { enabled: true },
+                        fileSystem: {
+                          write: [
+                            process
+                              .getBuiltinModule("node:path")
+                              .join(folder, ".git"),
+                          ],
+                        },
+                      },
                       canAccept: true,
                     },
                   ]
@@ -1076,7 +1086,9 @@ await smoke("ai", async (root) => {
     "Composer should grow with the draft",
   );
   await composer.press("Enter");
-  await page.getByRole("button", { name: "Allow once", exact: true }).waitFor();
+  await page
+    .getByRole("button", { name: "Allow for this turn", exact: true })
+    .waitFor();
   assert.equal(
     await fs.readFile(path.join(folder, "main.tex"), "utf8"),
     "Unsaved manuscript changes\n",
@@ -1122,8 +1134,17 @@ await smoke("ai", async (root) => {
     false,
   );
   assert.equal(sent.context.text, "Unsaved manuscript changes\n");
+  await page
+    .getByText("Network access for this turn", { exact: true })
+    .waitFor();
+  assert.match(
+    await page.locator(".ai-approval").innerText(),
+    /Write: .*\.git/,
+  );
   await page.screenshot({ path: "output/playwright/ai-approval.png" });
-  await page.getByRole("button", { name: "Allow once", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Allow for this turn", exact: true })
+    .click();
   await page
     .getByText("修改完成。Updated two files and ran the project checks.", {
       exact: true,

@@ -6,7 +6,10 @@ const path = require("node:path");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const execute = promisify(execFile);
-const { createGitRunner } = require("../electron/git-runner.cjs");
+const {
+  createGitRunner,
+  createGitEnvironment,
+} = require("../electron/git-runner.cjs");
 
 test("GitHub commands reuse CLI credentials without changing Git config or other hosts", async (t) => {
   const folder = await fs.mkdtemp(path.join(os.tmpdir(), "research-git-auth-"));
@@ -50,13 +53,13 @@ exit 1
   ]);
   const config = await runner.credentialConfig(folder, "origin");
   assert.ok(config.length);
-  async function credential(host) {
+  async function credential(host, options = { env, config }) {
     return new Promise((resolve, reject) => {
       const child = execFile(
         "/usr/bin/git",
-        ["-C", folder, ...config, "credential", "fill"],
+        ["-C", folder, ...options.config, "credential", "fill"],
         {
-          env: { ...env, GIT_TERMINAL_PROMPT: "0" },
+          env: { ...options.env, GIT_TERMINAL_PROMPT: "0" },
           timeout: 5000,
         },
         (error, stdout) => (error ? reject(error) : resolve(stdout)),
@@ -72,6 +75,29 @@ exit 1
     await credential("example.test"),
     /username=existing\npassword=existing-secret/,
   );
+  const agentEnv = await createGitEnvironment({
+    ...env,
+    GIT_CONFIG_PARAMETERS: "'research.fixture=preserved'",
+  });
+  assert.match(
+    await credential("github.com", { env: agentEnv, config: [] }),
+    /username=fixture-user\npassword=fixture-credential/,
+  );
+  assert.match(
+    await credential("example.test", { env: agentEnv, config: [] }),
+    /username=existing\npassword=existing-secret/,
+  );
+  for (const [args, expected] of [
+    [["config", "--get", "research.fixture"], "preserved"],
+  ])
+    assert.equal(
+      (
+        await execute("/usr/bin/git", ["-C", folder, ...args], {
+          env: agentEnv,
+        })
+      ).stdout.trim(),
+      expected,
+    );
   assert.equal(await fs.readFile(configFile, "utf8"), globalConfig);
   assert.equal(
     (await runner.run(folder, ["config", "--local", "--list"])).includes(
@@ -85,6 +111,14 @@ exit 1
       "origin",
     ),
     [],
+  );
+  const fallback = await createGitEnvironment({
+    ...env,
+    FIXTURE_AUTH_CODE: "1",
+  });
+  assert.match(
+    await credential("github.com", { env: fallback, config: [] }),
+    /username=existing\npassword=existing-secret/,
   );
   await runner.run(folder, [
     "remote",

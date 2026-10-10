@@ -576,6 +576,62 @@ test("approval remains pending until the user decides and cannot be replayed", a
     { code: "approval_expired" },
   );
 });
+for (const decision of ["accept", "decline"])
+  test(
+    "additional Git permissions " +
+      (decision === "accept"
+        ? "grant exactly the approved access for this turn"
+        : "grant no access when declined"),
+    async (t) => {
+      const f = await clientFixture(t);
+      await f.client.send({
+        projectId: "one",
+        message: "request-permissions",
+        model: "fixture-model",
+        rootId: "primary",
+      });
+      const request = await waitFor(
+        async () =>
+          (await f.client.conversation("one")).messages.at(-1)?.approvals?.[0],
+      );
+      assert.equal(request.kind, "permissions");
+      assert.equal(request.permissions.network.enabled, true);
+      assert.deepEqual(request.permissions.fileSystem.write, [
+        path.join(f.projectFolder, ".git"),
+      ]);
+      await f.client.answer({ projectId: "one", id: request.id, decision });
+      await waitFor(async () => !f.client.isRunning("one"));
+      const result = JSON.parse(
+        await fs.readFile(
+          path.join(f.projectFolder, "permission-decision.json"),
+          "utf8",
+        ),
+      );
+      assert.deepEqual(result, {
+        permissions: decision === "accept" ? request.permissions : {},
+        scope: "turn",
+      });
+      assert.equal(
+        (await f.client.conversation("one")).messages.at(-1).status,
+        decision === "accept" ? "completed" : "cancelled",
+      );
+      await assert.rejects(
+        f.client.answer({
+          projectId: "one",
+          id: request.id,
+          decision: "accept",
+        }),
+        { code: "approval_expired" },
+      );
+      const shell = f.launched
+        .at(-1)
+        .args.find((arg) =>
+          arg.startsWith("shell_environment_policy.set.GIT_TERMINAL_PROMPT="),
+        );
+      assert.equal(JSON.parse(shell.slice(shell.indexOf("=") + 1)), "0");
+    },
+  );
+
 test("cancellation interrupts the RPC turn and preserves project isolation", async (t) => {
   const f = await clientFixture(t);
   await f.client.send({

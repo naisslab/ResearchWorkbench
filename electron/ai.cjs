@@ -16,6 +16,7 @@ const {
 const { createCodexAgent, codexExecutable } = require("./codex-agent.cjs");
 const { createResponseGateway } = require("./response-gateway.cjs");
 const { createTaskQueue } = require("./task-queue.cjs");
+const { createGitEnvironment } = require("./git-runner.cjs");
 const {
   createChangeStore,
   reviewKey,
@@ -904,7 +905,7 @@ function createAI({
               accessToken: gateway.token,
               baseUrl: gateway.baseUrl,
               home: path.join(directory, "codex", value.profileId),
-              environment,
+              environment: await createGitEnvironment(environment),
               skillRoots,
             }),
           };

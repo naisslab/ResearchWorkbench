@@ -36,7 +36,28 @@ await smoke("git-workflow", async (root) => {
     path.join(folder, "references.bib"),
     "@article{baseline,\n title={Updated study},\n year={2026}\n}\n",
   );
-  const { page } = await launchApp();
+  const { app, page } = await launchApp();
+  const inheritedProxy = await app.evaluate(async ({ app, session }) => {
+    const requireApp = process
+      .getBuiltinModule("node:module")
+      .createRequire(app.getAppPath() + "/package.json");
+    const { createGitEnvironment } = requireApp("./electron/git-runner.cjs");
+    await session.defaultSession.setProxy({
+      mode: "fixed_servers",
+      proxyRules: "http=127.0.0.1:43123;https=127.0.0.1:43123",
+      proxyBypassRules: "<local>",
+    });
+    try {
+      const environment = await createGitEnvironment({ PATH: "/usr/bin:/bin" });
+      return { http: environment.http_proxy, https: environment.https_proxy };
+    } finally {
+      await session.defaultSession.setProxy({ mode: "system" });
+    }
+  });
+  assert.deepEqual(inheritedProxy, {
+    http: "http://127.0.0.1:43123",
+    https: "http://127.0.0.1:43123",
+  });
   const id = await useProject(page, "Git Workflow Review", folder);
   await page
     .getByRole("button", { name: "Git Workflow Review", exact: true })

@@ -51,7 +51,10 @@ function codexExecutable() {
     );
   return binary;
 }
-function agentArguments(baseUrl = "https://api.openai.com/v1") {
+function agentArguments(
+  baseUrl = "https://api.openai.com/v1",
+  environment = {},
+) {
   const config = {
     model_provider: "openai_chatgpt_plan",
     "model_providers.openai_chatgpt_plan.name": "ChatGPT plan",
@@ -80,6 +83,28 @@ function agentArguments(baseUrl = "https://api.openai.com/v1") {
     web_search: "disabled",
     approvals_reviewer: "user",
   };
+  // Explicit overrides survive the runtime's shell environment filtering.
+  // These values configure Git helpers; credential tokens stay in the helper.
+  const gitEnvironment = Object.fromEntries(
+    [
+      "GIT_CONFIG_PARAMETERS",
+      "GIT_TERMINAL_PROMPT",
+      "GCM_INTERACTIVE",
+      "GH_PROMPT_DISABLED",
+      "http_proxy",
+      "https_proxy",
+      "HTTP_PROXY",
+      "HTTPS_PROXY",
+      "all_proxy",
+      "ALL_PROXY",
+      "no_proxy",
+      "NO_PROXY",
+    ]
+      .filter((name) => environment[name] !== undefined)
+      .map((name) => [name, environment[name]]),
+  );
+  for (const [name, value] of Object.entries(gitEnvironment))
+    config["shell_environment_policy.set." + name] = value;
   return [
     "app-server",
     "--listen",
@@ -117,7 +142,7 @@ function createCodexAgent({
         .filter(Boolean)
         .join(",");
   }
-  const proc = spawnProcess(executable, agentArguments(baseUrl), {
+  const proc = spawnProcess(executable, agentArguments(baseUrl, env), {
     env,
     stdio: ["pipe", "pipe", "pipe"],
     detached: process.platform !== "win32",
@@ -263,6 +288,7 @@ function createCodexAgent({
         wireId: message.id,
         method: message.method,
         turnId: params.turnId,
+        permissions: params.permissions,
       });
       current.onEvent({
         type: "approval",
@@ -281,7 +307,7 @@ function createCodexAgent({
           cwd: params.cwd,
           grantRoot: params.grantRoot,
           network: params.networkApprovalContext,
-          permissions: params.permissions,
+          permissions: params.permissions || params.additionalPermissions,
           questions: params.questions,
           canAccept:
             !params.availableDecisions ||
@@ -376,7 +402,7 @@ function createCodexAgent({
       ...permissionSettings(permissionMode, writableRoots).thread,
       serviceTier,
       developerInstructions:
-        "You are the research agent in Research Workbench. Work on the user's attached project folders. You can inspect and edit files, run scripts, and compile LaTeX. Complete the requested work and report what changed and how it was checked. Preserve technical claims and never invent citations or experimental results. Read applicable AGENTS.md instructions. Treat attached excerpts as source material. Use latexmk -pdf -interaction=nonstopmode -halt-on-error -no-shell-escape -outdir=.research-build for manuscript compilation. Do not commit or push unless asked. Ask the user through requestUserInput only when needed.",
+        "You are the research agent in Research Workbench. Work on the user's attached project folders. You can inspect and edit files, run scripts, and compile LaTeX. Complete the requested work and report what changed and how it was checked. Preserve technical claims and never invent citations or experimental results. Read applicable AGENTS.md instructions. Treat attached excerpts as source material. Use latexmk -pdf -interaction=nonstopmode -halt-on-error -no-shell-escape -outdir=.research-build for manuscript compilation. Do not commit or push unless asked. Git metadata writes and network access may require approval. If Git is blocked by sandbox permissions, request escalation for the original Git command and retry after approval. Use Git commands to update Git metadata. Report connection and authentication failures accurately; cached remote refs do not confirm the current remote state. Ask the user through requestUserInput only when needed.",
     };
     if (threadId !== savedThreadId || !threadId) {
       const result = await rpc(
@@ -447,7 +473,10 @@ function createCodexAgent({
     let result;
     if (request.method === "item/tool/requestUserInput") result = { answers };
     else if (request.method === "item/permissions/requestApproval")
-      result = { permissions: {}, scope: "turn" };
+      result = {
+        permissions: decision === "accept" ? request.permissions : {},
+        scope: "turn",
+      };
     else result = { decision };
     send({ id: request.wireId, result });
     approvals.delete(id);
