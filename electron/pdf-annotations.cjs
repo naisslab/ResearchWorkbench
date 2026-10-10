@@ -2,7 +2,6 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { atomicWrite } = require("./core.cjs");
-const { PDFDocument, PDFHexString } = require("pdf-lib");
 const COLORS = {
   yellow: [0.96, 0.78, 0.24],
   green: [0.3, 0.68, 0.43],
@@ -103,9 +102,16 @@ function createAnnotationStore(directory) {
     return path.join(directory, `${key}.${extension}`);
   };
   const queues = new Map();
+  // A document's bytes never change, so each Buffer is hashed once.
+  const hashes = new WeakMap();
+  const snapshots = new Set();
+  function identify(projectId, bytes) {
+    if (!hashes.has(bytes)) hashes.set(bytes, digest(bytes));
+    const hash = hashes.get(bytes);
+    return { hash, key: documentKey(projectId, hash) };
+  }
   async function load(projectId, bytes, name, sourcePath) {
-    const hash = digest(bytes),
-      key = documentKey(projectId, hash);
+    const { hash, key } = identify(projectId, bytes);
     let stored;
     try {
       stored = JSON.parse(await fs.readFile(file(key, "json"), "utf8"));
@@ -134,18 +140,19 @@ function createAnnotationStore(directory) {
   }
   async function save(projectId, bytes, name, sourcePath, input, pageCount) {
     const annotations = validateAnnotations(input, pageCount);
-    const hash = digest(bytes),
-      key = documentKey(projectId, hash);
+    const { hash, key } = identify(projectId, bytes);
     const previous = queues.get(key) || Promise.resolve();
     const next = previous
       .catch(() => {})
       .then(async () => {
-        await fs.mkdir(directory, { recursive: true });
-        try {
-          await fs.access(file(key, "pdf"));
-        } catch (error) {
-          if (error.code !== "ENOENT") throw error;
-          await atomicWrite(file(key, "pdf"), bytes);
+        if (!snapshots.has(key)) {
+          try {
+            await fs.access(file(key, "pdf"));
+          } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+            await atomicWrite(file(key, "pdf"), bytes);
+          }
+          snapshots.add(key);
         }
         const updatedAt = new Date().toISOString();
         await atomicWrite(
@@ -185,7 +192,7 @@ function createAnnotationStore(directory) {
     }
     const documents = [];
     for (const name of names.filter((name) =>
-      /^[a-f0-9]{64}\.json$/.test(name),
+      keyPattern.test(path.basename(name, ".json")),
     )) {
       const entry = JSON.parse(
         await fs.readFile(path.join(directory, name), "utf8"),
@@ -221,6 +228,7 @@ function createAnnotationStore(directory) {
   };
 }
 async function exportAnnotated(bytes, input, pageCount) {
+  const { PDFDocument, PDFHexString } = require("pdf-lib");
   const annotations = validateAnnotations(input, pageCount);
   const document = await PDFDocument.load(bytes);
   if (document.getPageCount() !== pageCount)

@@ -1,0 +1,110 @@
+Rc files read:
+  NONE
+Latexmk: This is Latexmk, John Collins, 27 Dec. 2024. Version 4.86a.
+No existing .aux file, so I'll make a simple one, and require run of *latex.
+Latexmk: applying rule 'pdflatex'...
+Rule 'pdflatex':  Reasons for rerun
+Category 'other':
+  Rerun of 'pdflatex' forced or previously required:
+    Reason or flag: 'Initial setup'
+
+------------
+Run number 1 of rule 'pdflatex'
+------------
+------------
+Running 'pdflatex  -interaction=nonstopmode -halt-on-error -no-shell-escape -file-line-error -synctex=1 -recorder -output-directory=".research-build"  "./main.tex"'
+------------
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex)
+entering extended mode
+(./main.tex
+LaTeX2e <2024-11-01> patch level 2
+L3 programming layer <2025-01-18>
+(/usr/local/texlive/2025/texmf-dist/tex/latex/base/article.cls
+Document Class: article 2024/06/29 v1.4n Standard LaTeX document class
+(/usr/local/texlive/2025/texmf-dist/tex/latex/base/size10.clo))
+(/usr/local/texlive/2025/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def)
+(.research-build/main.aux)
+
+LaTeX Warning: Reference `sec:method' on page 1 undefined on input line 3.
+
+
+LaTeX Warning: Citation `smith2024-a-very-long-citation-key' on page 1 undefine
+d on input line 3.
+
+(./sections/intro.tex
+
+LaTeX Warning: Reference `fig:missing' on page 1 undefined on input line 2.
+
+)
+[1{/usr/local/texlive/2025/texmf-var/fonts/map/pdftex/updmap/pdftex.map}]
+(.research-build/main.aux)
+
+LaTeX Warning: There were undefined references.
+
+
+LaTeX Warning: Label(s) may have changed. Rerun to get cross-references right.
+
+ )</usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb
+></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb>
+</usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb>
+Output written on .research-build/main.pdf (1 page, 34959 bytes).
+SyncTeX written on .research-build/main.synctex.gz.
+Transcript written on .research-build/main.log.
+Latexmk: Getting log file '.research-build/main.log'
+Latexmk: Examining '.research-build/main.fls'
+Latexmk: Examining '.research-build/main.log'
+Latexmk: References changed.
+Latexmk: Log file says output to '.research-build/main.pdf'
+Latexmk: applying rule 'pdflatex'...
+Rule 'pdflatex':  Reasons for rerun
+Changed files or newly in use/created:
+  .research-build/main.aux
+
+------------
+Run number 2 of rule 'pdflatex'
+------------
+------------
+Running 'pdflatex  -interaction=nonstopmode -halt-on-error -no-shell-escape -file-line-error -synctex=1 -recorder -output-directory=".research-build"  "./main.tex"'
+------------
+This is pdfTeX, Version 3.141592653-2.6-1.40.27 (TeX Live 2025) (preloaded format=pdflatex)
+entering extended mode
+(./main.tex
+LaTeX2e <2024-11-01> patch level 2
+L3 programming layer <2025-01-18>
+(/usr/local/texlive/2025/texmf-dist/tex/latex/base/article.cls
+Document Class: article 2024/06/29 v1.4n Standard LaTeX document class
+(/usr/local/texlive/2025/texmf-dist/tex/latex/base/size10.clo))
+(/usr/local/texlive/2025/texmf-dist/tex/latex/l3backend/l3backend-pdftex.def)
+(.research-build/main.aux)
+
+LaTeX Warning: Citation `smith2024-a-very-long-citation-key' on page 1 undefine
+d on input line 3.
+
+(./sections/intro.tex
+
+LaTeX Warning: Reference `fig:missing' on page 1 undefined on input line 2.
+
+)
+[1{/usr/local/texlive/2025/texmf-var/fonts/map/pdftex/updmap/pdftex.map}]
+(.research-build/main.aux)
+
+LaTeX Warning: There were undefined references.
+
+ )</usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx10.pfb
+></usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmbx12.pfb>
+</usr/local/texlive/2025/texmf-dist/fonts/type1/public/amsfonts/cm/cmr10.pfb>
+Output written on .research-build/main.pdf (1 page, 35148 bytes).
+SyncTeX written on .research-build/main.synctex.gz.
+Transcript written on .research-build/main.log.
+Latexmk: Getting log file '.research-build/main.log'
+Latexmk: Examining '.research-build/main.fls'
+Latexmk: Examining '.research-build/main.log'
+Latexmk: Log file says output to '.research-build/main.pdf'
+Latexmk: Summary of warnings from last run of *latex:
+  Latex failed to resolve 1 reference(s)
+  Latex failed to resolve 1 citation(s)
+Latexmk: All targets (.research-build/main.pdf) are up-to-date
+Latexmk: ====Undefined refs and citations with line #s in .tex file:
+  Citation `smith2024-a-very-long-citation-key' on page 1 undefined on input line 3
+  Reference `fig:missing' on page 1 undefined on input line 2
+

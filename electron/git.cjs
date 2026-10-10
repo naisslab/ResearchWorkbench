@@ -3,10 +3,17 @@ const { promisify } = require("node:util");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const runFile = promisify(execFile);
+let binary;
+// /usr/bin/git is an xcrun shim; resolving the real binary once saves a process per call.
+const gitBinary = () =>
+  (binary ??= runFile("/usr/bin/xcrun", ["--find", "git"]).then(
+    (result) => result.stdout.trim() || "/usr/bin/git",
+    () => "/usr/bin/git",
+  ));
 async function run(folder, args) {
   try {
     const result = await runFile(
-      "/usr/bin/git",
+      await gitBinary(),
       ["-C", await fs.realpath(folder), ...args],
       {
         timeout: 60000,
@@ -29,10 +36,34 @@ function displayRemote(remote) {
     return remote;
   }
 }
+const hasRef = (folder, ref) =>
+  run(folder, ["show-ref", "--verify", "--quiet", ref]).then(
+    () => true,
+    () => false,
+  );
+// Repository root, used as the operation lock key; a plain folder locks on its real path.
+const toplevel = (folder) =>
+  run(folder, ["rev-parse", "--show-toplevel"]).catch(() =>
+    fs.realpath(folder),
+  );
 async function status(folder) {
-  let repository;
+  let repository, output, remoteList, log;
   try {
-    repository = await run(folder, ["rev-parse", "--show-toplevel"]);
+    [repository, output, remoteList, log] = await Promise.all([
+      run(folder, ["rev-parse", "--show-toplevel"]),
+      run(folder, [
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--branch",
+        "--untracked-files=all",
+      ]),
+      run(folder, ["remote", "-v"]),
+      // An unborn HEAD has no log.
+      run(folder, ["log", "-8", "--format=%h%x00%s%x00%an%x00%aI"]).catch(
+        () => "",
+      ),
+    ]);
   } catch (error) {
     if (/not a git repository/i.test(error.message))
       return {
@@ -45,18 +76,12 @@ async function status(folder) {
       };
     throw error;
   }
-  const output = await run(folder, [
-    "status",
-    "--porcelain=v1",
-    "-z",
-    "--branch",
-    "--untracked-files=all",
-  ]);
   const parts = output.split("\0");
-  const header = parts.shift() || "";
-  const branch = header
-    .replace(/^## (?:No commits yet on |Initial commit on )?/, "")
-    .split(/\.\.\.| \[/)[0];
+  // "## main...origin/main [ahead 1, behind 2]", "## main", "## HEAD (no branch)"
+  const [, branch, upstream = "", track = ""] =
+    /^## (?:No commits yet on |Initial commit on )?(.+?)(?:\.\.\.(\S+))?(?: \[(.+)\])?$/.exec(
+      parts.shift() || "",
+    ) || [];
   const changes = [];
   for (let index = 0; index < parts.length; index++) {
     const entry = parts[index];
@@ -72,81 +97,61 @@ async function status(folder) {
       });
     if (/R|C/.test(entry.slice(0, 2))) index++;
   }
-  const remotes = (await run(folder, ["remote"])).split("\n").filter(Boolean);
-  let trackingRemote = "",
-    remoteBranch = branch;
-  try {
-    trackingRemote = await run(folder, [
-      "config",
-      "--get",
-      `branch.${branch}.remote`,
-    ]);
-  } catch {
-    /* No upstream yet. */
-  }
-  try {
-    remoteBranch = (
-      await run(folder, ["config", "--get", `branch.${branch}.merge`])
-    ).replace(/^refs\/heads\//, "");
-  } catch {
-    /* Use local branch name. */
-  }
-  const remoteName = remotes.includes(trackingRemote)
-    ? trackingRemote
-    : remotes.includes("origin")
-      ? "origin"
-      : remotes[0] || "";
-  const remote = remoteName
-    ? displayRemote(await run(folder, ["remote", "get-url", remoteName]))
-    : "";
+  const remotes = new Map(
+    remoteList
+      .split("\n")
+      .filter((line) => line.endsWith(" (fetch)"))
+      .map((line) => line.slice(0, -8).split("\t")),
+  );
+  const tracking = [...remotes.keys()].find((name) =>
+    upstream.startsWith(`${name}/`),
+  );
+  const remoteName =
+    tracking ||
+    (remotes.has("origin") ? "origin" : [...remotes.keys()][0]) ||
+    "";
+  const remoteBranch = tracking ? upstream.slice(tracking.length + 1) : branch;
   let ahead = 0,
     behind = 0,
     hasRemoteBranch = false;
-  if (remoteName) {
+  if (tracking && track !== "gone") {
+    hasRemoteBranch = true;
+    ahead = Number(/ahead (\d+)/.exec(track)?.[1] || 0);
+    behind = Number(/behind (\d+)/.exec(track)?.[1] || 0);
+  } else if (remoteName) {
+    // Without an upstream, compare with the same branch name on the remote.
     const remoteRef = `refs/remotes/${remoteName}/${remoteBranch}`;
-    try {
-      await run(folder, ["show-ref", "--verify", remoteRef]);
-      hasRemoteBranch = true;
-      const counts = await run(folder, [
-        "rev-list",
-        "--left-right",
-        "--count",
-        `HEAD...${remoteRef}`,
-      ]);
-      [ahead, behind] = counts.split(/\s+/).map(Number);
-    } catch {
-      /* Remote branch has not been fetched or local HEAD is unborn. */
-    }
-  }
-  let history = [];
-  try {
-    const log = await run(folder, [
-      "log",
-      "-8",
-      "--format=%h%x00%s%x00%an%x00%aI",
-    ]);
-    history = log
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => {
-        const [hash, subject, author, date] = line.split("\0");
-        return { hash, subject, author, date };
-      });
-    if (remoteName && !hasRemoteBranch)
-      ahead = Number(await run(folder, ["rev-list", "--count", "HEAD"]));
-  } catch {
-    /* No commits yet. */
+    hasRemoteBranch = await hasRef(folder, remoteRef);
+    if (log)
+      [ahead, behind] = hasRemoteBranch
+        ? (
+            await run(folder, [
+              "rev-list",
+              "--left-right",
+              "--count",
+              `HEAD...${remoteRef}`,
+            ])
+          )
+            .split(/\s+/)
+            .map(Number)
+        : [Number(await run(folder, ["rev-list", "--count", "HEAD"])), 0];
   }
   return {
     connected: true,
     repository,
     branch,
-    remote,
+    remote: remoteName ? displayRemote(remotes.get(remoteName)) : "",
     remoteName,
     remoteBranch,
     hasRemoteBranch,
     detached: branch.startsWith("HEAD"),
-    history,
+    history: log
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const [hash, subject, author, date] = line.split("\0");
+        return { hash, subject, author, date };
+      }),
     changes,
     ahead,
     behind,
@@ -302,15 +307,12 @@ async function sync(folder, direction = "sync") {
     throw new Error("Check out a branch before syncing.");
   if (direction !== "push") {
     await run(folder, ["fetch", current.remoteName]);
-    const remoteBranch = `refs/remotes/${current.remoteName}/${current.remoteBranch}`;
-    let hasBranch = false;
-    try {
-      await run(folder, ["show-ref", "--verify", remoteBranch]);
-      hasBranch = true;
-    } catch {
-      /* New remote branch. */
-    }
-    if (hasBranch)
+    if (
+      await hasRef(
+        folder,
+        `refs/remotes/${current.remoteName}/${current.remoteBranch}`,
+      )
+    )
       await run(folder, [
         "pull",
         "--ff-only",
@@ -327,4 +329,4 @@ async function sync(folder, direction = "sync") {
     ]);
   return status(folder);
 }
-module.exports = { status, init, diff, connect, commit, sync };
+module.exports = { toplevel, status, init, diff, connect, commit, sync };

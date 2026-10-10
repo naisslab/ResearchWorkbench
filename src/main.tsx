@@ -3,14 +3,20 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "@fontsource-variable/inter/wght.css";
 import "@fontsource-variable/jetbrains-mono/wght.css";
-import "pdfjs-dist/web/pdf_viewer.css";
+import "./tokens.css";
 import "./styles.css";
 import "./workbench.css";
-import "./themes.css";
 import "./deadlines.css";
-import "./light-glass.css";
 import "./git-workflow.css";
 import "./pdf-reader.css";
+
+// Main sets the native theme from the saved appearance, so the media query
+// already matches it; this avoids a light frame before React mounts.
+document.documentElement.dataset.theme = matchMedia(
+  "(prefers-color-scheme: dark)",
+).matches
+  ? "dark"
+  : "light";
 
 // Load bundled fonts before xterm measures its character cells.
 void Promise.all([

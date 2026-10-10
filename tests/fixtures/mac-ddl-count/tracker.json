@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "deadlines": [
+    {
+      "id": "fixture-sp-abstract",
+      "title": "S&P abstract",
+      "subtitle": "Research Paper",
+      "category": "paper",
+      "deadline": "2099-11-11T11:59:59Z",
+      "status": "notStarted",
+      "source": {
+        "kind": "ccfddl",
+        "dblpKey": "sp",
+        "eventID": "sp27",
+        "timelineIndex": 1,
+        "timelineKind": "abstract"
+      }
+    },
+    {
+      "id": "fixture-sp-paper",
+      "title": "S&P paper",
+      "subtitle": "Research Paper",
+      "category": "paper",
+      "deadline": "2099-11-18T11:59:59Z",
+      "status": "notStarted",
+      "source": {
+        "kind": "ccfddl",
+        "dblpKey": "sp",
+        "eventID": "sp27",
+        "timelineIndex": 1,
+        "timelineKind": "paper"
+      }
+    },
+    {
+      "id": "fixture-osdi-abstract",
+      "title": "OSDI abstract",
+      "subtitle": "Research Paper",
+      "category": "paper",
+      "deadline": "2099-12-01T22:59:59Z",
+      "status": "ongoing",
+      "source": {
+        "kind": "ccfddl",
+        "dblpKey": "osdi",
+        "eventID": "osdi2027",
+        "timelineIndex": 0,
+        "timelineKind": "abstract"
+      }
+    },
+    {
+      "id": "fixture-osdi-paper",
+      "title": "OSDI paper",
+      "subtitle": "Research Paper",
+      "category": "paper",
+      "deadline": "2099-12-08T22:59:59Z",
+      "status": "notStarted",
+      "source": {
+        "kind": "ccfddl",
+        "dblpKey": "osdi",
+        "eventID": "osdi2027",
+        "timelineIndex": 0,
+        "timelineKind": "paper"
+      }
+    },
+    {
+      "id": "fixture-grant-report",
+      "title": "Grant progress report",
+      "category": "funding",
+      "deadline": "2099-03-31T09:00:00Z",
+      "status": "finished",
+      "notes": "Manual entry without a feed source."
+    }
+  ]
+}

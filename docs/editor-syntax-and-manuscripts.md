@@ -1,8 +1,8 @@
 # Editor Syntax and Manuscripts
 
-The dark UI follows VS Code Dark Modern's neutral surfaces: editor `#1f1f1f`, sidebar `#181818`, subtle borders and blue actions. Light mode retains the Snazzy Light palette. Source token colors carry semantic differences; dashboard surfaces remain neutral. System appearance and terminal sessions retain their existing behavior.
+The dark UI follows VS Code Dark Modern's neutral surfaces: editor `#1f1f1f`, sidebar `#181818`, subtle borders and muted ink-blue actions. Light mode uses a calmer Snazzy Light palette: lower-chroma syntax colors and an ink-blue accent. Source token colors carry semantic differences; dashboard surfaces remain neutral. System appearance and terminal sessions retain their existing behavior.
 
-Light-mode chrome uses translucent white material with 20–28px backdrop blur over a muted cool-gray background. Search and modal overlays blur their backdrop while keeping labels sharp. Source editors, terminals and PDF pages keep opaque reading surfaces. Reduced-transparency preferences and browsers without blur support use solid surfaces. The light material is isolated in `src/light-glass.css` and does not change dark-mode colors.
+Light-mode chrome uses translucent white surfaces over a muted cool-gray background; only overlays (dialogs, the ⌘K finder and toasts) blur what is behind them. Source editors, terminals and PDF pages keep opaque reading surfaces. Reduced-transparency preferences use solid surfaces. The light material is the light-theme block of `src/tokens.css` and does not change dark-mode colors.
 
 ## Syntax Engine
 
@@ -23,4 +23,4 @@ Python, JavaScript, TypeScript, C/C++, CSS, HTML and JSON use CodeMirror's langu
 
 All imported folders have a local Git baseline. No GitHub remote was invented. Web RAG's Overleaf account allows only its project owner to establish GitHub linking; SoK's integration dialog confirms it has no linked repository. The user confirmed HillInfer's newer HillServe/EuroSys draft; its GitHub linking is also restricted to the project owner. These are source snapshots, so local edits do not automatically update Overleaf.
 
-Startup attaches these verified folders to empty existing project roots once. It preserves project names, stages, deadlines, notes and custom folder choices, and backs up the workspace before writing. A later intentional removal stays removed. A missing local manuscript remains eligible for import on a later startup.
+The research catalog records these folders and entry files, so the projects it adds start with them attached. Folder choices made in the app are kept.

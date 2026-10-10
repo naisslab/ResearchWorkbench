@@ -1,13 +1,18 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const os = require("node:os");
-const yaml = require("js-yaml");
-const { atomicWrite } = require("./core.cjs");
+const {
+  atomicWrite,
+  stringList,
+  DATE_CATEGORIES,
+  DATE_STATUSES,
+} = require("./core.cjs");
 const REPO = "ccfddl/ccf-deadlines";
 const TREE_URL = `https://api.github.com/repos/${REPO}/git/trees/main?recursive=1`;
 const RAW_URL = `https://raw.githubusercontent.com/${REPO}/main/`;
 const SOURCE_URL = `https://github.com/${REPO}`;
 const macDirectory = () =>
+  process.env.RESEARCH_MAC_DDL_DIR ||
   path.join(os.homedir(), "Library/Application Support/mac-ddl-count");
 const fields = {
   abstract_deadline: "abstract",
@@ -169,6 +174,8 @@ function normalizeConference(conf, filePath, now = new Date()) {
 function flatten(catalog) {
   return catalog.conferences.flatMap((c) => c.events.flatMap((e) => e.dates));
 }
+const feedIndex = (catalog) =>
+  new Map(flatten(catalog).map((d) => [d.sourceKey, d]));
 function officialWebDates() {
   const kinds = [
     ["abstract", "2026-10-18"],
@@ -211,12 +218,11 @@ function inferKind(entry) {
   return entry.category === "paper" ? "submission" : "other";
 }
 function importTracker(workspace, tracker, catalog) {
-  if (workspace.deadlineImportVersion === 1) return workspace;
   if (!tracker || !Array.isArray(tracker.deadlines))
     throw new Error("The Mac deadline tracker has an invalid format.");
   const dates = [...(workspace.trackedDeadlines || [])];
   const known = new Set(dates.map((d) => d.id));
-  const feed = new Map(flatten(catalog).map((d) => [d.sourceKey, d]));
+  const feed = feedIndex(catalog);
   for (const entry of tracker.deadlines) {
     if (
       typeof entry.id !== "string" ||
@@ -242,15 +248,13 @@ function importTracker(workspace, tracker, catalog) {
       id,
       label: entry.title,
       subtitle: entry.subtitle || "",
-      category: ["paper", "funding", "award", "service", "other"].includes(
-        entry.category,
-      )
+      category: DATE_CATEGORIES.includes(entry.category)
         ? entry.category
         : "other",
       kind: inferKind(entry),
       time: new Date(entry.deadline).toISOString(),
       timezone: reference?.timezone || "UTC",
-      status: ["notStarted", "ongoing", "finished"].includes(entry.status)
+      status: DATE_STATUSES.includes(entry.status)
         ? entry.status
         : "notStarted",
       notes: entry.notes || "",
@@ -281,7 +285,7 @@ function seedWeb(workspace) {
   };
 }
 function changes(workspace, catalog) {
-  const feed = new Map(flatten(catalog).map((d) => [d.sourceKey, d]));
+  const feed = feedIndex(catalog);
   return (workspace.trackedDeadlines || []).flatMap((current) => {
     if (!current.sourceKey || !["ccfddl", "official"].includes(current.source))
       return [];
@@ -304,16 +308,11 @@ function changes(workspace, catalog) {
   });
 }
 function addFeedDates(workspace, catalog, keys) {
-  if (
-    !Array.isArray(keys) ||
-    keys.length > 500 ||
-    keys.some((k) => typeof k !== "string")
-  )
-    throw new Error("Choose valid conference deadlines.");
+  stringList(keys, 500, "Choose valid conference deadlines.");
   const known = new Set(
     (workspace.trackedDeadlines || []).map((d) => d.sourceKey),
   );
-  const feed = new Map(flatten(catalog).map((d) => [d.sourceKey, d]));
+  const feed = feedIndex(catalog);
   const additions = keys.flatMap((key) => {
     const d = feed.get(key);
     if (!d)
@@ -330,13 +329,9 @@ function addFeedDates(workspace, catalog, keys) {
   };
 }
 function applyUpdates(workspace, catalog, ids) {
-  if (
-    !Array.isArray(ids) ||
-    ids.length > 500 ||
-    ids.some((id) => typeof id !== "string")
-  )
-    throw new Error("Choose valid deadline updates.");
-  const selected = new Set(ids);
+  const selected = new Set(
+    stringList(ids, 500, "Choose valid deadline updates."),
+  );
   const updates = new Map(
     changes(workspace, catalog)
       .filter((d) => selected.has(d.id))
@@ -368,6 +363,8 @@ async function readJson(file) {
     throw error;
   }
 }
+const readMacTracker = () =>
+  readJson(path.join(macDirectory(), "tracker.json"));
 async function macCatalog(directory = macDirectory()) {
   const cache = await readJson(path.join(directory, "ccfddl-cache.json"));
   if (
@@ -420,6 +417,12 @@ function createFeed(file, options = {}) {
         const tree = await (await request(TREE_URL)).json();
         if (tree.truncated || !Array.isArray(tree.tree))
           throw new Error("The CCF conference index is incomplete.");
+        // An unchanged index keeps the same conferences array, which tells
+        // callers that there is nothing new to send.
+        if (tree.sha && tree.sha === cache.treeSha && !cache.error) {
+          cache = { ...cache, checkedAt: start, lastSuccessAt: start };
+          return snapshot();
+        }
         const files = tree.tree.filter(
           (d) =>
             d.type === "blob" && /^conference\/[^/]+\/[^/]+\.yml$/.test(d.path),
@@ -429,6 +432,7 @@ function createFeed(file, options = {}) {
         const blobs = { ...(cache.blobs || {}) };
         let index = 0;
         const errors = [];
+        const yaml = require("js-yaml");
         await Promise.all(
           Array.from({ length: 6 }, async () => {
             while (index < files.length) {
@@ -465,6 +469,7 @@ function createFeed(file, options = {}) {
         cache = {
           conferences,
           blobs: next,
+          treeSha: tree.sha,
           checkedAt: start,
           lastSuccessAt: errors.length
             ? cache.lastSuccessAt
@@ -504,14 +509,11 @@ module.exports = {
   toInstant,
   normalizeConference,
   flatten,
-  officialWebDates,
   importTracker,
   seedWeb,
   changes,
   addFeedDates,
   applyUpdates,
-  readJson,
-  macDirectory,
-  macCatalog,
+  readMacTracker,
   createFeed,
 };

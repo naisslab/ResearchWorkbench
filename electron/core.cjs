@@ -1,56 +1,30 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { spawn } = require("node:child_process");
-const STAGES = [
-  "exploration",
-  "experiments",
-  "writing",
-  "submitted",
-  "revision",
-  "accepted",
-  "published",
-];
-const EXTENSIONS = new Set([
-  ".tex",
-  ".ltx",
-  ".dtx",
-  ".bst",
-  ".bbx",
-  ".cbx",
-  ".mjs",
-  ".cjs",
-  ".zsh",
-  ".bash",
-  ".cc",
-  ".bib",
-  ".md",
-  ".txt",
-  ".sty",
-  ".cls",
-  ".csv",
-  ".py",
-  ".js",
-  ".jsx",
-  ".ts",
-  ".tsx",
-  ".json",
-  ".yaml",
-  ".yml",
-  ".toml",
-  ".sh",
-  ".rs",
-  ".go",
-  ".c",
-  ".cpp",
-  ".h",
-  ".hpp",
-  ".css",
-  ".html",
-  ".sql",
-  ".r",
-  ".ipynb",
-]);
+const { promisify } = require("node:util");
+const { spawn, execFile } = require("node:child_process");
+const runFile = promisify(execFile);
+// Space-separated word lists keep these long vocabularies on a few lines.
+const words = (list) => list.split(" ");
+const STAGES = words(
+  "exploration experiments writing submitted revision accepted published",
+);
+const DATE_KINDS = words(
+  "abstract submission notification revision camera-ready other",
+);
+const DATE_CATEGORIES = words("paper funding award service other");
+const DATE_STATUSES = words("notStarted ongoing finished");
+const DATE_SOURCES = words("manual ccfddl official");
+const EXTENSIONS = new Set(
+  words(
+    ".tex .ltx .dtx .bst .bbx .cbx .bib .sty .cls .md .txt .csv .json .yaml " +
+      ".yml .toml .py .ipynb .r .sql .js .jsx .ts .tsx .mjs .cjs .css .html " +
+      ".sh .zsh .bash .rs .go .c .cc .cpp .h .hpp",
+  ),
+);
+const IGNORED = new Set(
+  words("node_modules build dist vendor __pycache__ target venv"),
+);
 const DEFAULT_AREAS = [
   { id: "ml", name: "ML Systems", color: "#087cba", icon: "circuit" },
   {
@@ -66,6 +40,22 @@ const DEFAULT_AREAS = [
     icon: "radio",
   },
 ];
+const text = (value) => typeof value === "string" && value.trim() !== "";
+const isHttpUrl = (value) =>
+  typeof value === "string" && /^https?:\/\//.test(value);
+// Deadline links are optional, so "" also means no link.
+const optionalUrl = (value) =>
+  value === undefined || value === "" || isHttpUrl(value);
+function stringList(value, max, message) {
+  if (
+    !Array.isArray(value) ||
+    value.length > max ||
+    value.some((item) => !text(item)) ||
+    new Set(value).size !== value.length
+  )
+    throw new Error(message);
+  return value;
+}
 function validateState(value) {
   if (
     !value ||
@@ -78,16 +68,45 @@ function validateState(value) {
     );
   if (value.projects.length > 500 || value.areas.length > 100)
     throw new Error("Workspace is too large.");
-  if (value.appearance !== undefined && !['light', 'dark', 'system'].includes(value.appearance)) throw new Error('Invalid appearance.');
+  if (
+    value.appearance !== undefined &&
+    !["light", "dark", "system"].includes(value.appearance)
+  )
+    throw new Error("Invalid appearance.");
   if (value.trackedDeadlines !== undefined) {
-    if (!Array.isArray(value.trackedDeadlines) || value.trackedDeadlines.length > 5000) throw new Error('Invalid tracked deadlines.');
+    if (
+      !Array.isArray(value.trackedDeadlines) ||
+      value.trackedDeadlines.length > 5000
+    )
+      throw new Error("Invalid tracked deadlines.");
     const dateIds = new Set();
     for (const d of value.trackedDeadlines) {
-      if (!d || typeof d.id !== 'string' || !d.id || dateIds.has(d.id) || typeof d.label !== 'string' || !d.label.trim() || typeof d.subtitle !== 'string' || typeof d.time !== 'string' || !/Z$/.test(d.time) || !Number.isFinite(Date.parse(d.time)) || typeof d.timezone !== 'string' || !['paper','funding','award','service','other'].includes(d.category) || !['abstract','submission','notification','revision','camera-ready','other'].includes(d.kind) || !['notStarted','ongoing','finished'].includes(d.status) || !['manual','ccfddl','official'].includes(d.source)) throw new Error('Invalid tracked deadline.');
+      if (
+        !d ||
+        !text(d.id) ||
+        dateIds.has(d.id) ||
+        !text(d.label) ||
+        typeof d.subtitle !== "string" ||
+        typeof d.time !== "string" ||
+        !/Z$/.test(d.time) ||
+        !Number.isFinite(Date.parse(d.time)) ||
+        typeof d.timezone !== "string" ||
+        !DATE_CATEGORIES.includes(d.category) ||
+        !DATE_KINDS.includes(d.kind) ||
+        !DATE_STATUSES.includes(d.status) ||
+        !DATE_SOURCES.includes(d.source)
+      )
+        throw new Error("Invalid tracked deadline.");
       dateIds.add(d.id);
-      if (d.projectIds !== undefined && (!Array.isArray(d.projectIds) || d.projectIds.length > 500 || d.projectIds.some(id => typeof id !== 'string' || !id) || new Set(d.projectIds).size !== d.projectIds.length)) throw new Error('Invalid linked projects.');
-      for (const field of ['originalDate','notes','sourceKey','conference','eventId','importedFrom','projectId']) if (d[field] !== undefined && typeof d[field] !== 'string') throw new Error('Invalid deadline metadata.');
-      for (const field of ['url','sourceUrl']) if (d[field] !== undefined && (typeof d[field] !== 'string' || !/^https?:\/\//.test(d[field]))) throw new Error('Deadline source must be an HTTP or HTTPS URL.');
+      if (d.projectIds !== undefined)
+        stringList(d.projectIds, 500, "Invalid linked projects.");
+      for (const field of words(
+        "originalDate notes sourceKey conference eventId importedFrom projectId",
+      ))
+        if (d[field] !== undefined && typeof d[field] !== "string")
+          throw new Error("Invalid deadline metadata.");
+      if (!optionalUrl(d.url) || !optionalUrl(d.sourceUrl))
+        throw new Error("Deadline source must be an HTTP or HTTPS URL.");
     }
   }
   const ids = new Set();
@@ -95,8 +114,7 @@ function validateState(value) {
     if (
       !area ||
       typeof area.id !== "string" ||
-      typeof area.name !== "string" ||
-      !area.name.trim() ||
+      !text(area.name) ||
       ids.has(area.id) ||
       !/^#[0-9a-f]{6}$/i.test(area.color)
     )
@@ -109,22 +127,19 @@ function validateState(value) {
       !p ||
       typeof p.id !== "string" ||
       projectIds.has(p.id) ||
-      typeof p.name !== "string" ||
-      !p.name.trim() ||
+      !text(p.name) ||
       !ids.has(p.areaId) ||
       !STAGES.includes(p.stage)
     )
       throw new Error("Invalid project.");
     projectIds.add(p.id);
-    for (const field of [
-      "catalogId",
-      "topic",
-      "icon",
-      "sourceNote",
-      "folderLabel",
-    ])
+    for (const field of words("catalogId topic icon sourceNote folderLabel"))
       if (p[field] !== undefined && typeof p[field] !== "string")
         throw new Error(`Invalid ${field}.`);
+    for (const field of words("summary notes venue folder mainFile sshHost"))
+      if (typeof p[field] !== "string") throw new Error(`Invalid ${field}.`);
+    if (p.compileOnSave !== undefined && typeof p.compileOnSave !== "boolean")
+      throw new Error("Invalid compileOnSave.");
     if (p.localFolders !== undefined) {
       if (!Array.isArray(p.localFolders) || p.localFolders.length > 30)
         throw new Error("Invalid local folders.");
@@ -132,11 +147,9 @@ function validateState(value) {
       for (const folder of p.localFolders) {
         if (
           !folder ||
-          typeof folder.id !== "string" ||
-          !folder.id ||
+          !text(folder.id) ||
           folderIds.has(folder.id) ||
-          typeof folder.label !== "string" ||
-          !folder.label.trim() ||
+          !text(folder.label) ||
           typeof folder.folder !== "string" ||
           !path.isAbsolute(folder.folder)
         )
@@ -150,22 +163,10 @@ function validateState(value) {
         p.links.length > 30 ||
         p.links.some(
           (link) =>
-            !link ||
-            typeof link.label !== "string" ||
-            typeof link.url !== "string" ||
-            !/^https?:\/\//.test(link.url),
+            !link || typeof link.label !== "string" || !isHttpUrl(link.url),
         ))
     )
       throw new Error("Project links must be HTTP or HTTPS URLs.");
-    for (const field of [
-      "summary",
-      "notes",
-      "venue",
-      "folder",
-      "mainFile",
-      "sshHost",
-    ])
-      if (typeof p[field] !== "string") throw new Error(`Invalid ${field}.`);
     if (!Array.isArray(p.tasks) || !Array.isArray(p.deadlines))
       throw new Error("Invalid project tasks or dates.");
     for (const task of p.tasks)
@@ -179,20 +180,13 @@ function validateState(value) {
       if (
         typeof d.id !== "string" ||
         typeof d.label !== "string" ||
-        ![
-          "abstract",
-          "submission",
-          "notification",
-          "revision",
-          "camera-ready",
-          "other",
-        ].includes(d.kind) ||
+        !DATE_KINDS.includes(d.kind) ||
         !/^\d{4}-\d{2}-\d{2}$/.test(d.date) ||
         !Number.isFinite(Date.parse(d.date)) ||
         new Date(d.date).toISOString().slice(0, 10) !== d.date
       )
         throw new Error("Invalid deadline.");
-      if (d.url && (typeof d.url !== "string" || !/^https?:\/\//.test(d.url)))
+      if (!optionalUrl(d.url))
         throw new Error("Deadline source must be an HTTP or HTTPS URL.");
     }
   }
@@ -217,32 +211,61 @@ async function safeFile(root, relative) {
     throw new Error("File must be inside the project folder.");
   return target;
 }
+// A path that may not exist yet: plain names joined by "/" in an existing
+// folder that, through any symlinks, stays inside `root`.
+async function safeNewPath(root, relative) {
+  if (
+    typeof relative !== "string" ||
+    !relative.split("/").every((part) => /^[\w -][\w. -]*$/.test(part))
+  )
+    throw new Error(
+      "Use simple names separated by /, without .. or a leading dot.",
+    );
+  const canonicalRoot = await fs.realpath(root);
+  const folder = path.dirname(relative);
+  const parent = await fs
+    .realpath(path.join(canonicalRoot, folder))
+    .catch(() => {
+      throw new Error(`Folder ${folder} does not exist.`);
+    });
+  if (parent !== canonicalRoot && !parent.startsWith(canonicalRoot + path.sep))
+    throw new Error("File must be inside the project folder.");
+  return path.join(parent, path.basename(relative));
+}
+// Breadth-first, eight directories at a time, within a directory-entry budget.
 async function listFiles(root) {
   if (!root) return [];
   const results = [];
-  async function walk(dir, depth) {
-    if (depth > 6 || results.length > 1500) return;
-    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-      if (
-        entry.name.startsWith(".") ||
-        [
-          "node_modules",
-          "build",
-          "dist",
-          "vendor",
-          "__pycache__",
-          "target",
-          "venv",
-        ].includes(entry.name)
-      )
-        continue;
-      const file = path.join(dir, entry.name);
-      if (entry.isDirectory()) await walk(file, depth + 1);
-      else if (entry.isFile() && isTextFile(entry.name))
-        results.push(path.relative(root, file));
+  let level = [root];
+  let budget = 20000;
+  for (let depth = 0; level.length && depth <= 6; depth++) {
+    const next = [];
+    for (
+      let i = 0;
+      i < level.length && budget > 0 && results.length < 1500;
+      i += 8
+    ) {
+      const batch = level.slice(i, i + 8);
+      const listings = await Promise.all(
+        batch.map((dir) => fs.readdir(dir, { withFileTypes: true })),
+      );
+      listings.forEach((entries, index) => {
+        budget -= entries.length;
+        for (const entry of entries) {
+          if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue;
+          const file = path.join(batch[index], entry.name);
+          if (entry.isDirectory()) next.push(file);
+          else if (
+            entry.isFile() &&
+            isTextFile(entry.name) &&
+            results.length < 1500
+          )
+            results.push(path.relative(root, file));
+        }
+      });
     }
+    level = next;
   }
-  await walk(root, 0);
   return results.sort();
 }
 function isTextFile(file) {
@@ -298,18 +321,25 @@ function sshArgs(host) {
     );
   return [host];
 }
+const pdfPath = (main) =>
+  path.join(
+    path.dirname(main),
+    ".research-build",
+    path.basename(main, ".tex") + ".pdf",
+  );
 async function compile(project, onOutput, env = process.env, signal) {
   if (!project.mainFile.endsWith(".tex"))
     throw new Error("Select a .tex entry file first.");
   const main = await safeFile(project.folder, project.mainFile);
-  const cwd = path.dirname(main);
-  const output = path.join(cwd, ".research-build");
+  const pdf = pdfPath(main);
+  const output = path.dirname(pdf);
   await fs.mkdir(output, { recursive: true });
-  const pdf = path.join(output, path.basename(main, ".tex") + ".pdf");
   const backup = path.join(output, `.previous-${crypto.randomUUID()}.pdf`);
+  const clone = (from, to) =>
+    fs.copyFile(from, to, fs.constants.COPYFILE_FICLONE);
   let hasBackup = false;
   try {
-    await fs.copyFile(pdf, backup);
+    await clone(pdf, backup);
     hasBackup = true;
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
@@ -323,49 +353,49 @@ async function compile(project, onOutput, env = process.env, signal) {
           "-interaction=nonstopmode",
           "-halt-on-error",
           "-no-shell-escape",
+          "-file-line-error",
+          "-synctex=1",
           `-outdir=${output}`,
           "./" + path.basename(main),
         ],
-        { cwd, env, detached: process.platform !== "win32" },
+        { cwd: path.dirname(main), env, detached: true },
       );
       let log = "";
-      let timedOut = false;
+      let stopped = "";
+      let forceTimer;
       const append = (data) => {
         const text = data.toString();
-        log = (log + text).slice(-150000);
+        // Trimming only past twice the limit keeps appends linear.
+        log += text;
+        if (log.length > 300000) log = log.slice(-150000);
         onOutput?.(text);
       };
       child.stdout.on("data", append);
       child.stderr.on("data", append);
-      let canceled = false;
-      let forceTimer;
-      const terminate = () => {
-        if (!child.pid) return;
+      const kill = (signal) => {
         try {
-          if (process.platform !== "win32") process.kill(-child.pid, "SIGTERM");
-          else child.kill("SIGTERM");
+          process.kill(-child.pid, signal);
         } catch {}
-        forceTimer = setTimeout(() => {
-          try {
-            if (process.platform !== "win32")
-              process.kill(-child.pid, "SIGKILL");
-            else child.kill("SIGKILL");
-          } catch {}
-        }, 2000);
       };
-      const abort = () => {
-        canceled = true;
-        terminate();
+      const stop = (reason) => {
+        stopped = reason;
+        if (!child.pid) return;
+        kill("SIGTERM");
+        forceTimer = setTimeout(() => kill("SIGKILL"), 2000);
       };
+      const abort = () => stop("Build canceled.");
       signal?.addEventListener("abort", abort, { once: true });
-      const timer = setTimeout(() => {
-        timedOut = true;
-        terminate();
-      }, 90000);
-      child.once("error", (error) => {
+      const timer = setTimeout(
+        () => stop("Compilation stopped after 90 seconds."),
+        90000,
+      );
+      const settle = () => {
         clearTimeout(timer);
         clearTimeout(forceTimer);
         signal?.removeEventListener("abort", abort);
+      };
+      child.once("error", (error) => {
+        settle();
         reject(
           new Error(
             error.code === "ENOENT"
@@ -375,45 +405,76 @@ async function compile(project, onOutput, env = process.env, signal) {
         );
       });
       child.once("close", async (code) => {
-        clearTimeout(timer);
-        clearTimeout(forceTimer);
-        signal?.removeEventListener("abort", abort);
-        if (canceled) {
-          resolve({ ok: false, log: log + "\nBuild canceled.", pdf: null });
-          return;
-        }
-        if (timedOut) {
-          resolve({
-            ok: false,
-            log: log + "\nCompilation stopped after 90 seconds.",
-            pdf: null,
-          });
-          return;
-        }
-        let exists = false;
-        try {
-          await fs.access(pdf);
-          exists = true;
-        } catch {
-          /* No PDF produced */
-        }
-        resolve({
-          ok: code === 0 && exists,
-          log,
-          pdf: code === 0 && exists ? pdf : null,
-        });
+        settle();
+        if (stopped)
+          return resolve({ ok: false, log: `${log}\n${stopped}`, pdf: null });
+        const ok =
+          code === 0 &&
+          (await fs.access(pdf).then(
+            () => true,
+            () => false,
+          ));
+        resolve({ ok, log, pdf: ok ? pdf : null });
       });
     });
-    if (!result.ok && hasBackup) await fs.copyFile(backup, pdf);
+    if (!result.ok && hasBackup) await clone(backup, pdf);
     return result;
   } catch (error) {
-    if (hasBackup) await fs.copyFile(backup, pdf);
+    if (hasBackup) await clone(backup, pdf);
     throw error;
   } finally {
     await fs.rm(backup, { force: true });
   }
 }
-async function seedWorkspace() {
+// The first record of synctex's output; {} when the tool or position is unavailable.
+async function synctex(args, env) {
+  const { stdout } = await runFile("synctex", args, {
+    env,
+    timeout: 10000,
+  }).catch(() => ({ stdout: "" }));
+  const record = {};
+  for (const [, key, value] of stdout.matchAll(/^(\w+):(.*)$/gm))
+    record[key] ??= value;
+  return record;
+}
+const builtMain = (project) =>
+  safeFile(project.folder, project.mainFile).catch(() => null);
+async function synctexForward(project, file, line, rootId, env) {
+  if (!Number.isInteger(line) || line < 1) throw new Error("Invalid line.");
+  const source = await safeFile(fileRoot(project, rootId), file);
+  const main = await builtMain(project);
+  if (!main) return null;
+  const r = await synctex(
+    ["view", "-i", `${line}:0:${source}`, "-o", pdfPath(main)],
+    env,
+  );
+  return r.Page
+    ? { page: Number(r.Page), x: Number(r.x), y: Number(r.y) }
+    : null;
+}
+async function synctexInverse(project, page, x, y, env) {
+  if (![page, x, y].every(Number.isFinite))
+    throw new Error("Invalid PDF position.");
+  const main = await builtMain(project);
+  if (!main) return null;
+  const r = await synctex(
+    ["edit", "-o", `${page}:${x}:${y}:${pdfPath(main)}`],
+    env,
+  );
+  if (!r.Input) return null;
+  const input = path.resolve(path.dirname(main), r.Input);
+  for (const root of projectRoots(project)) {
+    const base = await fs.realpath(root.folder).catch(() => "");
+    if (base && input.startsWith(base + path.sep))
+      return {
+        file: path.relative(base, input),
+        rootId: root.id,
+        line: Math.max(1, Number(r.Line) || 1),
+      };
+  }
+  return null;
+}
+function seedWorkspace() {
   return {
     version: 1,
     areaLabelVersion: 2,
@@ -422,16 +483,22 @@ async function seedWorkspace() {
   };
 }
 module.exports = {
-  STAGES,
   DEFAULT_AREAS,
+  DATE_CATEGORIES,
+  DATE_STATUSES,
+  stringList,
   validateState,
   atomicWrite,
   safeFile,
+  safeNewPath,
   listFiles,
   projectFiles,
   fileRoot,
   isTextFile,
   sshArgs,
+  pdfPath,
   compile,
+  synctexForward,
+  synctexInverse,
   seedWorkspace,
 };

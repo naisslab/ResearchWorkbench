@@ -1,44 +1,12 @@
-import { _electron as electron } from "playwright";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
-const root = await fs.mkdtemp(path.join(os.tmpdir(), "research-dates-ui-"));
+import { launchApp, macDdlDir, smoke } from "./smoke-harness.mjs";
 const source = JSON.parse(
-  await fs.readFile(
-    path.join(
-      os.homedir(),
-      "Library/Application Support/mac-ddl-count/tracker.json",
-    ),
-    "utf8",
-  ),
+  await fs.readFile(path.join(macDdlDir, "tracker.json"), "utf8"),
 );
-let app;
-const errors = [];
-async function launch() {
-  app = await electron.launch({
-    executablePath: process.env.RESEARCH_APP_PATH || undefined,
-    args: process.env.RESEARCH_APP_PATH ? [] : ["."],
-    cwd: process.cwd(),
-    env: { ...process.env, RESEARCH_TEST_DATA: root, RESEARCH_DEV_URL: "" },
-  });
-  const page = await app.firstWindow();
-  page.on("pageerror", (e) => errors.push(e.message));
-  await page
-    .getByRole("heading", { name: "Research Overview", exact: true })
-    .waitFor();
-  return page;
-}
-try {
-  try {
-    await fs.copyFile(
-      "/tmp/research-ccf-live.json",
-      path.join(root, "ccf-deadlines-cache.json"),
-    );
-  } catch {}
-  let page = await launch();
+await smoke("dates", async (root) => {
+  let { app, page } = await launchApp();
   const initial = await page.evaluate(() => window.research.load());
   assert.equal(initial.appearance, "system");
   await page.emulateMedia({ colorScheme: "dark" });
@@ -52,19 +20,6 @@ try {
   assert.equal(
     await app.evaluate(({ nativeTheme }) => nativeTheme.themeSource),
     "system",
-  );
-  const areaProjects = page.locator(".area-projects").first();
-  const areaBox = await areaProjects.boundingBox();
-  await page.mouse.move(
-    areaBox.x + areaBox.width / 2,
-    areaBox.y + areaBox.height / 2,
-  );
-  await page.mouse.wheel(0, 120);
-  await page.waitForFunction(
-    () => document.querySelector(".area-projects").dataset.scrolling === "true",
-  );
-  await page.waitForFunction(
-    () => !document.querySelector(".area-projects").dataset.scrolling,
   );
   const sp = initial.trackedDeadlines.find(
     (d) => d.sourceKey === "sp:sp27:1:deadline",
@@ -95,7 +50,9 @@ try {
     initial.trackedDeadlines.filter((d) => d.eventId === "www27").length,
     4,
   );
-  await page.getByRole("button", { name: /Dates & deadlines/ }).click();
+  await page
+    .getByRole("button", { name: "Dates & deadlines", exact: true })
+    .click();
   await page.getByRole("tab", { name: /My dates/ }).waitFor();
   await page.getByLabel("Search deadlines").fill("TraceFoundry");
   assert.equal(await page.locator(".tracked-date-row").count(), 2);
@@ -106,17 +63,11 @@ try {
     .locator(".deadline-table-row")
     .filter({ hasText: "TraceFoundry" })
     .first();
-  await linkedMilestone
-    .getByRole("button", { name: "Edit", exact: true })
-    .click();
+  await linkedMilestone.getByRole("button", { name: /^Edit / }).click();
   await page.getByRole("heading", { name: "Edit date", exact: true }).waitFor();
   await page.getByLabel("TraceFoundry", { exact: true }).uncheck();
   await page.getByRole("button", { name: "Save date", exact: true }).click();
   const afterEdit = await page.evaluate(() => window.research.load());
-  const edited = afterEdit.trackedDeadlines.find(
-    (d) =>
-      d.id === osdi.id || d.sourceKey === "osdi:osdi2027:0:abstract_deadline",
-  );
   assert.equal(
     afterEdit.trackedDeadlines.length,
     initial.trackedDeadlines.length,
@@ -132,27 +83,32 @@ try {
   await page.screenshot({ path: "output/playwright/deadlines-light.png" });
   await page
     .locator(".tracked-date-row")
-    .filter({ hasText: "OSDI 2027 paper" })
+    .filter({ hasText: "OSDI paper" })
     .getByRole("button", { name: /TraceForge/ })
     .click();
+  // A linked date in project details opens the shared date editor.
   await page
-    .locator(".linked-conference-dates")
-    .getByText("OSDI 2027 paper", { exact: true })
-    .waitFor();
-  await page.getByRole("button", { name: /Dates & deadlines/ }).click();
+    .locator(".detail-deadlines")
+    .getByText("OSDI paper", { exact: true })
+    .click();
+  await page.getByRole("heading", { name: "Edit date", exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await page
+    .getByRole("button", { name: "Dates & deadlines", exact: true })
+    .click();
   await page.getByRole("tab", { name: "CCF conferences", exact: true }).click();
   await page.getByLabel("Search CCF conferences").fill("SIGMETRICS");
   await page
-    .getByRole("heading", { name: "SIGMETRICS 2027", exact: true })
+    .getByRole("heading", { name: "SIGMETRICS 2099", exact: true })
     .waitFor();
   const winter = page.getByRole("button", {
-    name: "Track SIGMETRICS 2027 Abstract winter round",
+    name: "Track SIGMETRICS 2099 Abstract winter round",
     exact: true,
   });
   await winter.click();
   await page
     .getByRole("button", {
-      name: "Tracked SIGMETRICS 2027 Abstract winter round",
+      name: "Tracked SIGMETRICS 2099 Abstract winter round",
       exact: true,
     })
     .waitFor();
@@ -164,7 +120,7 @@ try {
   await page.getByLabel("Search CCF conferences").fill("The Web Conference");
   await page
     .getByRole("heading", {
-      name: "The Web Conference (WWW) 2027",
+      name: "The Web Conference (WWW) 2099",
       exact: true,
     })
     .waitFor();
@@ -186,7 +142,7 @@ try {
   await page
     .getByLabel("Title", { exact: true })
     .fill("UI exact-time milestone");
-  await page.getByLabel("Local date and time").fill("2026-12-15T18:30");
+  await page.getByLabel("Local date and time").fill("2099-12-15T18:30");
   await page.getByLabel("PACC", { exact: true }).check();
   await page.getByLabel("TraceForge", { exact: true }).check();
   await page.getByRole("button", { name: "Save date", exact: true }).click();
@@ -199,7 +155,8 @@ try {
   await page.waitForFunction(
     () => document.documentElement.dataset.theme === "dark",
   );
-  await page.locator(".toast").waitFor({ state: "hidden" });
+  const dismiss = page.getByRole("button", { name: "Dismiss notification" });
+  while (await dismiss.count()) await dismiss.first().click();
   await page.screenshot({ path: "output/playwright/deadlines-dark.png" });
   assert.equal(
     await page.evaluate(() =>
@@ -262,13 +219,17 @@ E = mc^2 + \alpha
     await window.research.save(state);
   }, manuscript);
   await app.close();
-  app = undefined;
-  page = await launch();
+  ({ app, page } = await launchApp());
   await page.waitForFunction(
     () => document.documentElement.dataset.theme === "dark",
   );
   await page
     .getByRole("button", { name: "Dark Editor Test", exact: true })
+    .click();
+  await page.getByRole("button", { name: "All panels", exact: true }).click();
+  await page
+    .locator(".bottom-tabs")
+    .getByRole("button", { name: "Terminal", exact: true })
     .click();
   await page.locator(".cm-editor").waitFor();
   await page.waitForFunction(
@@ -325,11 +286,5 @@ E = mc^2 + \alpha
     await page.evaluate(() => document.documentElement.dataset.theme),
     "dark",
   );
-  assert.deepEqual(errors, []);
-  console.log(
-    `PASS: ${imported.length} Mac deadlines preserved; WWW dates, CCF tracking, duplicate-safe import, exact-time edits, dark editor/terminal and restart persistence.`,
-  );
-} finally {
-  await app?.close();
-  await fs.rm(root, { recursive: true, force: true });
-}
+  return `PASS: ${imported.length} fixture Mac deadlines preserved; WWW dates, CCF tracking, duplicate-safe import, exact-time edits, dark editor/terminal and restart persistence.`;
+});

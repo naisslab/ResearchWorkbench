@@ -1,16 +1,22 @@
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import {
+  defaultPanelLayout,
   parsePanelLayout,
   panelLayoutKey,
   type PanelLayout,
 } from "./panel-layout";
 export function usePanelLayout() {
   const [layout, setLayout] = useState(() => {
+    let stored = null;
     try {
-      return parsePanelLayout(localStorage.getItem(panelLayoutKey));
+      stored = localStorage.getItem(panelLayoutKey);
     } catch {
-      return parsePanelLayout(null);
+      /* Storage may be unavailable. */
     }
+    // Until the user picks, small windows start with the icon rail.
+    return stored
+      ? parsePanelLayout(stored)
+      : { ...defaultPanelLayout, sidebarCollapsed: window.innerWidth < 1280 };
   });
   useEffect(() => {
     // Keep layout independent of project data and Git changes.
@@ -20,8 +26,11 @@ export function usePanelLayout() {
       /* Storage may be unavailable. */
     }
   }, [layout]);
-  const change = (changes: Partial<PanelLayout>) =>
-    setLayout((previous) => ({ ...previous, ...changes }));
+  const change = useCallback(
+    (changes: Partial<PanelLayout>) =>
+      setLayout((previous) => ({ ...previous, ...changes })),
+    [],
+  );
   return { layout, change };
 }
 export function usePanelSize() {

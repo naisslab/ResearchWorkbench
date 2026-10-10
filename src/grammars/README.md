@@ -8,4 +8,4 @@ The five grammar JSON files are copied without changes. See LICENSE.txt for thei
 
 > Permission to copy, use, modify, sell and distribute this software is granted. This software is provided "as is" without express or implied warranty, and with no claim as to its suitability for any purpose.
 
-Tokenizer packages vscode-textmate and vscode-oniguruma retain their own licenses and Oniguruma notices in node_modules and the packaged app. Unsupported embedded-language scopes are left plain rather than loaded from the network.
+Vite bundles the tokenizer packages vscode-textmate and vscode-oniguruma into the renderer, so the packaged app does not include their package folders. Their MIT licenses and the Oniguruma notice ship in electron/licenses instead. Unsupported embedded-language scopes are left plain rather than loaded from the network.

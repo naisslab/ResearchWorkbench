@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -27,6 +28,7 @@ import {
   Highlighter,
   History,
   LoaderCircle,
+  Maximize2,
   MessageSquare,
   MousePointer2,
   NotebookPen,
@@ -41,8 +43,11 @@ import type {
   AnnotationColor,
   PdfAnnotation,
   PdfPoint,
+  PdfTarget,
   PdfVersion,
+  PdfView,
 } from "./pdf-types";
+import { timeLabel } from "./dates";
 
 // The worker is bundled locally. A blob module also works in the packaged file:// renderer.
 GlobalWorkerOptions.workerSrc = URL.createObjectURL(
@@ -55,27 +60,11 @@ const colors: Record<AnnotationColor, string> = {
   rose: "#d6668d",
 };
 type Tool = "select" | "highlight" | "note" | "ink";
-const queuedSaves = new Map<string, Promise<unknown>>();
-function queueSave(
-  projectId: string,
-  url: string,
-  annotations: PdfAnnotation[],
-  pages: number,
-) {
-  const key = `${projectId}:${url}`;
-  const next = (queuedSaves.get(key) || Promise.resolve())
-    .catch(() => {})
-    .then(() =>
-      window.research!.savePdfAnnotations(projectId, url, annotations, pages),
-    );
-  queuedSaves.set(key, next);
-  void next
-    .finally(() => {
-      if (queuedSaves.get(key) === next) queuedSaves.delete(key);
-    })
-    .catch(() => {});
-  return next;
-}
+type Flash = PdfTarget & { nonce: number };
+/** Keeps a reading spot fixed while pages resize: `offset` (a fraction of `page`) sits `y` px below the scroller top. */
+type Anchor = { page: number; offset: number; y: number };
+const none: PdfAnnotation[] = [];
+const clampZoom = (zoom: number) => Math.min(2.5, Math.max(0.6, zoom));
 function annotation(
   kind: PdfAnnotation["kind"],
   page: number,
@@ -94,6 +83,28 @@ function annotation(
 function screenPoint(viewport: PageViewport, point: PdfPoint) {
   return viewport.convertToViewportPoint(point.x, point.y);
 }
+function Ink({
+  points,
+  color,
+  viewport,
+}: {
+  points: PdfPoint[];
+  color: AnnotationColor;
+  viewport: PageViewport;
+}) {
+  return (
+    <polyline
+      points={points
+        .map((point) => screenPoint(viewport, point).join(","))
+        .join(" ")}
+      stroke={colors[color]}
+      strokeWidth={Math.max(1.4, viewport.scale * 1.5)}
+      fill="none"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  );
+}
 
 const PdfPage = memo(function PdfPage({
   document,
@@ -104,6 +115,7 @@ const PdfPage = memo(function PdfPage({
   color,
   annotations,
   selectedId,
+  flash,
   add,
   select,
   report,
@@ -116,16 +128,20 @@ const PdfPage = memo(function PdfPage({
   color: AnnotationColor;
   annotations: PdfAnnotation[];
   selectedId: string;
+  flash?: Flash;
   add(item: PdfAnnotation): void;
   select(id: string): void;
   report(message: string): void;
 }) {
   const element = useRef<HTMLDivElement>(null),
     canvas = useRef<HTMLCanvasElement>(null),
-    text = useRef<HTMLDivElement>(null);
+    text = useRef<HTMLDivElement>(null),
+    textBuilt = useRef(false),
+    flashed = useRef<number | null>(null);
   const [page, setPage] = useState<PDFPageProxy | null>(null);
-  const [near, setNear] = useState(false),
-    [rendered, setRendered] = useState(false);
+  const [near, setNear] = useState(false);
+  // The viewport the canvas bitmap was last drawn at. Until it matches, CSS stretches the old bitmap.
+  const [sharp, setSharp] = useState<PageViewport>();
   const [draft, setDraft] = useState<PdfPoint[]>([]);
   const stroke = useRef<PdfPoint[] | null>(null);
   const [pageError, setPageError] = useState("");
@@ -159,46 +175,75 @@ const PdfPage = memo(function PdfPage({
       }),
     [page, width],
   );
+  const rendered = !!viewport && sharp === viewport;
   useEffect(() => {
-    if (!near || !page || !viewport || !canvas.current || !text.current) return;
-    let cancelled = false;
-    const density = Math.min(window.devicePixelRatio || 1, 2);
-    const target = canvas.current;
-    setRendered(false);
-    setPageError("");
-    target.width = Math.ceil(viewport.width * density);
-    target.height = Math.ceil(viewport.height * density);
-    const context = target.getContext("2d")!;
-    const render: RenderTask = page.render({
-      canvas: target,
-      canvasContext: context,
-      viewport,
-      transform: [density, 0, 0, density, 0, 0],
-    });
+    const container = text.current;
+    if (!near || !page || !container || textBuilt.current) return;
+    container.replaceChildren();
+    // Built once: pdf.js sizes the layer from --total-scale-factor, so CSS keeps it aligned at any width.
     const layer = new TextLayer({
       textContentSource: page.streamTextContent(),
-      container: text.current,
-      viewport,
+      container,
+      viewport: page.getViewport({ scale: 1 }),
     });
-    text.current.replaceChildren();
-    Promise.all([render.promise, layer.render()])
-      .then(() => {
-        if (!cancelled) setRendered(true);
-      })
-      .catch((error: Error) => {
-        if (
-          !cancelled &&
-          error.name !== "RenderingCancelledException" &&
-          error.name !== "AbortException"
-        )
-          setPageError(error.message);
-      });
+    layer.render().then(
+      () => (textBuilt.current = true),
+      () => {},
+    );
+    return () => layer.cancel();
+  }, [near, page]);
+  useEffect(() => {
+    if (!near || !page || !viewport || sharp === viewport) return;
+    let cancelled = false,
+      render: RenderTask | undefined;
+    // The first paint is immediate; repaints wait until a drag or zoom settles.
+    const timer = setTimeout(
+      () => {
+        const density = Math.min(window.devicePixelRatio || 1, 2);
+        const scratch = window.document.createElement("canvas");
+        scratch.width = Math.ceil(viewport.width * density);
+        scratch.height = Math.ceil(viewport.height * density);
+        render = page.render({
+          canvas: scratch,
+          viewport,
+          transform: [density, 0, 0, density, 0, 0],
+        });
+        render.promise.then(
+          () => {
+            const target = canvas.current;
+            if (cancelled || !target) return;
+            target.width = scratch.width;
+            target.height = scratch.height;
+            target.getContext("2d")!.drawImage(scratch, 0, 0);
+            setSharp(viewport);
+            setPageError("");
+          },
+          (error: Error) => {
+            if (!cancelled) setPageError(error.message);
+          },
+        );
+      },
+      sharp ? 120 : 0,
+    );
     return () => {
       cancelled = true;
-      render.cancel();
-      layer.cancel();
+      clearTimeout(timer);
+      render?.cancel();
     };
   }, [near, page, viewport]);
+  useEffect(() => {
+    const box = element.current!;
+    if (!flash || flashed.current === flash.nonce) return;
+    // Bring the page near first; the exact scroll follows once its size is known.
+    if (!viewport) return box.scrollIntoView({ block: "start" });
+    flashed.current = flash.nonce;
+    const scroller = box.closest(".pdf-scroll")!;
+    scroller.scrollTop +=
+      box.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      flash.y * viewport.scale -
+      scroller.clientHeight / 3;
+  }, [flash, viewport]);
   const toPdf = (event: PointerEvent) => {
     const box = element.current!.getBoundingClientRect();
     const [x, y] = viewport!.convertToPdfPoint(
@@ -232,10 +277,13 @@ const PdfPage = memo(function PdfPage({
         } as CSSProperties
       }
       onPointerDown={(event) => {
+        // Input maps through the current viewport, so a stretched bitmap
+        // waiting for its sharp repaint still takes strokes and notes.
         if (
           !viewport ||
-          !rendered ||
+          !sharp ||
           event.button !== 0 ||
+          event.metaKey ||
           (event.target as HTMLElement).closest(".pdf-note-pin")
         )
           return;
@@ -261,7 +309,7 @@ const PdfPage = memo(function PdfPage({
           endStroke(event);
           return;
         }
-        if (tool !== "highlight" || !viewport || !rendered) return;
+        if (tool !== "highlight" || !viewport || !sharp) return;
         const selection = window.getSelection();
         if (
           !selection ||
@@ -326,11 +374,7 @@ const PdfPage = memo(function PdfPage({
         setDraft([]);
       }}
     >
-      <canvas
-        ref={canvas}
-        aria-label={`PDF page ${number}`}
-        style={{ width, height: viewport?.height || width * defaultRatio }}
-      />
+      <canvas ref={canvas} aria-label={`PDF page ${number}`} />
       <div ref={text} className="textLayer" />
       {viewport && (
         <svg
@@ -339,68 +383,50 @@ const PdfPage = memo(function PdfPage({
           height={viewport.height}
           aria-hidden="true"
         >
-          {annotations
-            .filter((a) => a.page === number)
-            .map((item) =>
-              item.kind === "highlight" ? (
-                <g key={item.id}>
-                  {item.rects!.map((r, i) => {
-                    const converted = viewport.convertToViewportRectangle([
-                      r.x,
-                      r.y,
-                      r.x + r.width,
-                      r.y + r.height,
-                    ]);
-                    return (
-                      <rect
-                        key={i}
-                        x={Math.min(converted[0], converted[2])}
-                        y={Math.min(converted[1], converted[3])}
-                        width={Math.abs(converted[2] - converted[0])}
-                        height={Math.abs(converted[3] - converted[1])}
-                        fill={colors[item.color]}
-                        opacity={0.3}
-                        stroke={
-                          selectedId === item.id ? colors[item.color] : "none"
-                        }
-                        strokeWidth={1}
-                      />
-                    );
-                  })}
-                </g>
-              ) : item.kind === "ink" ? (
-                <polyline
-                  key={item.id}
-                  points={item
-                    .points!.map((point) =>
-                      screenPoint(viewport, point).join(","),
-                    )
-                    .join(" ")}
-                  stroke={colors[item.color]}
-                  strokeWidth={Math.max(1.4, viewport.scale * 1.5)}
-                  fill="none"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              ) : null,
-            )}
+          {annotations.map((item) =>
+            item.kind === "highlight" ? (
+              <g key={item.id}>
+                {item.rects!.map((r, i) => {
+                  const converted = viewport.convertToViewportRectangle([
+                    r.x,
+                    r.y,
+                    r.x + r.width,
+                    r.y + r.height,
+                  ]);
+                  return (
+                    <rect
+                      key={i}
+                      x={Math.min(converted[0], converted[2])}
+                      y={Math.min(converted[1], converted[3])}
+                      width={Math.abs(converted[2] - converted[0])}
+                      height={Math.abs(converted[3] - converted[1])}
+                      fill={colors[item.color]}
+                      opacity={0.3}
+                      stroke={
+                        selectedId === item.id ? colors[item.color] : "none"
+                      }
+                      strokeWidth={1}
+                    />
+                  );
+                })}
+              </g>
+            ) : item.kind === "ink" ? (
+              <Ink
+                key={item.id}
+                points={item.points!}
+                color={item.color}
+                viewport={viewport}
+              />
+            ) : null,
+          )}
           {!!draft.length && (
-            <polyline
-              points={draft
-                .map((point) => screenPoint(viewport, point).join(","))
-                .join(" ")}
-              stroke={colors[color]}
-              strokeWidth={Math.max(1.4, viewport.scale * 1.5)}
-              fill="none"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
+            <Ink points={draft} color={color} viewport={viewport} />
           )}
         </svg>
       )}
       {viewport &&
         annotations
-          .filter((a) => a.page === number && a.kind === "note")
+          .filter((a) => a.kind === "note")
           .map((item) => {
             const [x, y] = screenPoint(viewport, item.position!);
             return (
@@ -425,7 +451,14 @@ const PdfPage = memo(function PdfPage({
               </button>
             );
           })}
-      {!rendered && (
+      {flash && viewport && (
+        <span
+          key={flash.nonce}
+          className="pdf-flash"
+          style={{ top: flash.y * viewport.scale }}
+        />
+      )}
+      {(!sharp || pageError) && (
         <div className="pdf-page-loading">{pageError || `Page ${number}`}</div>
       )}
       <span className="pdf-page-number">{number}</span>
@@ -433,21 +466,35 @@ const PdfPage = memo(function PdfPage({
   );
 });
 
-export default function PdfReader({
+export default memo(function PdfReader({
   projectId,
   pdf,
   openPdf,
+  initialView,
+  onViewChange,
+  reveal,
+  onInverseSearch,
+  expanded,
+  onExpand,
 }: {
   projectId: string;
   pdf: { url: string; name: string };
   openPdf(pdf: { url: string; name: string }): void;
+  /** Applied once, after the first layout of the document. */
+  initialView?: PdfView;
+  onViewChange(view: PdfView): void;
+  /** Scrolls to the target and flashes a marker there; a new `nonce` repeats it. */
+  reveal?: Flash;
+  onInverseSearch(target: PdfTarget): void;
+  expanded: boolean;
+  onExpand(): void;
 }) {
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
   const [items, setItems] = useState<PdfAnnotation[]>([]);
   const [tool, setTool] = useState<Tool>("select"),
     [color, setColor] = useState<AnnotationColor>("yellow");
   const [selectedId, setSelectedId] = useState(""),
-    [showNotes, setShowNotes] = useState(false);
+    [showNotes, setShowNotes] = useState(initialView?.showNotes ?? false);
   const [error, setError] = useState(""),
     [saving, setSaving] = useState(false),
     [savedAt, setSavedAt] = useState("");
@@ -456,22 +503,53 @@ export default function PdfReader({
   const [versions, setVersions] = useState<PdfVersion[]>([]),
     [showVersions, setShowVersions] = useState(false),
     [documentKey, setDocumentKey] = useState("");
-  const [pageNumber, setPageNumber] = useState(1),
-    [pageInput, setPageInput] = useState("1");
+  const [pageNumber, setPageNumber] = useState(1);
   const [availableWidth, setAvailableWidth] = useState(400),
-    [zoom, setZoom] = useState(1),
-    [pageRatio, setPageRatio] = useState(1.414);
+    [zoom, setZoom] = useState(initialView?.zoom ?? 1),
+    [pageSize, setPageSize] = useState({ width: 595, height: 842 });
   const [filter, setFilter] = useState("");
-  const viewport = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null),
+    pageField = useRef<HTMLInputElement>(null);
+  const anchor = useRef<Anchor | null>(
+    initialView
+      ? { page: initialView.page, offset: initialView.offset, y: 0 }
+      : null,
+  );
   const pending = useRef<{ items: PdfAnnotation[]; pages: number } | null>(
     null,
   );
-  const history = useRef<PdfAnnotation[][]>([]);
+  const saveTimer = useRef(0);
+  const history = useRef<PdfAnnotation[][]>([]),
+    future = useRef<PdfAnnotation[][]>([]);
   const current = useRef<PdfAnnotation[]>([]);
-  const mounted = useRef(true);
+  // The annotation whose comment is being typed; its first keystroke is the only undo step.
+  const editing = useRef("");
   const pageCount = document?.numPages || 0;
+  const width = Math.round(availableWidth * zoom);
+  // The request leaves before the first await, so a flush on pagehide reaches
+  // main, which writes each document's saves in arrival order.
+  const persist = useCallback(async () => {
+    clearTimeout(saveTimer.current);
+    const value = pending.current;
+    if (!value) return;
+    setSaving(true);
+    try {
+      const saved = await window.research!.savePdfAnnotations(
+        projectId,
+        pdf.url,
+        value.items,
+        value.pages,
+      );
+      if (pending.current === value) pending.current = null;
+      setSavedAt(saved.updatedAt);
+    } catch (error) {
+      setError(`Annotations were not saved: ${(error as Error).message}`);
+      throw error;
+    } finally {
+      setSaving(false);
+    }
+  }, [projectId, pdf.url]);
   useEffect(() => {
-    mounted.current = true;
     let cancelled = false;
     const loading = window
       .research!.readPdfAnnotations(projectId, pdf.url)
@@ -482,20 +560,17 @@ export default function PdfReader({
         current.current = data.annotations;
         setSavedAt(data.updatedAt);
         const task = getDocument({
-          data: new Uint8Array(data.data),
+          data: data.data,
           isEvalSupported: false,
           useSystemFonts: true,
         });
         try {
           const loaded = await task.promise;
-          if (cancelled) {
-            await loaded.destroy();
-            return;
+          const size = (await loaded.getPage(1)).getViewport({ scale: 1 });
+          if (!cancelled) {
+            setPageSize(size);
+            setDocument(loaded);
           }
-          const first = await loaded.getPage(1),
-            size = first.getViewport({ scale: 1 });
-          setPageRatio(size.height / size.width);
-          setDocument(loaded);
         } catch (error) {
           if (!cancelled) setError((error as Error).message);
         }
@@ -506,80 +581,125 @@ export default function PdfReader({
       });
     return () => {
       cancelled = true;
-      mounted.current = false;
-      if (pending.current)
-        void queueSave(
-          projectId,
-          pdf.url,
-          pending.current.items,
-          pending.current.pages,
-        ).catch(() => {});
+      void persist().catch(() => {});
       void loading.then((task) => task?.destroy());
     };
-  }, [projectId, pdf.url]);
+  }, [projectId, pdf.url, persist]);
+  const locate = (y: number): Anchor | null => {
+    const element = scroller.current!,
+      line = element.scrollTop + y;
+    const pages = Array.from(
+      element.querySelectorAll<HTMLElement>(".pdf-page"),
+    );
+    const page =
+      pages.find((page) => page.offsetTop + page.offsetHeight > line + 40) ??
+      pages.at(-1);
+    return page
+      ? {
+          page: Number(page.dataset.pageNumber),
+          offset: (line - page.offsetTop) / page.offsetHeight,
+          y,
+        }
+      : null;
+  };
+  const reportView = (at = locate(0)) => {
+    if (at) onViewChange({ page: at.page, offset: at.offset, zoom, showNotes });
+  };
   useEffect(() => {
-    if (!viewport.current) return;
+    const element = scroller.current!;
     const observer = new ResizeObserver(([entry]) =>
       setAvailableWidth(Math.max(180, entry.contentRect.width - 32)),
     );
-    observer.observe(viewport.current);
-    return () => observer.disconnect();
-  }, [document, showNotes]);
-  const persist = useCallback(async () => {
-    const value = pending.current;
-    if (!value) return;
-    setSaving(true);
-    try {
-      const saved = await queueSave(
-        projectId,
-        pdf.url,
-        value.items,
-        value.pages,
+    // Trackpad pinches arrive as ctrl+wheel; both zoom around the pointer.
+    const wheel = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      anchor.current = locate(
+        event.clientY - element.getBoundingClientRect().top,
       );
-      if (mounted.current) {
-        if (pending.current === value) pending.current = null;
-        setSavedAt(saved.updatedAt);
-      }
-    } catch (error) {
-      if (mounted.current)
-        setError(`Annotations were not saved: ${(error as Error).message}`);
-      throw error;
-    } finally {
-      if (mounted.current) setSaving(false);
-    }
-  }, [projectId, pdf.url]);
-  useEffect(() => {
-    if (!pending.current) return;
-    void persist().catch(() => {});
-  }, [items, persist]);
-  useEffect(() => {
-    const keydown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      if (!target.closest(".pdf-reader")) return;
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-        event.preventDefault();
-        event.stopPropagation();
-        void persist().catch(() => {});
-      }
-      if (event.key === "Escape") setTool("select");
+      setZoom((value) => clampZoom(value * Math.exp(-event.deltaY / 200)));
     };
-    window.addEventListener("keydown", keydown, true);
-    return () => window.removeEventListener("keydown", keydown, true);
-  }, [persist]);
+    observer.observe(element);
+    element.addEventListener("wheel", wheel, { passive: false });
+    return () => {
+      observer.disconnect();
+      element.removeEventListener("wheel", wheel);
+    };
+  }, []);
+  useLayoutEffect(() => {
+    const element = scroller.current!,
+      at = anchor.current,
+      page =
+        at &&
+        element.querySelector<HTMLElement>(`[data-page-number="${at.page}"]`);
+    if (!at || !page) return;
+    element.scrollTop = page.offsetTop + at.offset * page.offsetHeight - at.y;
+  }, [document, width]);
+  useEffect(() => reportView(), [zoom, showNotes]);
+  useEffect(() => {
+    if (
+      pageField.current &&
+      pageField.current !== window.document.activeElement
+    )
+      pageField.current.value = String(pageNumber);
+  }, [pageNumber]);
   const update = useCallback(
     (next: PdfAnnotation[], undoable = true) => {
       if (undoable) {
         history.current.push(current.current);
         if (history.current.length > 50) history.current.shift();
+        future.current = [];
       }
       current.current = next;
       pending.current = { items: next, pages: pageCount };
       setItems(next);
       setError("");
       setExported(false);
+      clearTimeout(saveTimer.current);
+      saveTimer.current = window.setTimeout(
+        () => void persist().catch(() => {}),
+        400,
+      );
     },
-    [pageCount],
+    [pageCount, persist],
   );
+  const undo = useCallback(
+    (redo = false) => {
+      const [from, to] = redo ? [future, history] : [history, future];
+      const next = from.current.pop();
+      if (!next) return;
+      to.current.push(current.current);
+      update(next, false);
+    },
+    [update],
+  );
+  useEffect(() => {
+    const flush = () => void persist().catch(() => {});
+    const keydown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest(".pdf-reader")) return;
+      const command = event.metaKey || event.ctrlKey,
+        key = event.key?.toLowerCase();
+      if (command && key === "s") {
+        event.preventDefault();
+        event.stopPropagation();
+        flush();
+      } else if (
+        command &&
+        key === "z" &&
+        !target.closest("input, textarea, [contenteditable]")
+      ) {
+        event.preventDefault();
+        undo(event.shiftKey);
+      } else if (event.key === "Escape") setTool("select");
+    };
+    window.addEventListener("keydown", keydown, true);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("keydown", keydown, true);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, [persist, undo]);
   const add = useCallback(
     (item: PdfAnnotation) => {
       update([...current.current, item]);
@@ -595,30 +715,48 @@ export default function PdfReader({
     setSelectedId(id);
     setShowNotes(true);
   }, []);
-  const goTo = useCallback(
-    (number: number) => {
-      const value = Math.max(1, Math.min(pageCount, number));
-      viewport.current
-        ?.querySelector<HTMLElement>(`[data-page-number="${value}"]`)
-        ?.scrollIntoView({ block: "start" });
-      setPageNumber(value);
-      setPageInput(String(value));
-    },
-    [pageCount],
-  );
+  const goTo = (number: number) => {
+    const value = Math.max(1, Math.min(pageCount, number));
+    scroller.current
+      ?.querySelector<HTMLElement>(`[data-page-number="${value}"]`)
+      ?.scrollIntoView({ block: "start" });
+    setPageNumber(value);
+  };
+  // Saves pending annotations first, so the action sees them.
+  const run = async (task: () => Promise<unknown>) => {
+    try {
+      await persist();
+      await task();
+    } catch (error) {
+      setError((error as Error).message);
+    }
+  };
+  const open = (load: () => Promise<{ url: string; name: string } | null>) =>
+    run(async () => {
+      const next = await load();
+      if (next) openPdf(next);
+    });
+  const byPage = useMemo(() => {
+    const pages = new Map<number, PdfAnnotation[]>();
+    for (const item of items)
+      pages.set(item.page, [...(pages.get(item.page) ?? []), item]);
+    return pages;
+  }, [items]);
   const active = items.find((item) => item.id === selectedId);
   const matching = items.filter((item) =>
     `${item.comment} ${item.quote} ${item.page}`
       .toLowerCase()
       .includes(filter.toLowerCase()),
   );
-  const width = Math.round(availableWidth * zoom);
-  const help = {
-    select: "Select text to copy. Choose a tool to annotate.",
-    highlight: "Drag across text to highlight it.",
-    note: "Click a page to place a note.",
-    ink: "Drag on a page to draw. Esc returns to selection.",
-  }[tool];
+  const [saveLabel, saveTitle] = saving
+    ? ["Saving…", "Saving annotations…"]
+    : pending.current
+      ? ["Unsaved", "Unsaved annotations"]
+      : exported
+        ? ["Exported", "Annotated PDF exported"]
+        : savedAt
+          ? ["Saved", "Annotations saved"]
+          : [];
   return (
     <div
       className="pdf-reader"
@@ -627,7 +765,10 @@ export default function PdfReader({
       role="region"
       tabIndex={0}
     >
-      <div className="pdf-navigation">
+      <div className="pdf-toolbar">
+        <strong className="pdf-name" title={pdf.name}>
+          {pdf.name}
+        </strong>
         <button
           className="icon-button"
           title="Previous PDF page"
@@ -639,17 +780,17 @@ export default function PdfReader({
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            const value = Number(pageInput);
+            const value = Number(pageField.current!.value);
             if (Number.isFinite(value)) goTo(value);
           }}
         >
           <input
+            ref={pageField}
             aria-label="PDF page number"
             inputMode="numeric"
-            value={pageInput}
+            defaultValue="1"
             disabled={!document}
-            onChange={(event) => setPageInput(event.target.value)}
-            onBlur={() => setPageInput(String(pageNumber))}
+            onBlur={(event) => (event.currentTarget.value = String(pageNumber))}
           />
           <span>/ {pageCount || "…"}</span>
         </form>
@@ -666,7 +807,7 @@ export default function PdfReader({
           className="icon-button"
           title="Zoom out PDF"
           disabled={zoom <= 0.6}
-          onClick={() => setZoom((value) => Math.max(0.6, value - 0.15))}
+          onClick={() => setZoom((value) => clampZoom(value - 0.15))}
         >
           <ZoomOut size={14} />
         </button>
@@ -675,91 +816,82 @@ export default function PdfReader({
           title="Fit PDF to width"
           onClick={() => setZoom(1)}
         >
-          {Math.round(zoom * 100)}%
+          {zoom === 1 && "Fit · "}
+          {/* 100% is print size: one PDF point is 4/3 CSS px. */}
+          {Math.round((width / pageSize.width) * 75)}%
         </button>
         <button
           className="icon-button"
           title="Zoom in PDF"
           disabled={zoom >= 2.5}
-          onClick={() => setZoom((value) => Math.min(2.5, value + 0.15))}
+          onClick={() => setZoom((value) => clampZoom(value + 0.15))}
         >
           <ZoomIn size={14} />
         </button>
-        <button
-          className={`icon-button pdf-notes-toggle ${showNotes ? "active" : ""}`}
-          title="Show PDF annotations"
-          aria-pressed={showNotes}
-          onClick={() => setShowNotes((value) => !value)}
+        <div
+          className="pdf-tools"
+          role="toolbar"
+          aria-label="PDF annotation tools"
         >
-          <NotebookPen size={14} />
-          {!!items.length && <small>{items.length}</small>}
-        </button>
-      </div>
-      <div
-        className="pdf-annotation-toolbar"
-        role="toolbar"
-        aria-label="PDF annotation tools"
-      >
-        {(
-          [
-            ["select", MousePointer2, "Select text"],
-            ["highlight", Highlighter, "Highlight text"],
-            ["note", MessageSquare, "Add PDF note"],
-            ["ink", Pencil, "Draw on PDF"],
-          ] as const
-        ).map(([name, Icon, label]) => (
+          {(
+            [
+              ["select", MousePointer2, "Select text"],
+              ["highlight", Highlighter, "Highlight text"],
+              ["note", MessageSquare, "Add PDF note"],
+              ["ink", Pencil, "Draw on PDF"],
+            ] as const
+          ).map(([name, Icon, label]) => (
+            <button
+              key={name}
+              className={`icon-button ${tool === name ? "active" : ""}`}
+              title={label}
+              aria-label={label}
+              aria-pressed={tool === name}
+              disabled={!document}
+              onClick={() => setTool(name)}
+            >
+              <Icon size={15} />
+            </button>
+          ))}
+          <span className="pdf-toolbar-divider" />
+          {(Object.keys(colors) as AnnotationColor[]).map((name) => (
+            <button
+              key={name}
+              title={`${name} annotation color`}
+              aria-label={`${name} annotation color`}
+              aria-pressed={color === name}
+              className={`pdf-color ${color === name ? "active" : ""}`}
+              style={{ "--mark-color": colors[name] } as CSSProperties}
+              onClick={() => setColor(name)}
+            >
+              <span />
+            </button>
+          ))}
           <button
-            key={name}
-            className={`icon-button ${tool === name ? "active" : ""}`}
-            title={label}
-            aria-label={label}
-            aria-pressed={tool === name}
-            disabled={!document}
-            onClick={() => setTool(name)}
+            className="icon-button"
+            title="Undo PDF annotation"
+            disabled={!history.current.length}
+            onClick={() => undo()}
           >
-            <Icon size={15} />
+            <RotateCcw size={14} />
           </button>
-        ))}
-        <span className="pdf-toolbar-divider" />
-        {(Object.keys(colors) as AnnotationColor[]).map((name) => (
-          <button
-            key={name}
-            title={`${name} annotation color`}
-            aria-label={`${name} annotation color`}
-            aria-pressed={color === name}
-            className={`pdf-color ${color === name ? "active" : ""}`}
-            style={{ "--mark-color": colors[name] } as CSSProperties}
-            onClick={() => setColor(name)}
-          >
-            <span />
-          </button>
-        ))}
-        <button
-          className="icon-button pdf-undo"
-          title="Undo PDF annotation"
-          disabled={!history.current.length}
-          onClick={() => {
-            const previous = history.current.pop();
-            if (previous) update(previous, false);
-          }}
-        >
-          <RotateCcw size={14} />
-        </button>
+        </div>
+        <span className="pdf-save-state" title={saveTitle}>
+          {saving && <LoaderCircle size={11} className="spin" />}
+          {saveLabel}
+        </span>
         <button
           className="icon-button"
           title="Annotated PDF versions"
           aria-expanded={showVersions}
-          onClick={async () => {
-            try {
-              await persist();
+          onClick={() =>
+            run(async () => {
               setVersions(
                 await window.research!.pdfAnnotationLibrary(projectId),
               );
               setShowVersions((value) => !value);
-            } catch (error) {
-              setError((error as Error).message);
-            }
-          }}
+            })
+          }
         >
           <History size={14} />
           <ChevronDown size={10} />
@@ -771,8 +903,7 @@ export default function PdfReader({
           onClick={async () => {
             setExporting(true);
             setError("");
-            try {
-              await persist();
+            await run(async () =>
               setExported(
                 await window.research!.exportAnnotatedPdf(
                   projectId,
@@ -780,12 +911,9 @@ export default function PdfReader({
                   current.current,
                   pageCount,
                 ),
-              );
-            } catch (error) {
-              setError((error as Error).message);
-            } finally {
-              setExporting(false);
-            }
+              ),
+            );
+            setExporting(false);
           }}
         >
           {exporting ? (
@@ -794,52 +922,67 @@ export default function PdfReader({
             <ArrowDownToLine size={14} />
           )}
         </button>
-      </div>
-      {showVersions && (
-        <div className="pdf-versions">
-          <div>
-            <strong>Annotated documents</strong>
-            <button
-              className="icon-button"
-              title="Close annotated documents"
-              onClick={() => setShowVersions(false)}
-            >
-              <X size={13} />
-            </button>
-          </div>
-          <p>Each version keeps its own annotations.</p>
-          {versions.length ? (
-            versions.map((version) => (
+        <button
+          className={`icon-button pdf-notes-toggle ${showNotes ? "active" : ""}`}
+          title="Show PDF annotations"
+          aria-pressed={showNotes}
+          onClick={() => setShowNotes((value) => !value)}
+        >
+          <NotebookPen size={14} />
+          {!!items.length && <small>{items.length}</small>}
+        </button>
+        <button
+          className="icon-button"
+          title={expanded ? "Restore split view" : "Expand PDF preview"}
+          onClick={onExpand}
+        >
+          <Maximize2 size={14} />
+        </button>
+        {showVersions && (
+          <div className="pdf-versions">
+            <div>
+              <strong>Annotated documents</strong>
               <button
-                key={version.key}
-                disabled={version.key === documentKey}
-                onClick={async () => {
-                  try {
-                    await persist();
-                    openPdf(
-                      await window.research!.openAnnotatedPdf(
-                        projectId,
-                        version.key,
-                      ),
-                    );
-                  } catch (error) {
-                    setError((error as Error).message);
-                  }
-                }}
+                className="button text small"
+                onClick={() =>
+                  open(() => window.research!.choosePdf(projectId))
+                }
               >
-                <FileVersion name={version.name} />
-                <span>
-                  {new Date(version.updatedAt).toLocaleString()} ·{" "}
-                  {version.count} annotations
-                </span>
-                {version.key === documentKey && <Check size={13} />}
+                Open PDF
               </button>
-            ))
-          ) : (
-            <p>Documents appear here after the first annotation.</p>
-          )}
-        </div>
-      )}
+              <button
+                className="icon-button"
+                title="Close annotated documents"
+                onClick={() => setShowVersions(false)}
+              >
+                <X size={13} />
+              </button>
+            </div>
+            <p>Each version keeps its own annotations.</p>
+            {versions.length ? (
+              versions.map((version) => (
+                <button
+                  key={version.key}
+                  disabled={version.key === documentKey}
+                  onClick={() =>
+                    open(() =>
+                      window.research!.openAnnotatedPdf(projectId, version.key),
+                    )
+                  }
+                >
+                  <strong title={version.name}>{version.name}</strong>
+                  <span>
+                    {timeLabel(version.updatedAt)} · {version.count} annotations
+                  </span>
+                  {version.key === documentKey && <Check size={13} />}
+                </button>
+              ))
+            ) : (
+              <p>Documents appear here after the first annotation.</p>
+            )}
+          </div>
+        )}
+      </div>
       {error && (
         <div className="pdf-reader-error" role="alert">
           {error}
@@ -853,21 +996,28 @@ export default function PdfReader({
       <div className={`pdf-reading-area ${showNotes ? "with-notes" : ""}`}>
         <div
           className="pdf-scroll"
-          ref={viewport}
+          ref={scroller}
           onScroll={() => {
-            if (!viewport.current) return;
-            const top = viewport.current.getBoundingClientRect().top;
-            const pages = Array.from(
-              viewport.current.querySelectorAll<HTMLElement>(".pdf-page"),
+            const at = locate(0);
+            if (!at) return;
+            anchor.current = at;
+            setPageNumber(at.page);
+            reportView(at);
+          }}
+          onClick={(event) => {
+            const page = (event.target as HTMLElement).closest<HTMLElement>(
+              ".pdf-page",
             );
-            const visible = pages.find(
-              (element) => element.getBoundingClientRect().bottom > top + 40,
-            );
-            if (visible) {
-              const number = Number(visible.dataset.pageNumber);
-              setPageNumber(number);
-              setPageInput(String(number));
-            }
+            if (!event.metaKey || !page) return;
+            const box = page.getBoundingClientRect(),
+              scale = Number(
+                page.style.getPropertyValue("--total-scale-factor"),
+              );
+            onInverseSearch({
+              page: Number(page.dataset.pageNumber),
+              x: (event.clientX - box.left) / scale,
+              y: (event.clientY - box.top) / scale,
+            });
           }}
         >
           {document ? (
@@ -877,11 +1027,12 @@ export default function PdfReader({
                 document={document}
                 number={index + 1}
                 width={width}
-                defaultRatio={pageRatio}
+                defaultRatio={pageSize.height / pageSize.width}
                 tool={tool}
                 color={color}
-                annotations={items}
+                annotations={byPage.get(index + 1) ?? none}
                 selectedId={selectedId}
+                flash={reveal?.page === index + 1 ? reveal : undefined}
                 add={add}
                 select={select}
                 report={setError}
@@ -956,15 +1107,21 @@ export default function PdfReader({
                     maxLength={8000}
                     placeholder="Write your comment…"
                     value={active.comment}
-                    onChange={(event) =>
+                    onChange={(event) => {
                       update(
                         current.current.map((item) =>
                           item.id === active.id
                             ? { ...item, comment: event.target.value }
                             : item,
                         ),
-                      )
-                    }
+                        editing.current !== active.id,
+                      );
+                      editing.current = active.id;
+                    }}
+                    onBlur={() => {
+                      editing.current = "";
+                      void persist().catch(() => {});
+                    }}
                   />
                 </label>
                 <button
@@ -984,29 +1141,6 @@ export default function PdfReader({
           </aside>
         )}
       </div>
-      <footer className="pdf-reader-status">
-        <span>
-          {saving ? (
-            <>
-              <LoaderCircle size={11} className="spin" />
-              Saving annotations…
-            </>
-          ) : pending.current ? (
-            "Unsaved annotations"
-          ) : savedAt ? (
-            <>
-              <Check size={11} />
-              Annotations saved
-            </>
-          ) : (
-            "Annotations save automatically"
-          )}
-        </span>
-        <span title={help}>{exported ? "Annotated PDF exported" : help}</span>
-      </footer>
     </div>
   );
-}
-function FileVersion({ name }: { name: string }) {
-  return <strong title={name}>{name}</strong>;
-}
+});

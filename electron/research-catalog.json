@@ -1,25 +1,5 @@
 {
   "checkedAt": "2026-10-09",
-  "areas": [
-    {
-      "id": "ml",
-      "name": "ML Systems",
-      "color": "#087cba",
-      "icon": "circuit"
-    },
-    {
-      "id": "security",
-      "name": "Security and Privacy",
-      "color": "#ab6f05",
-      "icon": "shield"
-    },
-    {
-      "id": "cps",
-      "name": "Cyber-Physical Systems",
-      "color": "#a04a95",
-      "icon": "radio"
-    }
-  ],
   "entries": [
     {
       "id": "flowwise",
@@ -164,6 +144,7 @@
       "icon": "route",
       "summary": "Replayable what-if PCAP generation using action semantics and latent flow matching.",
       "stage": "writing",
+      "venue": "OSDI 2027",
       "statusNote": "Stage inferred from the local draft; confirm the current submission state.",
       "confidence": "inferred",
       "folders": [
@@ -291,6 +272,7 @@
       "icon": "database",
       "summary": "Cross-trace synthesis of GPU workload records and evaluation on held-out workloads.",
       "stage": "experiments",
+      "venue": "OSDI 2027",
       "statusNote": "October 8 local records show ongoing training and incomplete final scientific comparisons.",
       "confidence": "inferred",
       "folders": [
@@ -328,7 +310,7 @@
       ],
       "recommended": true,
       "collection": "current",
-      "notes": "Synthetic Job Schedulers is the TraceFoundry manuscript, confirmed by the user and inspected on October 9, 2026. Overleaf is linked to naisslab/Cross-Trace-Synth."
+      "notes": "The user confirmed Synthetic Job Schedulers as the TraceFoundry manuscript. Target: OSDI 2027. The local manuscript already uses the naisslab/Cross-Trace-Synth GitHub repository. Overleaf GitHub integration was verified on October 9, 2026: Synthetic Job Schedulers is linked to naisslab/Cross-Trace-Synth."
     },
     {
       "id": "scenario-synthesis",
@@ -405,6 +387,7 @@
       "icon": "network",
       "summary": "Systematizing and orchestrating opportunities for synthetic network data.",
       "stage": "writing",
+      "venue": "SIGMETRICS 2027",
       "statusNote": "Local manuscript source verified. SIGMETRICS 2027 target supplied by the user. Overleaf has no GitHub repository linked.",
       "confidence": "inferred",
       "folders": [
@@ -469,7 +452,8 @@
       "topic": "AI Infrastructure Security",
       "icon": "shield",
       "summary": "Agent-assisted side-channel attacks on non-prefix KV cache in RAG.",
-      "stage": "submitted",
+      "stage": "revision",
+      "venue": "IEEE S&P 2027",
       "statusNote": "Lab website lists this preprint as In Submission.",
       "confidence": "verified",
       "folders": [],
@@ -483,9 +467,7 @@
           "url": "https://naisslab.github.io/"
         }
       ],
-      "evidence": [
-        "NAISS Lab: spliceleak."
-      ],
+      "evidence": ["NAISS Lab: spliceleak."],
       "recommended": true,
       "collection": "current",
       "notes": "Several Overleaf drafts owned by He Sun have generic venue names. No exact draft association is asserted."
@@ -497,7 +479,8 @@
       "topic": "Model Serving",
       "icon": "cpu",
       "summary": "Long-context edge LLM inference with hierarchical KV eviction using SmartSSD.",
-      "stage": "submitted",
+      "stage": "writing",
+      "venue": "ICDE 2027",
       "statusNote": "Lab website lists this preprint as In Submission.",
       "confidence": "verified",
       "folders": [
@@ -688,6 +671,7 @@
       "icon": "fingerprint",
       "summary": "Identify an agent\u2019s underlying model from input/output token-usage histories.",
       "stage": "experiments",
+      "venue": "IEEE S&P 2027",
       "statusNote": "Local repository documents experiments and results; publication state is unverified.",
       "confidence": "inferred",
       "folders": [
@@ -698,9 +682,7 @@
         }
       ],
       "links": [],
-      "evidence": [
-        "llm-resource-fingerprints/README.md."
-      ],
+      "evidence": ["llm-resource-fingerprints/README.md."],
       "recommended": true,
       "collection": "current",
       "notes": ""
@@ -822,9 +804,7 @@
           "url": "https://naisslab.github.io/"
         }
       ],
-      "evidence": [
-        "NAISS Lab: safecoop."
-      ],
+      "evidence": ["NAISS Lab: safecoop."],
       "recommended": true,
       "collection": "current",
       "notes": ""
@@ -883,8 +863,9 @@
       "areaId": "ml",
       "topic": "Retrieval Systems",
       "icon": "network",
-      "summary": "Structure-completed evidence units for Web retrieval-augmented generation.",
+      "summary": "Web RAG manuscript targeting The Web Conference 2027.",
       "stage": "writing",
+      "venue": "WWW 2027",
       "statusNote": "Manuscript source verified; WWW 2027 target supplied by the user. Overleaf GitHub linking is controlled by the project owner.",
       "confidence": "review",
       "folders": [
@@ -914,8 +895,9 @@
       "areaId": "ml",
       "topic": "Retrieval Systems",
       "icon": "network",
-      "summary": "Overleaf manuscript. Confirm the research scope and active version before prioritizing.",
+      "summary": "RAG serving survey targeting ACM Computing Surveys.",
       "stage": "writing",
+      "venue": "ACM Computing Surveys",
       "statusNote": "Project title and link verified; topic and stage are provisional. Venue labels do not prove submission.",
       "confidence": "review",
       "folders": [],
@@ -1036,6 +1018,7 @@
       "icon": "shield",
       "summary": "A stateful firewall that checks LLM agent tool calls before execution.",
       "stage": "writing",
+      "venue": "IEEE S&P 2027",
       "statusNote": "Draft manuscript inspected; the user selected IEEE S&P 2027 as its submission target.",
       "confidence": "review",
       "folders": [],
@@ -1051,7 +1034,7 @@
       ],
       "recommended": false,
       "collection": "current",
-      "notes": "The Overleaf project retains the title Agent Firewall - Security 2027. The user selected IEEE S&P 2027 as the target on October 9, 2026."
+      "notes": "Target: IEEE S&P 2027. Overleaf manuscript inspected October 9, 2026: Stateful Firewall for LLM Agents in Home Routers."
     },
     {
       "id": "tick-tells",
@@ -1151,9 +1134,7 @@
           "url": "https://www.shinan.info/"
         }
       ],
-      "evidence": [
-        "NAISS Lab publication record: netssm; ACM CoNEXT 2026."
-      ],
+      "evidence": ["NAISS Lab publication record: netssm; ACM CoNEXT 2026."],
       "recommended": false,
       "collection": "archive",
       "notes": "",
@@ -1190,9 +1171,7 @@
           "url": "https://www.shinan.info/"
         }
       ],
-      "evidence": [
-        "NAISS Lab publication record: wifinger; NDSS 2026."
-      ],
+      "evidence": ["NAISS Lab publication record: wifinger; NDSS 2026."],
       "recommended": false,
       "collection": "archive",
       "notes": "",
@@ -1285,9 +1264,7 @@
           "url": "https://www.shinan.info/"
         }
       ],
-      "evidence": [
-        "NAISS Lab publication record: jiti; ACM CoNEXT 2025."
-      ],
+      "evidence": ["NAISS Lab publication record: jiti; ACM CoNEXT 2025."],
       "recommended": false,
       "collection": "archive",
       "notes": "",
@@ -1318,9 +1295,7 @@
           "url": "https://www.shinan.info/"
         }
       ],
-      "evidence": [
-        "NAISS Lab publication record: cato; USENIX NSDI 2025."
-      ],
+      "evidence": ["NAISS Lab publication record: cato; USENIX NSDI 2025."],
       "recommended": false,
       "collection": "archive",
       "notes": "",
@@ -1384,9 +1359,7 @@
           "url": "https://www.shinan.info/"
         }
       ],
-      "evidence": [
-        "NAISS Lab publication record: leaf; ACM CoNEXT 2023."
-      ],
+      "evidence": ["NAISS Lab publication record: leaf; ACM CoNEXT 2023."],
       "recommended": false,
       "collection": "archive",
       "notes": "",

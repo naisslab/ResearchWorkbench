@@ -1,19 +1,38 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap, type ViewUpdate } from "@codemirror/view";
+import { EditorState, Prec, type Extension } from "@codemirror/state";
 import { tags } from "@lezer/highlight";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { fileLanguage } from "./syntax";
 import {
+  citationKeys,
+  countWords,
+  forgetCitations,
+  latexCompletion,
+  outline,
+  parseProblems,
+} from "./latex";
+import {
   Play,
   Save,
+  Square,
+  ChevronRight,
+  Crosshair,
   FileText,
   FolderOpen,
-  ChevronRight,
+  FolderPlus,
   TerminalSquare,
   FilePlus2,
   RefreshCw,
-  Settings2,
   PanelRightClose,
   PanelRightOpen,
   AlertCircle,
@@ -26,152 +45,225 @@ import {
 import type { Project, ProjectFileRoot } from "./types";
 import GitPanel from "./GitPanel";
 import PdfReader from "./PdfReader";
-import ProjectFiles from "./ProjectFiles";
+import ProjectFiles, { type FileAction } from "./ProjectFiles";
 import TerminalPanel from "./TerminalPanel";
 import AIPanel from "./AIPanel";
-import { useColorTheme } from "./theme";
+import { useDark } from "./theme";
 import PanelDivider from "./PanelDivider";
 import {
-  clamp,
   defaultPanelLayout,
   fitWorkbench,
+  fitBottomPanel,
+  fitAgentColumns,
   type PanelLayout,
 } from "./panel-layout";
 import { usePanelSize } from "./usePanelLayout";
-const snazzyLightTheme = EditorView.theme(
-  {
-    "&": { color: "#565869", backgroundColor: "#fafbfc" },
-    ".cm-content": { caretColor: "#565869" },
-    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#565869" },
-    ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
-      backgroundColor: "#dceef8",
-    },
-    ".cm-gutters": {
-      backgroundColor: "#fafbfc",
-      color: "#9194a2",
-      border: "none",
-    },
-    ".cm-matchingBracket": {
-      backgroundColor: "#e3eff7",
-      outline: "1px solid #89b5cb",
-    },
-    ".cm-foldPlaceholder": {
-      backgroundColor: "#e9eaeb",
-      color: "#777985",
-      borderColor: "#dedfe0",
-    },
-  },
-  { dark: false },
-);
-const snazzyLightHighlighting = syntaxHighlighting(
+import type { PdfTarget, PdfView } from "./pdf-types";
+import BuildLog from "./BuildLog";
+import Modal from "./Modal";
+// Colours live in CSS: Lezer tags map onto the syn-* classes that the TextMate
+// highlighter uses, and the editor chrome reads CSS variables.
+const highlighting = syntaxHighlighting(
   HighlightStyle.define([
-    { tag: [tags.keyword, tags.tagName], color: "#c25193" },
-    { tag: [tags.string, tags.attributeValue], color: "#9a7400" },
-    { tag: [tags.comment], color: "#9194a2" },
-    { tag: [tags.number], color: "#d34b47" },
-    { tag: [tags.bool, tags.null, tags.atom], color: "#238744" },
-    { tag: [tags.typeName, tags.className], color: "#00918d" },
-    { tag: [tags.propertyName], color: "#11658f" },
-    { tag: [tags.regexp], color: "#c25193" },
-    { tag: [tags.variableName, tags.attributeName], color: "#11658f" },
-    { tag: [tags.function(tags.variableName)], color: "#087cba" },
-    { tag: [tags.heading], color: "#238744" },
-    { tag: [tags.bracket, tags.punctuation], color: "#777985" },
-    { tag: [tags.operator], color: "#00918d" },
+    { tag: [tags.keyword, tags.tagName], class: "syn-keyword" },
+    { tag: [tags.string, tags.attributeValue], class: "syn-string" },
+    { tag: tags.comment, class: "syn-comment" },
+    { tag: tags.number, class: "syn-number" },
+    { tag: [tags.bool, tags.null, tags.atom], class: "syn-constant" },
+    { tag: [tags.typeName, tags.className], class: "syn-type" },
+    {
+      tag: [tags.propertyName, tags.variableName, tags.attributeName],
+      class: "syn-variable",
+    },
+    { tag: tags.function(tags.variableName), class: "syn-function" },
+    { tag: tags.heading, class: "syn-heading" },
+    { tag: [tags.bracket, tags.punctuation], class: "syn-punctuation" },
+    { tag: tags.operator, class: "syn-operator" },
+    { tag: tags.invalid, class: "syn-invalid" },
   ]),
 );
-const snazzyDarkTheme = EditorView.theme(
+const syntaxColors = Object.fromEntries(
+  [
+    "keyword",
+    "function",
+    "string",
+    "reference",
+    "variable",
+    "number",
+    "constant",
+    "heading",
+    "type",
+    "math",
+    "operator",
+    "delimiter",
+    "punctuation",
+  ].map((name) => [`.syn-${name}`, { color: `var(--syn-${name})` }]),
+);
+const editorTheme = (dark: boolean) =>
+  EditorView.theme(
+    {
+      "&": {
+        color: "var(--editor-fg)",
+        backgroundColor: "var(--editor-bg)",
+        fontSize: "var(--text-sm)",
+      },
+      ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: 1.6 },
+      ".cm-content": { caretColor: "var(--editor-caret)", padding: "10px 0" },
+      ".cm-line": { paddingLeft: "14px" },
+      ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--editor-caret)" },
+      "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
+        { backgroundColor: "var(--editor-selection)" },
+      ".cm-gutters": {
+        color: "var(--editor-gutter-fg)",
+        backgroundColor: "var(--editor-bg)",
+        border: "none",
+        fontSize: "var(--text-xs)",
+      },
+      ".cm-foldGutter": { width: "14px" },
+      ".cm-activeLine, .cm-activeLineGutter": {
+        backgroundColor: "var(--editor-active-line)",
+      },
+      ".cm-activeLineGutter": { color: "var(--text-secondary)" },
+      ".cm-matchingBracket": { backgroundColor: "var(--editor-bracket)" },
+      ...syntaxColors,
+      ".syn-comment": { color: "var(--syn-comment)", fontStyle: "italic" },
+      ".syn-invalid": { textDecoration: "underline wavy var(--syn-invalid)" },
+    },
+    { dark },
+  );
+const lightEditor = editorTheme(false);
+const darkEditor = editorTheme(true);
+/** Last file and cursor per project, and each PDF's position by name, kept while the app runs. */
+const sessions = new Map<
+  string,
   {
-    "&": { color: "#cccccc", backgroundColor: "#1f1f1f" },
-    ".cm-content": { caretColor: "#cccccc" },
-    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#cccccc" },
-    ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
-      backgroundColor: "#264f78",
-    },
-    ".cm-gutters": {
-      backgroundColor: "#1f1f1f",
-      color: "#6e7681",
-      border: "none",
-    },
-    ".cm-matchingBracket": {
-      backgroundColor: "#313131",
-      outline: "1px solid #888888",
-    },
-    ".cm-foldPlaceholder": {
-      backgroundColor: "#252526",
-      color: "#b4b4b4",
-      borderColor: "#3c3c3c",
-    },
-  },
-  { dark: true },
-);
-const snazzyDarkHighlighting = syntaxHighlighting(
-  HighlightStyle.define([
-    { tag: [tags.keyword, tags.tagName], color: "#c586c0" },
-    { tag: [tags.string, tags.attributeValue], color: "#ce9178" },
-    { tag: [tags.comment], color: "#6a9955" },
-    { tag: [tags.number], color: "#b5cea8" },
-    { tag: [tags.bool, tags.null, tags.atom], color: "#569cd6" },
-    { tag: [tags.typeName, tags.className], color: "#4ec9b0" },
-    { tag: [tags.propertyName], color: "#9cdcfe" },
-    { tag: [tags.regexp], color: "#d16969" },
-    { tag: [tags.variableName, tags.attributeName], color: "#9cdcfe" },
-    { tag: [tags.function(tags.variableName)], color: "#dcdcaa" },
-    { tag: [tags.heading], color: "#4ec9b0" },
-    { tag: [tags.bracket, tags.punctuation], color: "#cccccc" },
-    { tag: [tags.operator], color: "#d4d4d4" },
-  ]),
-);
-export default function Workbench({
+    rootId?: string;
+    file?: string;
+    anchor?: number;
+    head?: number;
+    pdfs: Record<string, PdfView>;
+  }
+>();
+/** A callback with a stable identity that runs the latest render's code. */
+function useStableCallback<A extends unknown[], R>(
+  callback: (...args: A) => R,
+) {
+  const latest = useRef(callback);
+  latest.current = callback;
+  return useCallback((...args: A) => latest.current(...args), []);
+}
+type BottomTab = "terminal" | "ai" | "build";
+function Workbench({
   project,
   update,
   report,
-  details,
+  clearError,
+  onStatus,
   layout,
   changeLayout,
 }: {
   project: Project;
   update(changes: Partial<Project>): Promise<void>;
-  report(message: string): void;
-  details(): void;
+  report(message: string, source?: string): void;
+  clearError(source: string): void;
+  onStatus(status: { file: string; dirty: boolean }): void;
   layout: PanelLayout;
   changeLayout(changes: Partial<PanelLayout>): void;
 }) {
   const [panesRef, panesSize] = usePanelSize();
   const [workbenchRef, workbenchSize] = usePanelSize();
-  const dark = useColorTheme();
+  const dark = useDark();
+  const [session] = useState(
+    () =>
+      sessions.get(project.id) ??
+      sessions.set(project.id, { pdfs: {} }).get(project.id)!,
+  );
   const [roots, setRoots] = useState<ProjectFileRoot[]>([]);
   const [fileRevision, setFileRevision] = useState(0);
   const [activeRoot, setActiveRoot] = useState("primary");
   const [folderModal, setFolderModal] = useState(false);
   const [folderLabel, setFolderLabel] = useState("Code");
   const [active, setActive] = useState("");
+  const [support, setSupport] = useState<Extension>([]);
   const [text, setText] = useState("");
   const [savedText, setSavedText] = useState("");
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [pdf, setPdf] = useState<{ url: string; name: string } | null>(null);
+  // undefined until the last PDF has been looked up.
+  const [pdf, setPdf] = useState<{ url: string; name: string } | null>();
+  const [reveal, setReveal] = useState<
+    PdfTarget & { nonce: number; url: string }
+  >();
   const [showPdf, setShowPdf] = useState(true);
-  const [showTerminal, setShowTerminal] = useState(true);
-  const [bottomTab, setBottomTab] = useState<"terminal" | "ai" | "build">(
-    "terminal",
-  );
+  const agentMode = layout.workMode === "agent";
+  const showTerminal = layout.bottomOpen;
+  const bottomTab = layout.bottomTab as BottomTab;
+  const showTab = (tab: BottomTab) =>
+    changeLayout({ bottomOpen: true, bottomTab: tab });
+  const [prompt, setPrompt] = useState<(() => void) | null>(null);
+  const [diskConflict, setDiskConflict] = useState(false);
+  const [terminalReady, setTerminalReady] = useState(false);
   const [agentRunning, setAgentRunning] = useState(false);
   const [selection, setSelection] = useState("");
   const [log, setLog] = useState("");
   const [buildState, setBuildState] = useState<"idle" | "ok" | "error">("idle");
-  const [newFile, setNewFile] = useState(false);
+  // The root a new file goes in, while the dialog is open.
+  const [newFile, setNewFile] = useState<string>();
   const [filename, setFilename] = useState("section.tex");
+  const [renaming, setRenaming] = useState<{
+    rootId: string;
+    path: string;
+    to: string;
+  }>();
+  const [trashing, setTrashing] = useState<{ rootId: string; path: string }>();
   const [expandedPdf, setExpandedPdf] = useState(false);
-  const pdfOnly = expandedPdf && showPdf;
+  const [expandedAI, setExpandedAI] = useState(false);
+  const aiFocused = expandedAI && bottomTab === "ai" && showTerminal;
+  function switchMode(workMode: PanelLayout["workMode"]) {
+    changeLayout({
+      workMode,
+      bottomOpen: workMode !== "edit",
+      bottomTab: "ai",
+    });
+    setShowPdf(true);
+    setExpandedPdf(false);
+    setExpandedAI(false);
+  }
+  const pendingLine = useRef<number | undefined>(undefined);
+  // Set by a save that compiles on save; a build already running finishes first.
+  const buildAfterSave = useRef(false);
+  const view = useRef<EditorView | null>(null);
+  const mtime = useRef(0);
+  const pdfOnly = agentMode || (expandedPdf && showPdf);
+  const agentColumns = fitAgentColumns(workbenchSize.width, layout.agentWidth);
   const fitted = fitWorkbench(panesSize.width, layout, showPdf);
-  const maxTerminal = Math.max(120, Math.min(600, workbenchSize.height - 300));
-  const terminalHeight = clamp(layout.terminal, 120, maxTerminal);
+  const bottomPanel = fitBottomPanel(workbenchSize.height, layout);
+  const bottomSizeKey = bottomTab === "ai" ? "ai" : "terminal";
   const dirty = text !== savedText;
-  const currentProject = useRef(project.id);
-  currentProject.current = project.id;
-  const logElement = useRef<HTMLPreElement>(null);
+  const isTex = /\.(tex|ltx)$/.test(active);
+  const deferredText = useDeferredValue(text);
+  const sections = useMemo(
+    () => (isTex ? outline(deferredText) : []),
+    [isTex, deferredText],
+  );
+  const topSection = Math.min(...sections.map((section) => section.depth));
+  const stats = useMemo(
+    () =>
+      isTex
+        ? `${countWords(deferredText).toLocaleString()} words`
+        : `${deferredText.split("\n").length} lines`,
+    [isTex, deferredText],
+  );
+  const problems = useMemo(
+    () => parseProblems(log, project.mainFile),
+    [log, project.mainFile],
+  );
+  // Read when a new PDF mounts the reader, so scrolling does not re-render it.
+  const initialView = useMemo(
+    () => (pdf ? session.pdfs[pdf.name] : undefined),
+    [session, pdf?.url],
+  );
   const reload = useCallback(async () => {
     try {
       setRoots(await window.research!.projectFiles(project.id));
@@ -179,45 +271,62 @@ export default function Workbench({
       report((error as Error).message);
     }
   }, [project.id, report]);
+  function showFile(
+    rootId: string,
+    file: string,
+    content: string,
+    extension: Extension = [],
+  ) {
+    if (file !== session.file || rootId !== session.rootId)
+      Object.assign(session, { rootId, file, anchor: 0, head: 0 });
+    setActiveRoot(rootId);
+    setActive(file);
+    setSupport(extension);
+    setText(content);
+    setSavedText(content);
+    setDiskConflict(false);
+  }
+  // A fresh editor per file keeps undo history separate between files.
+  async function load(rootId: string, file: string, line?: number) {
+    const api = window.research!;
+    pendingLine.current = line;
+    setLoading(true);
+    try {
+      const time = await api.fileMtime(project.id, file, rootId);
+      const [content, extension] = await Promise.all([
+        api.readFile(project.id, file, rootId),
+        fileLanguage(file).load(),
+      ]);
+      mtime.current = time;
+      showFile(rootId, file, content, extension);
+    } finally {
+      setLoading(false);
+    }
+  }
   useEffect(() => {
-    let canceled = false;
-    void window.research
-      ?.projectFiles(project.id)
+    const [rootId, file] = session.file
+      ? [session.rootId!, session.file]
+      : ["primary", project.mainFile];
+    // Read the likely file while the file tree loads.
+    const opened = file
+      ? load(rootId, file).then(
+          () => true,
+          () => false,
+        )
+      : Promise.resolve(false);
+    void window
+      .research!.projectFiles(project.id)
       .then(async (list) => {
-        if (canceled) return;
         setRoots(list);
+        if (await opened) return;
         const root = list.find((root) => root.id === "primary") || list[0];
-        const file = root?.files.includes(project.mainFile)
+        const fallback = root?.files.includes(project.mainFile)
           ? project.mainFile
           : root?.files[0];
-        setActive("");
-        setText("");
-        setSavedText("");
-        if (file) {
-          setLoading(true);
-          try {
-            const content = await window.research!.readFile(
-              project.id,
-              file,
-              root!.id,
-            );
-            if (!canceled) {
-              setActiveRoot(root!.id);
-              setActive(file);
-              setText(content);
-              setSavedText(content);
-            }
-          } catch (error) {
-            if (!canceled) report((error as Error).message);
-          } finally {
-            if (!canceled) setLoading(false);
-          }
-        }
+        if (fallback) await load(root.id, fallback);
       })
-      .catch((error) => report(error.message));
-    return () => {
-      canceled = true;
-    };
+      .catch((error) => report(error.message))
+      .finally(() => setLoading(false));
   }, [
     project.id,
     project.folder,
@@ -226,267 +335,532 @@ export default function Workbench({
   ]);
   useEffect(() => {
     let canceled = false;
-    void window.research
-      ?.lastPdf(project.id)
-      .then(async (result) => {
-        if (canceled) return;
-        if (result) setPdf(result);
-        else {
-          const versions = await window.research!.pdfAnnotationLibrary(
-            project.id,
-          );
-          if (!canceled && versions.length) {
-            const archived = await window.research!.openAnnotatedPdf(
-              project.id,
-              versions[0].key,
-            );
-            if (!canceled) setPdf(archived);
-          }
-        }
-      })
-      .catch(() => {});
+    const api = window.research!;
+    void (async () => {
+      const latest = await api.lastPdf(project.id);
+      if (latest) return latest;
+      const [version] = await api.pdfAnnotationLibrary(project.id);
+      return version ? api.openAnnotatedPdf(project.id, version.key) : null;
+    })()
+      .catch(() => null)
+      .then((result) => {
+        if (!canceled) setPdf(result);
+      });
     return () => {
       canceled = true;
     };
   }, [project.id, project.folder, project.mainFile]);
-  useEffect(
-    () =>
-      window.research?.onCompileOutput((data) => {
-        if (data.projectId === project.id)
-          setLog((previous) => (previous + data.text).slice(-150000));
-      }),
-    [project.id],
-  );
   useEffect(() => {
-    if (logElement.current)
-      logElement.current.scrollTop = logElement.current.scrollHeight;
-  }, [log]);
-  const save = useCallback(async () => {
-    if (!active || !window.research) return;
+    // The editor paints first; the shell starts once the window is idle.
+    const id = requestIdleCallback(() => setTerminalReady(true), {
+      timeout: 1000,
+    });
+    return () => cancelIdleCallback(id);
+  }, []);
+  useEffect(() => onStatus({ file: active, dirty }), [active, dirty]);
+  async function save(manual = false) {
+    if (!active) return;
     setSaving(true);
     try {
-      await window.research.writeFile(project.id, active, text, activeRoot);
+      mtime.current = await window.research!.writeFile(
+        project.id,
+        active,
+        text,
+        activeRoot,
+        mtime.current || undefined,
+      );
       setSavedText(text);
+      setDiskConflict(false);
+      if (active.endsWith(".bib")) forgetCitations(project.id);
       setFileRevision((revision) => revision + 1);
+      if (
+        manual &&
+        project.compileOnSave &&
+        activeRoot === "primary" &&
+        /\.(tex|bib)$/.test(active)
+      )
+        buildAfterSave.current = true;
     } catch (error) {
-      report((error as Error).message);
+      const message = (error as Error).message;
+      if (message.startsWith("Changed on disk")) setDiskConflict(true);
+      else report(message);
       throw error;
     } finally {
       setSaving(false);
     }
-  }, [active, activeRoot, text, project.id, report]);
-  const refreshAfterAgent = useCallback(async () => {
-    const id = project.id;
-    setLoading(true);
+  }
+  // Replaces the buffer with the file on disk and keeps the cursor in place.
+  async function reloadActive() {
+    if (!active || loading) return;
     try {
-      await reload();
-      if (active) {
-        try {
-          const content = await window.research!.readFile(
-            id,
-            active,
-            activeRoot,
-          );
-          if (currentProject.current === id) {
-            setText(content);
-            setSavedText(content);
-          }
-        } catch {
-          if (currentProject.current === id) {
-            setActive("");
-            setText("");
-            setSavedText("");
-          }
-        }
+      const api = window.research!;
+      const time = await api.fileMtime(project.id, active, activeRoot);
+      const content = await api.readFile(project.id, active, activeRoot);
+      mtime.current = time;
+      const editor = view.current;
+      if (editor?.dom.isConnected && editor.state.doc.toString() !== content) {
+        const { anchor, head } = editor.state.selection.main;
+        editor.dispatch({
+          changes: { from: 0, to: editor.state.doc.length, insert: content },
+          selection: {
+            anchor: Math.min(anchor, content.length),
+            head: Math.min(head, content.length),
+          },
+        });
       }
-      const latestPdf = await window.research!.lastPdf(id);
-      if (currentProject.current === id && latestPdf) setPdf(latestPdf);
-      setFileRevision((revision) => revision + 1);
-    } catch (error) {
-      report((error as Error).message);
-    } finally {
-      if (currentProject.current === id) setLoading(false);
-    }
-  }, [active, activeRoot, project.id, reload, report]);
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-        e.preventDefault();
-        if (!agentRunning) void save().catch(() => {});
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [save, agentRunning]);
-  useEffect(() => {
-    const handler = (event: BeforeUnloadEvent) => {
-      if (dirty) event.preventDefault();
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty]);
-  useEffect(() => {
-    const guard = (event: Event) => {
-      if (
-        dirty &&
-        !window.confirm("Discard unsaved file changes? Use ⌘S to save first.")
-      )
-        event.preventDefault();
-    };
-    window.addEventListener("research:navigate", guard);
-    return () => window.removeEventListener("research:navigate", guard);
-  }, [dirty]);
-  async function openFile(file: string, rootId = "primary") {
-    if (dirty && !window.confirm("Discard unsaved file changes?")) return;
-    setLoading(true);
-    try {
-      const content = await window.research!.readFile(project.id, file, rootId);
-      setActiveRoot(rootId);
-      setActive(file);
       setText(content);
       setSavedText(content);
-    } catch (error) {
-      report((error as Error).message);
-    } finally {
-      setLoading(false);
+      setDiskConflict(false);
+    } catch {
+      showFile(activeRoot, "", "");
     }
   }
-  async function compile() {
+  // Polled while the window is visible: a clean buffer follows the disk.
+  // After "Keep mine" (mtime 0) the next save overwrites without a check.
+  const checkDisk = useStableCallback(async () => {
+    if (!active || !mtime.current || loading || saving || diskConflict) return;
+    if (document.hidden) return;
+    const time = await window
+      .research!.fileMtime(project.id, active, activeRoot)
+      .catch(() => 0);
+    if (!time || time === mtime.current) return;
+    if (dirty) setDiskConflict(true);
+    else await reloadActive();
+  });
+  const filesChanged = useStableCallback(async () => {
+    await reload();
+    await reloadActive();
+    setFileRevision((revision) => revision + 1);
+  });
+  const refreshAfterAgent = useCallback(async () => {
+    try {
+      await filesChanged();
+      const latestPdf = await window.research!.lastPdf(project.id);
+      if (latestPdf) setPdf(latestPdf);
+    } catch (error) {
+      report((error as Error).message);
+    }
+  }, [filesChanged, project.id, report]);
+  const onWindowEvent = useStableCallback((event: Event) => {
+    if (event.type === "focus") void checkDisk();
+    else if (event instanceof KeyboardEvent) {
+      if (event.defaultPrevented || !(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      const typing = (event.target as Element).closest?.(
+        "input, textarea, [contenteditable]",
+      );
+      if (key === "s") {
+        event.preventDefault();
+        if (!agentRunning) void save(true).catch(() => {});
+      } else if (key === "enter" && !typing) {
+        event.preventDefault();
+        void compile();
+      } else if (key === "j" && event.shiftKey) {
+        event.preventDefault();
+        void showInPdf();
+      }
+    } else if (dirty) {
+      // beforeunload, or research:navigate, which continues through detail.proceed().
+      event.preventDefault();
+      if (event instanceof CustomEvent) setPrompt(() => event.detail.proceed);
+    }
+  });
+  useEffect(() => {
+    const types = ["keydown", "focus", "beforeunload", "research:navigate"];
+    for (const type of types) window.addEventListener(type, onWindowEvent);
+    const timer = setInterval(checkDisk, 2000);
+    return () => {
+      for (const type of types) window.removeEventListener(type, onWindowEvent);
+      clearInterval(timer);
+    };
+  }, [onWindowEvent, checkDisk]);
+  function place(editor: EditorView, line?: number) {
+    const { doc } = editor.state;
+    const anchor = line
+      ? doc.line(Math.min(line, doc.lines)).from
+      : Math.min(session.anchor ?? 0, doc.length);
+    const head = line ? anchor : Math.min(session.head ?? 0, doc.length);
+    editor.dispatch({
+      selection: { anchor, head },
+      effects: EditorView.scrollIntoView(head, { y: "center" }),
+    });
+    editor.focus();
+  }
+  const createEditor = useCallback((editor: EditorView) => {
+    view.current = editor;
+    place(editor, pendingLine.current);
+    pendingLine.current = undefined;
+  }, []);
+  const trackSelection = useCallback(
+    (update: ViewUpdate) => {
+      if (!update.selectionSet && !update.docChanged) return;
+      const { selection } = update.state;
+      setSelection(
+        selection.ranges
+          .map((range) => update.state.sliceDoc(range.from, range.to))
+          .join("\n"),
+      );
+      session.anchor = selection.main.anchor;
+      session.head = selection.main.head;
+    },
+    [session],
+  );
+  // Runs `next` now, or after the Save / Don't save prompt when the buffer is dirty.
+  const guard = (next: () => void) => (dirty ? setPrompt(() => next) : next());
+  const openFile = useStableCallback(
+    (file: string, rootId: string = "primary", line?: number) => {
+      if (agentMode) switchMode("combined");
+      if (file !== active || rootId !== activeRoot)
+        guard(() =>
+          load(rootId, file, line).catch((error) => report(error.message)),
+        );
+      else if (line && view.current) place(view.current, line);
+    },
+  );
+  const removeRoot = useStableCallback(async (rootId: string) => {
+    try {
+      if (dirty) await save();
+    } catch {
+      return;
+    }
+    await update({
+      localFolders: (project.localFolders || []).filter(
+        (root) => root.id !== rootId,
+      ),
+    });
+  });
+  const gitSave = useStableCallback(async () => {
+    if (!dirty) return;
+    await save();
+    return active;
+  });
+  const toggleExpandedPdf = useCallback(() => setExpandedPdf((x) => !x), []);
+  const rememberPdfView = useCallback(
+    (view: PdfView) => {
+      if (pdf) session.pdfs[pdf.name] = view;
+    },
+    [session, pdf],
+  );
+  async function showInPdf() {
+    const editor = view.current;
+    if (!editor || !pdf || !isTex) return;
+    try {
+      const line = editor.state.doc.lineAt(editor.state.selection.main.head);
+      const target = await window.research!.synctexForward(
+        project.id,
+        active,
+        line.number,
+        activeRoot,
+      );
+      if (!target) return;
+      setShowPdf(true);
+      setReveal({ ...target, nonce: Date.now(), url: pdf.url });
+    } catch (error) {
+      report((error as Error).message);
+    }
+  }
+  const inverseSearch = useStableCallback(async (target: PdfTarget) => {
+    try {
+      const source = await window.research!.synctexInverse(
+        project.id,
+        target.page,
+        target.x,
+        target.y,
+      );
+      if (!source) return;
+      setExpandedPdf(false);
+      openFile(source.file, source.rootId, source.line);
+    } catch (error) {
+      report((error as Error).message);
+    }
+  });
+  const openReference = useStableCallback(
+    async (reference: string, rootId: string) => {
+      const target = await window.research!.openProjectReference(
+        project.id,
+        reference,
+        rootId,
+      );
+      setExpandedPdf(false);
+      if (target.kind === "pdf") {
+        setPdf(target);
+        setShowPdf(true);
+      } else await openFile(target.file, target.rootId, target.line);
+      setExpandedAI(false);
+    },
+  );
+  const compile = useStableCallback(async (fromSave = false) => {
+    if (busy || agentRunning || !project.folder) return;
+    clearError("compile");
     if (!project.mainFile) {
-      report("Set your LaTeX entry file in project details first.");
+      report("Set your LaTeX entry file in project details first.", "compile");
       return;
     }
     setBusy(true);
     setLog("");
     setBuildState("idle");
-    setShowTerminal(true);
-    setBottomTab("build");
-    const id = project.id;
+    if (showTerminal && !agentMode && !fromSave)
+      changeLayout({ bottomTab: "build" });
     try {
       if (dirty) await save();
-      const result = await window.research!.compile(id);
-      if (currentProject.current !== id) return;
+      const result = await window.research!.compile(project.id);
       setLog(result.log);
       setBuildState(result.ok ? "ok" : "error");
       if (result.pdf) {
         setPdf({
           url: result.pdf,
-          name: project.mainFile.replace(/\.tex$/, ".pdf"),
+          name: project.mainFile.replace(/^.*\/|\.tex$/g, "") + ".pdf",
         });
         setShowPdf(true);
       }
-      if (!result.ok)
-        report("Compilation failed. See the build log for the LaTeX error.");
+      if (!result.ok) showTab("build");
     } catch (error) {
       setBuildState("error");
       setLog((error as Error).message);
-      report((error as Error).message);
+      showTab("build");
     } finally {
       setBusy(false);
     }
+  });
+  useEffect(() => {
+    if (busy || !buildAfterSave.current) return;
+    buildAfterSave.current = false;
+    void compile(true);
+  }, [busy, fileRevision]);
+  const setCompileOnSave = useCallback(
+    (compileOnSave: boolean) => void update({ compileOnSave }),
+    [update],
+  );
+  // Keeps the last name typed and swaps in the chosen folder.
+  function startNewFile(rootId: string, folder = "") {
+    setNewFile(rootId);
+    setFilename((name) => (folder && folder + "/") + name.replace(/^.*\//, ""));
   }
-  async function chooseFolder() {
-    if (
-      dirty &&
-      !window.confirm("Discard unsaved file changes before changing folders?")
-    )
-      return;
+  const fileAction = useStableCallback(
+    (action: FileAction, rootId: string, path: string) => {
+      const target = { rootId, path };
+      if (action === "create") startNewFile(rootId, path);
+      else if (action === "rename") setRenaming({ ...target, to: path });
+      else if (action === "trash")
+        rootId === activeRoot && path === active
+          ? guard(() => setTrashing(target))
+          : setTrashing(target);
+      else if (action === "reveal")
+        window
+          .research!.revealFolder(project.id, rootId, path)
+          .catch((error) => report(error.message));
+      else void update({ mainFile: path });
+    },
+  );
+  async function renameFile({
+    rootId,
+    path,
+    to,
+  }: NonNullable<typeof renaming>) {
     try {
-      const result = await window.research!.chooseFolder(project.id);
-      if (result) {
-        await update({
-          folder: result.folder,
-          folderLabel: "Project",
-          mainFile: result.files.includes("main.tex")
-            ? "main.tex"
-            : result.files.find((f) => f.endsWith(".tex")) || "",
-        });
-        setActive("");
-        setText("");
-        setSavedText("");
-        setPdf(null);
+      await window.research!.renameFile(project.id, rootId, path, to);
+      setRenaming(undefined);
+      if (rootId === activeRoot && path === active) {
+        const extension = await fileLanguage(to).load();
+        session.file = to;
+        setActive(to);
+        setSupport(extension);
       }
+      if (rootId === "primary" && path === project.mainFile)
+        await update({ mainFile: to });
+      await reload();
     } catch (error) {
       report((error as Error).message);
     }
   }
+  async function trashFile({ rootId, path }: NonNullable<typeof trashing>) {
+    setTrashing(undefined);
+    try {
+      await window.research!.trashFile(project.id, rootId, path);
+      if (rootId === activeRoot && path === active) {
+        showFile(rootId, "", "");
+        await load("primary", project.mainFile).catch(() => {});
+      }
+      await reload();
+    } catch (error) {
+      report((error as Error).message);
+    }
+  }
+  function chooseFolder() {
+    guard(async () => {
+      try {
+        const result = await window.research!.chooseFolder(project.id);
+        if (!result) return;
+        showFile("primary", "", "");
+        setPdf(null);
+        await update({
+          folder: result.folder,
+          folderLabel: "Project",
+          mainFile: result.mainFile,
+        });
+      } catch (error) {
+        report((error as Error).message);
+      }
+    });
+  }
+  async function pickPdf() {
+    try {
+      const result = await window.research!.choosePdf(project.id);
+      if (result) setPdf(result);
+    } catch (error) {
+      report((error as Error).message);
+    }
+  }
+  const extensions = useMemo(
+    () => [
+      EditorView.lineWrapping,
+      highlighting,
+      Prec.highest(
+        keymap.of([
+          {
+            key: "Mod-Enter",
+            run: () => {
+              void compile();
+              return true;
+            },
+          },
+        ]),
+      ),
+      support,
+      isTex
+        ? EditorState.languageData.of(() => [
+            {
+              autocomplete: latexCompletion(() =>
+                citationKeys(project.id, roots),
+              ),
+            },
+          ])
+        : [],
+    ],
+    [support, isTex, roots],
+  );
   return (
-    <div className="workbench" ref={workbenchRef}>
+    <div
+      className={`workbench mode-${layout.workMode} ${aiFocused ? "ai-focused" : ""} ${agentMode && expandedPdf ? "pdf-focused" : ""} ${agentMode && !showTerminal ? "agent-hidden" : ""}`}
+      ref={workbenchRef}
+      style={
+        agentMode
+          ? {
+              gridTemplateColumns: `${agentColumns.width}px 4px minmax(0, 1fr)`,
+            }
+          : undefined
+      }
+    >
       <div className="workbench-header">
-        <div className="crumb">
-          <span>Workbench</span>
-          <ChevronRight size={14} />
-          <strong>{project.name}</strong>
-          {project.example && <span className="sample-tag">EXAMPLE</span>}
+        <div
+          className="workbench-mode-switch"
+          role="group"
+          aria-label="Workbench mode"
+        >
+          <button
+            type="button"
+            aria-pressed={agentMode}
+            title="Read the PDF and work with the agent"
+            onClick={() => switchMode("agent")}
+          >
+            <Sparkles size={13} />
+            Agent + PDF
+          </button>
+          <button
+            type="button"
+            aria-pressed={layout.workMode === "edit"}
+            aria-label="Source + PDF"
+            title="Edit the source beside the PDF"
+            onClick={() => switchMode("edit")}
+          >
+            <FileText size={13} />
+            Source + PDF{dirty && <i title="Unsaved source edits" />}
+          </button>
+          <button
+            type="button"
+            aria-pressed={layout.workMode === "combined"}
+            title="Source, PDF, and agent together"
+            onClick={() => switchMode("combined")}
+          >
+            <PanelsTopLeft size={13} />
+            All panels
+          </button>
         </div>
         <div className="toolbar-actions">
           <button
             className="icon-button layout-reset"
             title="Reset panel layout"
             onClick={() => {
-              changeLayout(defaultPanelLayout);
+              // Sizes only; the work mode and open tab stay as chosen.
+              const { sidebar, files, editorFraction, terminal, ai } =
+                defaultPanelLayout;
+              changeLayout({
+                sidebar,
+                files,
+                editorFraction,
+                terminal,
+                ai,
+                agentWidth: 0,
+              });
+              setShowPdf(true);
               setExpandedPdf(false);
+              setExpandedAI(false);
             }}
           >
             <PanelsTopLeft size={15} />
           </button>
           <GitPanel
-            key={project.id}
             projectId={project.id}
             roots={roots}
             revision={fileRevision}
-            save={async () => {
-              if (dirty) await save();
-            }}
-            changed={async () => {
-              await reload();
-              if (active) {
-                const content = await window.research!.readFile(
-                  project.id,
-                  active,
-                  activeRoot,
-                );
-                setText(content);
-                setSavedText(content);
-              }
-              setFileRevision((revision) => revision + 1);
-            }}
+            onOpenFile={openFile}
+            save={gitSave}
+            changed={filesChanged}
           />
-          <button className="button small" onClick={details}>
-            <Settings2 size={14} /> Project details
-          </button>
-          <button
-            className="button small"
-            onClick={() => setShowPdf((x) => !x)}
-          >
-            {showPdf ? (
-              <PanelRightClose size={15} />
-            ) : (
-              <PanelRightOpen size={15} />
-            )}{" "}
-            PDF
-          </button>
+          {!agentMode && (
+            <button
+              className="button small"
+              onClick={() => setShowPdf((x) => !x)}
+            >
+              {showPdf ? (
+                <PanelRightClose size={15} />
+              ) : (
+                <PanelRightOpen size={15} />
+              )}{" "}
+              PDF
+            </button>
+          )}
           <button
             className="button small"
             disabled={agentRunning || saving || !dirty}
-            onClick={() => void save().catch(() => {})}
+            onClick={() => void save(true).catch(() => {})}
           >
             <Save size={14} />
             {saving ? "Saving…" : "Save"} <kbd title="⌘S or Ctrl+S">⌘S</kbd>
           </button>
           <button
             className="button primary small"
-            disabled={
-              agentRunning || busy || !project.folder || !project.mainFile
+            disabled={agentRunning || !project.folder || !project.mainFile}
+            // The second click of a double-click must not stop the build it started.
+            onClick={(event) =>
+              busy
+                ? event.detail < 2 &&
+                  void window.research!.cancelCompile(project.id)
+                : void compile()
             }
-            onClick={compile}
           >
             {busy ? (
-              <LoaderCircle size={14} className="spin" />
+              <>
+                <Square size={12} /> Stop
+              </>
             ) : (
-              <Play size={14} />
-            )}{" "}
-            {busy ? "Compiling…" : "Compile"}
+              <>
+                <Play size={14} /> Compile{" "}
+                <kbd aria-hidden title="⌘Return or Ctrl+Return">
+                  ⌘↵
+                </kbd>
+              </>
+            )}
           </button>
         </div>
       </div>
@@ -509,37 +883,57 @@ export default function Workbench({
                 className="icon-button"
                 title="New file"
                 disabled={!project.folder}
-                onClick={() => setNewFile(true)}
+                onClick={() => startNewFile("primary")}
               >
                 <FilePlus2 size={14} />
               </button>
             </div>
           </div>
           <ProjectFiles
-            key={project.id}
             projectId={project.id}
             roots={roots}
             active={active}
             activeRoot={activeRoot}
             mainFile={project.mainFile}
             open={openFile}
-            attach={() => setFolderModal(true)}
-            change={chooseFolder}
-            remove={async (rootId) => {
-              if (dirty) {
-                try {
-                  await save();
-                } catch {
-                  return;
-                }
-              }
-              await update({
-                localFolders: (project.localFolders || []).filter(
-                  (root) => root.id !== rootId,
-                ),
-              });
-            }}
+            remove={removeRoot}
+            act={fileAction}
           />
+          {sections.length > 0 && (
+            <details className="outline">
+              <summary>
+                <ChevronRight size={12} />
+                Outline
+              </summary>
+              {sections.map((section) => (
+                <button
+                  key={section.line}
+                  title={section.title}
+                  style={{
+                    paddingLeft: 14 + (section.depth - topSection) * 12,
+                  }}
+                  onClick={() =>
+                    view.current && place(view.current, section.line)
+                  }
+                >
+                  {section.title}
+                </button>
+              ))}
+            </details>
+          )}
+          <div className="file-sidebar-bottom">
+            <button
+              className="add-local-folder"
+              onClick={() => setFolderModal(true)}
+            >
+              <FolderPlus size={14} /> Add local folder
+            </button>
+            <button onClick={chooseFolder}>
+              {roots.length
+                ? "Change project folder…"
+                : "Choose project folder…"}
+            </button>
+          </div>
         </aside>
         {!pdfOnly && (
           <PanelDivider
@@ -559,7 +953,32 @@ export default function Workbench({
               {dirty && <i className="unsaved-dot" />}
             </span>
             <span className="editor-language">{fileLanguage(active).name}</span>
+            {isTex && (
+              <button
+                className="icon-button"
+                title="Show in PDF (⇧⌘J)"
+                aria-label="Show in PDF"
+                disabled={!pdf}
+                onClick={() => void showInPdf()}
+              >
+                <Crosshair size={13} />
+              </button>
+            )}
           </div>
+          {diskConflict && (
+            <div className="disk-conflict" role="alert">
+              <span>{active} changed on disk</span>
+              <button onClick={() => void reloadActive()}>Reload</button>
+              <button
+                onClick={() => {
+                  mtime.current = 0;
+                  setDiskConflict(false);
+                }}
+              >
+                Keep mine
+              </button>
+            </div>
+          )}
           {loading ? (
             <div className="pane-empty">
               <LoaderCircle className="spin" size={24} />
@@ -569,30 +988,13 @@ export default function Workbench({
             <CodeMirror
               value={text}
               height="100%"
-              extensions={[
-                EditorView.lineWrapping,
-                dark ? snazzyDarkHighlighting : snazzyLightHighlighting,
-                ...fileLanguage(active).extensions,
-              ]}
+              theme={dark ? darkEditor : lightEditor}
+              extensions={extensions}
               onChange={setText}
               readOnly={agentRunning}
               editable={!agentRunning}
-              onUpdate={(update) => {
-                if (update.selectionSet || update.docChanged)
-                  setSelection(
-                    update.state.selection.ranges
-                      .map((range) =>
-                        update.state.doc.sliceString(range.from, range.to),
-                      )
-                      .join("\n"),
-                  );
-              }}
-              basicSetup={{
-                foldGutter: true,
-                highlightActiveLine: true,
-                lineNumbers: true,
-              }}
-              theme={dark ? snazzyDarkTheme : snazzyLightTheme}
+              onCreateEditor={createEditor}
+              onUpdate={trackSelection}
             />
           ) : (
             <div className="pane-empty">
@@ -608,15 +1010,13 @@ export default function Workbench({
             <span>
               {agentRunning
                 ? "Agent is working on project files"
-                : dirty
-                  ? "Unsaved changes"
-                  : active
-                    ? "All changes saved"
-                    : "No file selected"}
+                : dirty && "Unsaved changes"}
             </span>
             <span>
-              UTF-8 <span className="status-separator">·</span>{" "}
-              {text.split("\n").length} lines
+              {isTex && selection
+                ? `${countWords(selection).toLocaleString()} / `
+                : ""}
+              {stats}
             </span>
           </div>
         </section>
@@ -641,42 +1041,23 @@ export default function Workbench({
             className="pdf-pane"
             style={{ width: pdfOnly ? "100%" : fitted.pdf }}
           >
-            <div className="pane-heading">
-              <span>
-                <FileText size={14} /> {pdf?.name || "PDF PREVIEW"}
-              </span>
-              <div>
-                <button
-                  className="icon-button"
-                  title={pdfOnly ? "Restore split view" : "Expand PDF preview"}
-                  onClick={() => setExpandedPdf((x) => !x)}
-                >
-                  <Maximize2 size={14} />
-                </button>
-                <button
-                  className="button text small"
-                  onClick={async () => {
-                    try {
-                      const result = await window.research!.choosePdf(
-                        project.id,
-                      );
-                      if (result) setPdf(result);
-                    } catch (error) {
-                      report((error as Error).message);
-                    }
-                  }}
-                >
-                  Open PDF
-                </button>
-              </div>
-            </div>
             {pdf ? (
               <PdfReader
                 key={pdf.url}
                 projectId={project.id}
                 pdf={pdf}
                 openPdf={setPdf}
+                initialView={initialView}
+                onViewChange={rememberPdfView}
+                reveal={reveal?.url === pdf.url ? reveal : undefined}
+                onInverseSearch={inverseSearch}
+                expanded={expandedPdf}
+                onExpand={toggleExpandedPdf}
               />
+            ) : pdf === undefined ? (
+              <div className="pdf-empty">
+                <LoaderCircle className="spin" size={24} />
+              </div>
             ) : (
               <div className="pdf-empty">
                 <div className="paper-icon">
@@ -688,55 +1069,55 @@ export default function Workbench({
                   <br />
                   or open a local document.
                 </p>
-                <button
-                  className="button"
-                  onClick={async () => {
-                    try {
-                      const result = await window.research!.choosePdf(
-                        project.id,
-                      );
-                      if (result) setPdf(result);
-                    } catch (error) {
-                      report((error as Error).message);
-                    }
-                  }}
-                >
-                  <FolderOpen size={14} /> Open a PDF
+                <button className="button" onClick={pickPdf}>
+                  <FolderOpen size={14} /> Open PDF
                 </button>
               </div>
             )}
           </section>
         )}
       </div>
-      {showTerminal && (
+      {agentMode && showTerminal && !aiFocused && !expandedPdf && (
+        <div className="agent-column-divider">
+          <PanelDivider
+            label="Resize agent and PDF"
+            value={agentColumns.width}
+            min={360}
+            max={agentColumns.max}
+            change={(agentWidth) => changeLayout({ agentWidth })}
+            reset={() => changeLayout({ agentWidth: 0 })}
+          />
+        </div>
+      )}
+      {showTerminal && !aiFocused && !agentMode && (
         <PanelDivider
-          label="Resize terminal panel"
+          label={
+            bottomTab === "ai" ? "Resize AI panel" : "Resize terminal panel"
+          }
           orientation="horizontal"
-          value={terminalHeight}
-          min={120}
-          max={maxTerminal}
+          value={bottomPanel.height}
+          min={bottomPanel.min}
+          max={bottomPanel.max}
           direction={-1}
-          change={(terminal) => changeLayout({ terminal })}
-          reset={() => changeLayout({ terminal: defaultPanelLayout.terminal })}
+          change={(height) => changeLayout({ [bottomSizeKey]: height })}
+          reset={() =>
+            changeLayout({ [bottomSizeKey]: defaultPanelLayout[bottomSizeKey] })
+          }
         />
       )}
       <div className="bottom-tabs">
         <button
           className={bottomTab === "terminal" && showTerminal ? "active" : ""}
           onClick={() => {
-            setBottomTab("terminal");
-            setShowTerminal(true);
+            showTab("terminal");
+            setExpandedAI(false);
           }}
         >
           <TerminalSquare size={13} /> Terminal
         </button>
         <button
           className={bottomTab === "ai" && showTerminal ? "active" : ""}
-          onClick={() => {
-            setBottomTab("ai");
-            setShowTerminal(true);
-            if (layout.terminal < 270) changeLayout({ terminal: 300 });
-          }}
+          onClick={() => showTab("ai")}
         >
           <Sparkles size={13} /> AI
           {agentRunning && <LoaderCircle size={12} className="spin" />}
@@ -744,26 +1125,45 @@ export default function Workbench({
         <button
           className={bottomTab === "build" && showTerminal ? "active" : ""}
           onClick={() => {
-            setBottomTab("build");
-            setShowTerminal(true);
+            showTab("build");
+            setExpandedAI(false);
           }}
         >
           {buildState === "ok" ? (
             <CheckCircle2 size={13} />
           ) : buildState === "error" ? (
-            <AlertCircle size={13} />
+            <AlertCircle size={13} className="build-failed" />
           ) : (
             <Play size={13} />
           )}{" "}
           Build log{busy && <LoaderCircle size={12} className="spin" />}
+          {problems.length > 0 && (
+            <small
+              className="problem-count"
+              data-tone={problems.some((p) => p.error) ? "danger" : "warning"}
+            >
+              {problems.length}
+            </small>
+          )}
         </button>
-        <span>
-          {project.mainFile
-            ? `Entry: ${project.mainFile}`
-            : "No LaTeX entry file selected"}
-        </span>
+        {bottomTab === "ai" && showTerminal && (
+          <button
+            title={aiFocused ? "Restore split view" : "Expand AI panel"}
+            aria-pressed={aiFocused}
+            onClick={() => setExpandedAI((value) => !value)}
+          >
+            <Maximize2 size={12} />
+            {aiFocused ? "Split view" : "Expand AI"}
+          </button>
+        )}
         {showTerminal && (
-          <button className="hide-panel" onClick={() => setShowTerminal(false)}>
+          <button
+            className="hide-panel"
+            onClick={() => {
+              changeLayout({ bottomOpen: false });
+              setExpandedAI(false);
+            }}
+          >
             Hide panel
           </button>
         )}
@@ -771,14 +1171,12 @@ export default function Workbench({
       <div
         className="bottom-panel"
         hidden={!showTerminal}
-        style={{ height: terminalHeight }}
+        style={{
+          height: aiFocused || agentMode ? undefined : bottomPanel.height,
+        }}
       >
         <div className="bottom-tab-content" hidden={bottomTab !== "terminal"}>
-          <TerminalPanel
-            project={project}
-            onClose={() => setShowTerminal(false)}
-            report={report}
-          />
+          {terminalReady && <TerminalPanel project={project} report={report} />}
         </div>
         <div className="bottom-tab-content" hidden={bottomTab !== "ai"}>
           <AIPanel
@@ -794,32 +1192,32 @@ export default function Workbench({
             }}
             onRunning={setAgentRunning}
             onFilesChanged={refreshAfterAgent}
+            onOpenReference={openReference}
+            visible={
+              showTerminal && bottomTab === "ai" && !(agentMode && expandedPdf)
+            }
           />
         </div>
         <div className="bottom-tab-content" hidden={bottomTab !== "build"}>
-          <div className="build-panel">
-            <div className="build-summary">
-              <i className={buildState === "ok" ? "live-dot" : "idle-dot"} />
-              {busy
-                ? "Compiling with latexmk…"
-                : buildState === "ok"
-                  ? "Build succeeded · PDF updated"
-                  : buildState === "error"
-                    ? "Build failed"
-                    : "Ready to compile"}
-              <span>latexmk · pdfLaTeX · shell escape disabled</span>
-            </div>
-            <pre ref={logElement}>
-              {log ||
-                "Click Compile to build your LaTeX project. Compiler output will appear here."}
-            </pre>
-          </div>
+          <BuildLog
+            projectId={project.id}
+            busy={busy}
+            state={buildState}
+            log={log}
+            problems={problems}
+            open={openFile}
+            compileOnSave={!!project.compileOnSave}
+            setCompileOnSave={setCompileOnSave}
+          />
         </div>
       </div>
       {folderModal && (
-        <div className="modal-backdrop">
+        <Modal
+          title="Add a local folder"
+          className="compact"
+          onClose={() => setFolderModal(false)}
+        >
           <form
-            className="modal compact"
             onSubmit={async (event) => {
               event.preventDefault();
               try {
@@ -835,33 +1233,30 @@ export default function Workbench({
                   report("This folder is already attached to the project.");
                   return;
                 }
-                if (!project.folder)
-                  await update({
-                    folder: result.folder,
-                    folderLabel: folderLabel.trim(),
-                    mainFile: result.files.includes("main.tex")
-                      ? "main.tex"
-                      : result.files.find((file) => file.endsWith(".tex")) ||
-                        "",
-                  });
-                else
-                  await update({
-                    localFolders: [
-                      ...(project.localFolders || []),
-                      {
-                        id: crypto.randomUUID(),
-                        label: folderLabel.trim(),
+                await update(
+                  project.folder
+                    ? {
+                        localFolders: [
+                          ...(project.localFolders || []),
+                          {
+                            id: crypto.randomUUID(),
+                            label: folderLabel.trim(),
+                            folder: result.folder,
+                          },
+                        ],
+                      }
+                    : {
                         folder: result.folder,
+                        folderLabel: folderLabel.trim(),
+                        mainFile: result.mainFile,
                       },
-                    ],
-                  });
+                );
                 setFolderModal(false);
               } catch (error) {
                 report((error as Error).message);
               }
             }}
           >
-            <h2>Add a local folder</h2>
             <p className="muted">
               Keep your manuscript, code and research notes together in this
               project.
@@ -869,7 +1264,6 @@ export default function Workbench({
             <label>
               Folder label
               <input
-                autoFocus
                 required
                 value={folderLabel}
                 onChange={(event) => setFolderLabel(event.target.value)}
@@ -883,60 +1277,142 @@ export default function Workbench({
               <option value="Experiments" />
             </datalist>
             <div className="modal-actions">
-              <button
-                type="button"
-                className="button"
-                onClick={() => setFolderModal(false)}
-              >
-                Cancel
-              </button>
               <button className="button primary">Choose local folder</button>
             </div>
           </form>
-        </div>
+        </Modal>
       )}
       {newFile && (
-        <div className="modal-backdrop">
+        <Modal
+          title="New project file"
+          className="compact"
+          onClose={() => setNewFile(undefined)}
+        >
           <form
-            className="modal compact"
             onSubmit={async (e) => {
               e.preventDefault();
               try {
-                await window.research!.createFile(project.id, filename);
+                await window.research!.createFile(
+                  project.id,
+                  filename,
+                  newFile,
+                );
                 await reload();
-                setNewFile(false);
-                await openFile(filename);
+                setNewFile(undefined);
+                openFile(filename, newFile);
               } catch (error) {
                 report((error as Error).message);
               }
             }}
           >
-            <h2>New project file</h2>
             <label>
               Filename
               <input
-                autoFocus
                 value={filename}
                 onChange={(e) => setFilename(e.target.value)}
                 required
               />
             </label>
             <p className="muted">
-              Created in the project folder. Supports .tex, .bib, .md, and .txt.
+              Created in{" "}
+              {roots.find((root) => root.id === newFile)?.label ??
+                "the project folder"}
+              . Supports .tex, .bib, .md, and .txt.
             </p>
             <div className="modal-actions">
-              <button
-                type="button"
-                className="button"
-                onClick={() => setNewFile(false)}
-              >
-                Cancel
-              </button>
               <button className="button primary">Create file</button>
             </div>
           </form>
-        </div>
+        </Modal>
+      )}
+      {renaming && (
+        <Modal
+          title="Rename file"
+          className="compact"
+          onClose={() => setRenaming(undefined)}
+        >
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void renameFile(renaming);
+            }}
+          >
+            <label>
+              Filename
+              <input
+                value={renaming.to}
+                onChange={(event) =>
+                  setRenaming({ ...renaming, to: event.target.value })
+                }
+                required
+                data-autofocus
+              />
+            </label>
+            <div className="modal-actions">
+              <button className="button primary">Rename</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+      {trashing && (
+        <Modal
+          title={`Move ${trashing.path} to Trash?`}
+          className="compact"
+          onClose={() => setTrashing(undefined)}
+        >
+          <p className="muted">You can restore it from the Trash in Finder.</p>
+          <div className="modal-actions">
+            <button className="button" onClick={() => setTrashing(undefined)}>
+              Cancel
+            </button>
+            <button
+              className="button primary danger"
+              onClick={() => void trashFile(trashing)}
+            >
+              Move to Trash
+            </button>
+          </div>
+        </Modal>
+      )}
+      {prompt && (
+        <Modal
+          title={`Save changes to ${active}?`}
+          className="compact"
+          onClose={() => setPrompt(null)}
+        >
+          <p className="muted">Your changes are lost if you don't save them.</p>
+          <div className="modal-actions">
+            <button
+              className="button"
+              onClick={() => {
+                setPrompt(null);
+                prompt();
+              }}
+            >
+              Don't save
+            </button>
+            <button className="button" onClick={() => setPrompt(null)}>
+              Cancel
+            </button>
+            <button
+              className="button primary"
+              data-autofocus
+              onClick={async () => {
+                setPrompt(null);
+                try {
+                  await save();
+                  prompt();
+                } catch {
+                  /* save() reported the failure. */
+                }
+              }}
+            >
+              Save
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );
 }
+export default memo(Workbench);

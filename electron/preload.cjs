@@ -1,8 +1,16 @@
 const { contextBridge, ipcRenderer } = require("electron");
+// Electron prefixes rejections with the channel name; users see only the message.
 const invoke =
   (channel) =>
   (...args) =>
-    ipcRenderer.invoke(channel, ...args);
+    ipcRenderer.invoke(channel, ...args).catch((error) => {
+      throw new Error(
+        String(error.message).replace(
+          /^Error invoking remote method '[^']+': (Error: )?/,
+          "",
+        ),
+      );
+    });
 const listen = (channel) => (callback) => {
   const listener = (_event, payload) => callback(payload);
   ipcRenderer.on(channel, listener);
@@ -20,6 +28,7 @@ contextBridge.exposeInMainWorld("research", {
   trackConferenceDates: invoke("deadlines:track"),
   acceptDeadlineUpdates: invoke("deadlines:accept"),
   importMacDeadlines: invoke("deadlines:import-mac"),
+  deadlineUpdates: invoke("deadlines:updates"),
   onDeadlineFeed: listen("deadlines:updated"),
   chooseFolder: invoke("folder:choose"),
   listFiles: invoke("files:list"),
@@ -32,8 +41,11 @@ contextBridge.exposeInMainWorld("research", {
   gitSync: invoke("git:sync"),
   readFile: invoke("file:read"),
   openProjectReference: invoke("project:open-reference"),
+  fileMtime: invoke("file:mtime"),
   writeFile: invoke("file:write"),
   createFile: invoke("file:create"),
+  renameFile: invoke("file:rename"),
+  trashFile: invoke("file:trash"),
   choosePdf: invoke("pdf:choose"),
   lastPdf: invoke("pdf:last"),
   readPdfAnnotations: invoke("pdf:read-annotations"),
@@ -42,6 +54,9 @@ contextBridge.exposeInMainWorld("research", {
   openAnnotatedPdf: invoke("pdf:open-annotated"),
   exportAnnotatedPdf: invoke("pdf:export-annotated"),
   compile: invoke("latex:compile"),
+  cancelCompile: invoke("latex:cancel"),
+  synctexForward: invoke("synctex:forward"),
+  synctexInverse: invoke("synctex:inverse"),
   onCompileOutput: listen("latex:output"),
   startTerminal: invoke("terminal:start"),
   writeTerminal: invoke("terminal:write"),
@@ -58,6 +73,7 @@ contextBridge.exposeInMainWorld("research", {
   aiSelectProfile: invoke("ai:select-profile"),
   aiDisconnect: invoke("ai:disconnect"),
   aiModels: invoke("ai:models"),
+  aiSkills: invoke("ai:skills"),
   aiConversation: invoke("ai:conversation"),
   aiSend: invoke("ai:send"),
   aiStop: invoke("ai:stop"),

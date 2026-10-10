@@ -97,13 +97,8 @@ test("Mac import preserves personal notes, exact times, status and deliberate mu
   assert.equal(result.trackedDeadlines[0].notes, "personal note");
   assert.equal(result.trackedDeadlines[0].time, "2026-10-10T11:59:59.000Z");
   assert.deepEqual(result.projects, state.projects);
-  assert.equal(ddl.importTracker(result, tracker, catalog()), result);
   assert.equal(
-    ddl.importTracker(
-      { ...result, deadlineImportVersion: undefined },
-      tracker,
-      catalog(),
-    ).trackedDeadlines.length,
+    ddl.importTracker(result, tracker, catalog()).trackedDeadlines.length,
     3,
   );
   assert.equal(ddl.changes(result, catalog()).length, 0);
@@ -152,6 +147,7 @@ test("refresh caches unchanged blobs and retains last successful data during out
     if (url.includes("api.github.com"))
       return new Response(
         JSON.stringify({
+          sha: "tree-1",
           tree: [
             {
               type: "blob",
@@ -174,6 +170,8 @@ test("refresh caches unchanged blobs and retains last successful data during out
   assert.equal(calls, 1);
   const latestSuccess = await feed.refresh();
   assert.equal(calls, 1);
+  // An unchanged index keeps the same array, so nothing is broadcast.
+  assert.equal(latestSuccess.conferences, first.conferences);
   offline = true;
   const failed = await feed.refresh();
   assert.equal(failed.conferences.length, 1);

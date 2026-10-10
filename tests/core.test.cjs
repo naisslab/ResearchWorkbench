@@ -45,6 +45,38 @@ test("project file access rejects traversal and symlinks outside the project", a
     /relative/,
   );
 });
+test("new file paths stay in existing folders inside the project and reject parent or hidden names", async (t) => {
+  const root = await temporary(t);
+  const project = path.join(root, "project");
+  await fs.mkdir(path.join(project, "sections"), { recursive: true });
+  await fs.symlink(root, path.join(project, "escape"));
+  const canonical = await fs.realpath(project);
+  assert.equal(
+    await core.safeNewPath(project, "intro.tex"),
+    path.join(canonical, "intro.tex"),
+  );
+  assert.equal(
+    await core.safeNewPath(project, "sections/intro.tex"),
+    path.join(canonical, "sections", "intro.tex"),
+  );
+  for (const name of [
+    "../outside.tex",
+    "sections/../../outside.tex",
+    ".hidden.tex",
+    "sections/.git/config.tex",
+    "/absolute.tex",
+    "sections//intro.tex",
+    "back\\slash.tex",
+    "",
+    undefined,
+  ])
+    await assert.rejects(core.safeNewPath(project, name), /simple names/);
+  await assert.rejects(core.safeNewPath(project, "escape/x.tex"), /inside/);
+  await assert.rejects(
+    core.safeNewPath(project, "missing/x.tex"),
+    /does not exist/,
+  );
+});
 test("file listing excludes dependencies, build artifacts, and symlinks", async (t) => {
   const root = await temporary(t);
   await fs.mkdir(path.join(root, "sections"));
@@ -93,7 +125,7 @@ test("invalid imports fail before replacing a workspace", async (t) => {
   });
   assert.throws(() => core.validateState(malicious), /HTTP/);
 });
-test("LaTeX compilation creates a real PDF and reports document errors", async (t) => {
+test("LaTeX compilation creates a real PDF, maps lines with SyncTeX and reports document errors", async (t) => {
   const root = await temporary(t);
   const state = await manuscriptWorkspace(root);
   const p = state.projects[0];
@@ -105,6 +137,12 @@ test("LaTeX compilation creates a real PDF and reports document errors", async (
   assert.equal(result.ok, true, result.log);
   const buffer = await fs.readFile(result.pdf);
   assert.equal(buffer.subarray(0, 5).toString(), "%PDF-");
+  const target = await core.synctexForward(p, "main.tex", 4, "primary", env);
+  assert.equal(target.page, 1);
+  assert.deepEqual(
+    await core.synctexInverse(p, target.page, target.x, target.y, env),
+    { file: "main.tex", rootId: "primary", line: 4 },
+  );
   await fs.writeFile(
     path.join(p.folder, "main.tex"),
     "\\documentclass{article}\n\\begin{document}\nFirst page.\\newpage\n\\undefinedResearchCommand\n\\end{document}",

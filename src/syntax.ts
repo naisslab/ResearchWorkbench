@@ -1,67 +1,50 @@
 import {
   Decoration,
-  EditorView,
   ViewPlugin,
   type DecorationSet,
+  type EditorView,
   type ViewUpdate,
 } from "@codemirror/view";
 import { StateEffect, type Extension } from "@codemirror/state";
-import {
-  Registry,
-  parseRawGrammar,
-  INITIAL,
-  type IGrammar,
-  type StateStack,
-  type IToken,
-} from "vscode-textmate";
-import { loadWASM, OnigScanner, OnigString } from "vscode-oniguruma";
-import onigWasm from "vscode-oniguruma/release/onig.wasm?url&inline";
-import { python } from "@codemirror/lang-python";
-import { javascript } from "@codemirror/lang-javascript";
-import { json, jsonParseLinter } from "@codemirror/lang-json";
-import { cpp } from "@codemirror/lang-cpp";
-import { css } from "@codemirror/lang-css";
-import { html } from "@codemirror/lang-html";
-import { markdown } from "@codemirror/lang-markdown";
-import { StreamLanguage } from "@codemirror/language";
-import { shell } from "@codemirror/legacy-modes/mode/shell";
-import { yaml } from "@codemirror/legacy-modes/mode/yaml";
-import { go } from "@codemirror/legacy-modes/mode/go";
-import { rust } from "@codemirror/legacy-modes/mode/rust";
-import { r } from "@codemirror/legacy-modes/mode/r";
-import { standardSQL } from "@codemirror/legacy-modes/mode/sql";
-import { toml } from "@codemirror/legacy-modes/mode/toml";
-import { linter, lintGutter } from "@codemirror/lint";
+import { StreamLanguage, type StreamParser } from "@codemirror/language";
+import type { IGrammar, IToken, Registry, StateStack } from "vscode-textmate";
 
-const grammarSources = import.meta.glob("./grammars/*.tmLanguage.json", {
-  query: "?raw",
-  import: "default",
-  eager: true,
-}) as Record<string, string>;
-const rawGrammars = Object.values(grammarSources).map((source) =>
-  parseRawGrammar(source, "grammar.json"),
+const grammarSources = import.meta.glob<string>(
+  "./grammars/*.tmLanguage.json",
+  {
+    query: "?raw",
+    import: "default",
+  },
 );
+let initial: StateStack;
 let registryPromise: Promise<Registry> | undefined;
-function grammar(scope: string): Promise<IGrammar | null> {
-  registryPromise ??= Promise.resolve()
-    .then(() => {
-      // Vite embeds this trusted npm asset so packaged file:// windows need no fetch.
-      const bytes = Uint8Array.from(atob(onigWasm.split(",")[1]), (character) =>
-        character.charCodeAt(0),
-      );
-      return loadWASM(bytes);
-    })
-    .then(
-      () =>
-        new Registry({
-          onigLib: Promise.resolve({
-            createOnigScanner: (patterns) => new OnigScanner(patterns),
-            createOnigString: (text) => new OnigString(text),
-          }),
-          loadGrammar: async (name) =>
-            rawGrammars.find((raw) => raw.scopeName === name) ?? null,
-        }),
-    );
+async function createRegistry() {
+  const [textmate, oniguruma, wasm, sources] = await Promise.all([
+    import("vscode-textmate"),
+    import("vscode-oniguruma"),
+    // Vite embeds this trusted npm asset so packaged file:// windows need no fetch.
+    import("vscode-oniguruma/release/onig.wasm?url&inline"),
+    Promise.all(Object.values(grammarSources).map((load) => load())),
+  ]);
+  const binary = atob(wasm.default.split(",")[1]);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  await oniguruma.loadWASM(bytes);
+  initial = textmate.INITIAL;
+  const grammars = sources.map((source) =>
+    textmate.parseRawGrammar(source, "grammar.json"),
+  );
+  return new textmate.Registry({
+    onigLib: Promise.resolve({
+      createOnigScanner: (patterns) => new oniguruma.OnigScanner(patterns),
+      createOnigString: (text) => new oniguruma.OnigString(text),
+    }),
+    loadGrammar: async (name) =>
+      grammars.find((raw) => raw.scopeName === name) ?? null,
+  });
+}
+function grammar(scope: string) {
+  registryPromise ??= createRegistry();
   return registryPromise.then((registry) => registry.loadGrammar(scope));
 }
 // Resolve the most specific scope first, preserving the upstream grammar's semantics.
@@ -98,21 +81,45 @@ function tokenClass(scopes: string[]): string {
   }
   return "";
 }
+const marks = new Map<string, Decoration | null>();
+function spans(tokens: IToken[], length: number) {
+  const result: [number, number, Decoration][] = [];
+  for (const token of tokens) {
+    const key = token.scopes.join(" ");
+    if (!marks.has(key)) {
+      const cls = tokenClass(token.scopes);
+      marks.set(key, cls ? Decoration.mark({ class: cls }) : null);
+    }
+    const mark = marks.get(key);
+    const end = Math.min(token.endIndex, length);
+    if (mark && token.startIndex < end)
+      result.push([token.startIndex, end, mark]);
+  }
+  return result;
+}
 const grammarReady = StateEffect.define<null>();
 type CachedLine = {
   text: string;
   input: StateStack;
   output: StateStack;
-  tokens: IToken[];
+  spans: [number, number, Decoration][];
 };
+/**
+ * Tokenizes from the top of the document down to the end of the viewport and
+ * decorates only the viewport. A cached line is reused while its text and its
+ * incoming tokenizer state are unchanged, so an edit re-tokenizes from the
+ * edited line until the states converge again.
+ */
 function textmate(scope: string): Extension {
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet = Decoration.none;
       private tokenizer: IGrammar | null = null;
-      private lines: CachedLine[] = [];
+      private lines: (CachedLine | undefined)[] = [];
+      /** How many leading cache entries are known to match the document. */
+      private valid = 0;
       private destroyed = false;
-      constructor(private view: EditorView) {
+      constructor(view: EditorView) {
         void grammar(scope)
           .then((tokenizer) => {
             if (this.destroyed) return;
@@ -124,51 +131,58 @@ function textmate(scope: string): Extension {
           );
       }
       update(update: ViewUpdate) {
+        if (update.docChanged) {
+          let from = update.startState.doc.length;
+          update.changes.iterChangedRanges((fromA) => {
+            from = Math.min(from, fromA);
+          });
+          const start = update.startState.doc.lineAt(from).number - 1;
+          const added = update.state.doc.lines - update.startState.doc.lines;
+          // Keep cached lines below the edit aligned with their new line numbers.
+          if (added)
+            this.lines = [
+              ...this.lines.slice(0, start),
+              ...Array<undefined>(Math.max(0, added)),
+              ...this.lines.slice(start - Math.min(0, added)),
+            ];
+          this.valid = Math.min(this.valid, start);
+        }
         if (
           this.tokenizer &&
           (update.docChanged ||
+            update.viewportChanged ||
             update.transactions.some((t) =>
               t.effects.some((e) => e.is(grammarReady)),
             ))
         )
-          this.highlight();
+          this.decorations = this.highlight(update.view, this.tokenizer);
       }
-      private highlight() {
-        if (!this.tokenizer) return;
-        const marks = [];
-        const lines: CachedLine[] = [];
-        let stack = INITIAL;
-        for (let n = 1; n <= this.view.state.doc.lines; n++) {
-          const line = this.view.state.doc.line(n);
-          const cached = this.lines[n - 1];
-          let entry: CachedLine;
-          if (cached && cached.text === line.text && cached.input.equals(stack))
-            entry = cached;
-          else {
-            const result = this.tokenizer.tokenizeLine(line.text, stack);
-            entry = {
-              text: line.text,
+      private highlight(view: EditorView, tokenizer: IGrammar) {
+        const { doc } = view.state;
+        const last = doc.lineAt(view.viewport.to).number;
+        let stack = this.lines[this.valid - 1]?.output ?? initial;
+        for (let n = this.valid + 1; n <= last; n++) {
+          const { text } = doc.line(n);
+          let cached = this.lines[n - 1];
+          if (!cached || cached.text !== text || !cached.input.equals(stack)) {
+            const result = tokenizer.tokenizeLine(text, stack);
+            cached = this.lines[n - 1] = {
+              text,
               input: stack,
               output: result.ruleStack,
-              tokens: result.tokens,
+              spans: spans(result.tokens, text.length),
             };
           }
-          lines.push(entry);
-          stack = entry.output;
-          for (const token of entry.tokens) {
-            const cls = tokenClass(token.scopes);
-            const to = Math.min(token.endIndex, line.length);
-            if (cls && token.startIndex < to)
-              marks.push(
-                Decoration.mark({ class: cls }).range(
-                  line.from + token.startIndex,
-                  line.from + to,
-                ),
-              );
-          }
+          stack = cached.output;
         }
-        this.lines = lines;
-        this.decorations = Decoration.set(marks, true);
+        this.valid = Math.max(this.valid, last);
+        const ranges = [];
+        for (let n = doc.lineAt(view.viewport.from).number; n <= last; n++) {
+          const { from } = doc.line(n);
+          for (const [start, end, mark] of this.lines[n - 1]!.spans)
+            ranges.push(mark.range(from + start, from + end));
+        }
+        return Decoration.set(ranges);
       }
       destroy() {
         this.destroyed = true;
@@ -177,59 +191,116 @@ function textmate(scope: string): Extension {
     { decorations: (plugin) => plugin.decorations },
   );
 }
-const latexSyntax = textmate("text.tex.latex");
-const texSyntax = textmate("text.tex");
-const bibtexSyntax = textmate("text.bibtex");
-const bstSyntax = textmate("source.bst");
-const doctexSyntax = textmate("text.tex.doctex");
-const languages: Record<string, { name: string; extensions: Extension[] }> = {
-  tex: { name: "LaTeX", extensions: [latexSyntax] },
-  ltx: { name: "LaTeX", extensions: [latexSyntax] },
-  sty: { name: "TeX", extensions: [texSyntax] },
-  cls: { name: "TeX", extensions: [texSyntax] },
-  bbx: { name: "TeX", extensions: [texSyntax] },
-  cbx: { name: "TeX", extensions: [texSyntax] },
-  hpp: { name: "C++", extensions: [cpp()] },
-  dtx: { name: "DocTeX", extensions: [doctexSyntax] },
-  bib: { name: "BibTeX", extensions: [bibtexSyntax] },
-  bst: { name: "BibTeX style", extensions: [bstSyntax] },
-  py: { name: "Python", extensions: [python()] },
-  js: { name: "JavaScript", extensions: [javascript()] },
-  mjs: { name: "JavaScript", extensions: [javascript()] },
-  cjs: { name: "JavaScript", extensions: [javascript()] },
-  jsx: { name: "JSX", extensions: [javascript({ jsx: true })] },
-  ts: { name: "TypeScript", extensions: [javascript({ typescript: true })] },
-  tsx: {
-    name: "TSX",
-    extensions: [javascript({ jsx: true, typescript: true })],
-  },
-  json: {
-    name: "JSON",
-    extensions: [json(), linter(jsonParseLinter()), lintGutter()],
-  },
-  c: { name: "C", extensions: [cpp()] },
-  h: { name: "C / C++", extensions: [cpp()] },
-  cpp: { name: "C++", extensions: [cpp()] },
-  cc: { name: "C++", extensions: [cpp()] },
-  css: { name: "CSS", extensions: [css()] },
-  html: { name: "HTML", extensions: [html()] },
-  md: { name: "Markdown", extensions: [markdown()] },
-  sh: { name: "Shell", extensions: [StreamLanguage.define(shell)] },
-  bash: { name: "Bash", extensions: [StreamLanguage.define(shell)] },
-  zsh: { name: "Zsh", extensions: [StreamLanguage.define(shell)] },
-  yaml: { name: "YAML", extensions: [StreamLanguage.define(yaml)] },
-  yml: { name: "YAML", extensions: [StreamLanguage.define(yaml)] },
-  go: { name: "Go", extensions: [StreamLanguage.define(go)] },
-  rs: { name: "Rust", extensions: [StreamLanguage.define(rust)] },
-  r: { name: "R", extensions: [StreamLanguage.define(r)] },
-  sql: { name: "SQL", extensions: [StreamLanguage.define(standardSQL)] },
-  toml: { name: "TOML", extensions: [StreamLanguage.define(toml)] },
-};
-export function fileLanguage(file: string) {
-  return (
-    languages[file.split(".").pop()?.toLowerCase() ?? ""] ?? {
-      name: "Text",
-      extensions: [],
-    }
+type Load = () => Promise<Extension>;
+function once(load: Load): Load {
+  let loaded: Promise<Extension> | undefined;
+  return () => (loaded ??= load());
+}
+const tm = (scope: string) => once(async () => textmate(scope));
+const legacy = (mode: () => Promise<StreamParser<unknown>>) =>
+  once(async () => StreamLanguage.define(await mode()));
+const javascript = (config?: { jsx?: boolean; typescript?: boolean }) =>
+  once(() =>
+    import("@codemirror/lang-javascript").then((m) => m.javascript(config)),
   );
+const languages: [extensions: string, name: string, load: Load][] = [
+  ["tex ltx", "LaTeX", tm("text.tex.latex")],
+  ["sty cls bbx cbx", "TeX", tm("text.tex")],
+  ["dtx", "DocTeX", tm("text.tex.doctex")],
+  ["bib", "BibTeX", tm("text.bibtex")],
+  ["bst", "BibTeX style", tm("source.bst")],
+  [
+    "py",
+    "Python",
+    once(() => import("@codemirror/lang-python").then((m) => m.python())),
+  ],
+  ["js mjs cjs", "JavaScript", javascript()],
+  ["jsx", "JSX", javascript({ jsx: true })],
+  ["ts", "TypeScript", javascript({ typescript: true })],
+  ["tsx", "TSX", javascript({ jsx: true, typescript: true })],
+  [
+    "json",
+    "JSON",
+    once(async () => {
+      const [{ json, jsonParseLinter }, { linter, lintGutter }] =
+        await Promise.all([
+          import("@codemirror/lang-json"),
+          import("@codemirror/lint"),
+        ]);
+      return [json(), linter(jsonParseLinter()), lintGutter()];
+    }),
+  ],
+  [
+    "c h cc cpp hpp",
+    "C / C++",
+    once(() => import("@codemirror/lang-cpp").then((m) => m.cpp())),
+  ],
+  [
+    "css",
+    "CSS",
+    once(() => import("@codemirror/lang-css").then((m) => m.css())),
+  ],
+  [
+    "html",
+    "HTML",
+    once(() => import("@codemirror/lang-html").then((m) => m.html())),
+  ],
+  [
+    "md",
+    "Markdown",
+    once(() => import("@codemirror/lang-markdown").then((m) => m.markdown())),
+  ],
+  [
+    "sh bash zsh",
+    "Shell",
+    legacy(() =>
+      import("@codemirror/legacy-modes/mode/shell").then((m) => m.shell),
+    ),
+  ],
+  [
+    "yaml yml",
+    "YAML",
+    legacy(() =>
+      import("@codemirror/legacy-modes/mode/yaml").then((m) => m.yaml),
+    ),
+  ],
+  [
+    "go",
+    "Go",
+    legacy(() => import("@codemirror/legacy-modes/mode/go").then((m) => m.go)),
+  ],
+  [
+    "rs",
+    "Rust",
+    legacy(() =>
+      import("@codemirror/legacy-modes/mode/rust").then((m) => m.rust),
+    ),
+  ],
+  [
+    "r",
+    "R",
+    legacy(() => import("@codemirror/legacy-modes/mode/r").then((m) => m.r)),
+  ],
+  [
+    "sql",
+    "SQL",
+    legacy(() =>
+      import("@codemirror/legacy-modes/mode/sql").then((m) => m.standardSQL),
+    ),
+  ],
+  [
+    "toml",
+    "TOML",
+    legacy(() =>
+      import("@codemirror/legacy-modes/mode/toml").then((m) => m.toml),
+    ),
+  ],
+];
+const plainText = Promise.resolve<Extension>([]);
+export function fileLanguage(file: string) {
+  const extension = file.split(".").pop()?.toLowerCase() ?? "";
+  const [, name, load] = languages.find(([extensions]) =>
+    extensions.split(" ").includes(extension),
+  ) ?? ["", "Text", () => plainText];
+  return { name, load };
 }

@@ -4,7 +4,6 @@ const {
   ipcMain,
   dialog,
   shell,
-  protocol,
   nativeTheme,
   safeStorage,
   net,
@@ -23,28 +22,14 @@ const {
   exportAnnotated,
 } = require("./pdf-annotations.cjs");
 const deadlines = require("./deadlines.cjs");
-const {
-  applySubmissionPlans,
-  defaultToSystemAppearance,
-} = require("./submission-plans.cjs");
-const { migrateAreaLabels } = require("./area-labels.cjs");
+const { migrateAreaLabels, runMigrations } = require("./migrations.cjs");
 const pty = require("node-pty");
 const { createAI } = require("./ai.cjs");
 const { AIError, publicError } = require("./chatgpt.cjs");
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: "research-pdf",
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      stream: true,
-    },
-  },
-]);
 if (process.env.RESEARCH_TEST_DATA)
   app.setPath("userData", path.resolve(process.env.RESEARCH_TEST_DATA));
-if (!app.requestSingleInstanceLock()) app.quit();
+if (!process.env.RESEARCH_TEST_DATA && !app.requestSingleInstanceLock())
+  app.quit();
 let win;
 let ai;
 app.on("second-instance", () => {
@@ -56,22 +41,27 @@ let store;
 let saveQueue = Promise.resolve();
 let deadlineFeed;
 let feedTimer;
+const windowBackground = () =>
+  nativeTheme.shouldUseDarkColors ? "#1f1f1f" : "#fafbfc";
 function applyAppearance() {
-  nativeTheme.themeSource = state?.appearance || "system";
-  win?.setBackgroundColor(
-    nativeTheme.shouldUseDarkColors ? "#1f1f1f" : "#fafbfc",
-  );
+  nativeTheme.themeSource = state.appearance || "system";
+  win?.setBackgroundColor(windowBackground());
 }
-async function persistDateChange(transform) {
-  saveQueue = saveQueue
-    .catch(() => {})
-    .then(async () => {
-      const next = core.validateState(await transform(state));
-      await core.atomicWrite(store, JSON.stringify(next, null, 2));
-      state = next;
-    });
-  await saveQueue;
-  return state;
+const writeJson = (file, value) =>
+  core.atomicWrite(file, JSON.stringify(value, null, 2));
+// Workspace writes run one at a time, in request order.
+function queue(task) {
+  return (saveQueue = saveQueue.catch(() => {}).then(task));
+}
+function updateState(transform, backup) {
+  return queue(async () => {
+    const next = core.validateState(await transform(state));
+    if (next === state) return state;
+    if (backup)
+      await fs.copyFile(store, `${store}.before-${backup}-${Date.now()}.bak`);
+    await writeJson(store, next);
+    return (state = next);
+  });
 }
 async function feedResult(refresh = false) {
   const feed = await (refresh
@@ -79,7 +69,35 @@ async function feedResult(refresh = false) {
     : deadlineFeed.snapshot());
   return { feed, updates: deadlines.changes(state, feed) };
 }
+// Sends the first chunk at once, then at most one message per `delay` ms.
+function coalesce(emit, delay) {
+  let pending = "";
+  let timer = null;
+  const flush = () => {
+    clearTimeout(timer);
+    timer = null;
+    if (!pending) return;
+    emit(pending);
+    pending = "";
+    timer = setTimeout(flush, delay);
+  };
+  const push = (text) => {
+    if (timer) pending += text;
+    else {
+      emit(text);
+      timer = setTimeout(flush, delay);
+    }
+  };
+  return Object.assign(push, { flush });
+}
 const terminals = new Map();
+function stopTerminals(predicate = () => true) {
+  for (const [key, session] of terminals)
+    if (predicate(session, key)) {
+      terminals.delete(key);
+      session.process.kill();
+    }
+}
 const pdfs = new Map();
 const builds = new Map();
 const environment = {
@@ -100,18 +118,24 @@ function pdfUrl(
   name = path.basename(file),
   sourcePath = file,
 ) {
-  const token = crypto.randomUUID();
-  pdfs.set(token, { file, projectId, name, sourcePath });
-  if (pdfs.size > 20) pdfs.delete(pdfs.keys().next().value);
-  return `research-pdf://document/${token}`;
+  const { size, mtimeMs } = fsSync.statSync(file);
+  const version = [file, projectId, name, sourcePath, size, mtimeMs].join("\0");
+  // An unchanged PDF keeps its URL, so a no-op build leaves the reader as it is.
+  for (const [url, document] of pdfs)
+    if (document.version === version) {
+      pdfs.delete(url);
+      pdfs.set(url, document);
+      return url;
+    }
+  const url = `research-pdf://document/${crypto.randomUUID()}`;
+  pdfs.set(url, { file, projectId, name, sourcePath, version });
+  // Four documents cover the open reader and saves still in flight.
+  if (pdfs.size > 4) pdfs.delete(pdfs.keys().next().value);
+  return url;
 }
 async function pdfDocument(id, url) {
   project(id);
-  const parsed = new URL(url);
-  const document =
-    parsed.protocol === "research-pdf:" && parsed.hostname === "document"
-      ? pdfs.get(parsed.pathname.slice(1))
-      : null;
+  const document = pdfs.get(url);
   if (!document || document.projectId !== id)
     throw new Error("PDF session expired. Reopen the document.");
   if (!document.bytes) {
@@ -130,12 +154,10 @@ function handle(channel, fn) {
       event.senderFrame !== win.webContents.mainFrame
     )
       throw new Error("Unknown caller.");
-    await saveQueue.catch(() => {});
     return fn(...args);
   });
 }
 function createWindow() {
-  nativeTheme.themeSource = state?.appearance || "system";
   win = new BrowserWindow({
     width: 1510,
     height: 980,
@@ -143,7 +165,7 @@ function createWindow() {
     minHeight: 700,
     title: "Research Workbench",
     titleBarStyle: "hiddenInset",
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1f1f1f" : "#fafbfc",
+    backgroundColor: windowBackground(),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -169,8 +191,7 @@ function createWindow() {
   win.on("closed", () => {
     ai?.dispose();
     for (const controller of builds.values()) controller.abort();
-    for (const t of terminals.values()) t.process.kill();
-    terminals.clear();
+    stopTerminals();
     win = null;
   });
 }
@@ -181,13 +202,12 @@ app
     if (!app.isPackaged && fsSync.existsSync(developmentIcon))
       app.dock?.setIcon(developmentIcon);
     store = path.join(app.getPath("userData"), "workspace.json");
+    deadlineFeed = deadlines.createFeed(
+      path.join(app.getPath("userData"), "ccf-deadlines-cache.json"),
+    );
+    let saved;
     try {
-      const saved = core.validateState(
-        JSON.parse(await fs.readFile(store, "utf8")),
-      );
-      state = migrateAreaLabels(saved);
-      if (state !== saved)
-        await core.atomicWrite(store, JSON.stringify(state, null, 2));
+      saved = core.validateState(JSON.parse(await fs.readFile(store, "utf8")));
     } catch (error) {
       if (error.code !== "ENOENT") {
         dialog.showErrorBox(
@@ -197,176 +217,72 @@ app
         app.quit();
         return;
       }
-      state = await core.seedWorkspace();
-      await core.atomicWrite(store, JSON.stringify(state, null, 2));
     }
-    const localCatalog = await catalog.researchCatalog();
-    const activeWorkspace = core.validateState(
-      catalog.attachImportedManuscripts(
-        catalog.organizeLocalFolders(
-          catalog.correctFlowWiseStatus(
-            catalog.activateCurrentResearch(state, localCatalog),
-          ),
-          localCatalog,
-        ),
-        localCatalog,
-      ),
-    );
-    if (activeWorkspace !== state) {
-      await fs.copyFile(
-        store,
-        `${store}.before-current-research-${Date.now()}.bak`,
-      );
-      await core.atomicWrite(store, JSON.stringify(activeWorkspace, null, 2));
-      state = activeWorkspace;
+    state = await runMigrations(saved || core.seedWorkspace(), {
+      catalog: () => catalog.researchCatalog(),
+      tracker: deadlines.readMacTracker,
+      feed: () => deadlineFeed.snapshot(),
+    });
+    if (state !== saved) {
+      if (saved)
+        await fs.copyFile(store, `${store}.before-migration-${Date.now()}.bak`);
+      await writeJson(store, state);
     }
-    deadlineFeed = deadlines.createFeed(
-      path.join(app.getPath("userData"), "ccf-deadlines-cache.json"),
-    );
-    let withDates = state;
-    try {
-      const tracker = await deadlines.readJson(
-        path.join(deadlines.macDirectory(), "tracker.json"),
-      );
-      if (tracker)
-        withDates = deadlines.importTracker(
-          withDates,
-          tracker,
-          await deadlineFeed.snapshot(),
-        );
-    } catch (error) {
-      console.error(
-        "Mac deadlines were preserved; import failed:",
-        error.message,
-      );
-    }
-    withDates = core.validateState(deadlines.seedWeb(withDates));
-    if (withDates !== state) {
-      await fs.copyFile(
-        store,
-        `${store}.before-deadline-import-${Date.now()}.bak`,
-      );
-      await core.atomicWrite(store, JSON.stringify(withDates, null, 2));
-      state = withDates;
-    }
-    const planned = core.validateState(
-      defaultToSystemAppearance(applySubmissionPlans(state, localCatalog)),
-    );
-    if (planned !== state) {
-      await fs.copyFile(
-        store,
-        `${store}.before-submission-plans-${Date.now()}.bak`,
-      );
-      await core.atomicWrite(store, JSON.stringify(planned, null, 2));
-      state = planned;
-    }
+    applyAppearance();
     handle("deadlines:feed", () => feedResult());
-    handle("deadlines:refresh", async () => {
-      const result = await feedResult(true);
-      send("deadlines:updated", result);
-      return result;
-    });
-    handle("deadlines:track", async (keys) => {
-      const feed = await deadlineFeed.snapshot();
-      return persistDateChange((current) =>
-        deadlines.addFeedDates(current, feed, keys),
-      );
-    });
-    handle("deadlines:accept", async (ids) => {
-      const feed = await deadlineFeed.snapshot();
-      return persistDateChange((current) =>
-        deadlines.applyUpdates(current, feed, ids),
-      );
-    });
+    handle("deadlines:refresh", () => feedResult(true));
+    handle("deadlines:updates", async () =>
+      deadlines.changes(state, await deadlineFeed.snapshot()),
+    );
+    for (const [channel, apply] of [
+      ["deadlines:track", deadlines.addFeedDates],
+      ["deadlines:accept", deadlines.applyUpdates],
+    ])
+      handle(channel, async (ids) => {
+        const feed = await deadlineFeed.snapshot();
+        return updateState((current) => apply(current, feed, ids));
+      });
     handle("deadlines:import-mac", async () => {
-      const tracker = await deadlines.readJson(
-        path.join(deadlines.macDirectory(), "tracker.json"),
-      );
+      const tracker = await deadlines.readMacTracker();
       if (!tracker)
         throw new Error(
           "No saved mac-ddl-count tracker was found on this Mac.",
         );
       const feed = await deadlineFeed.snapshot();
       const before = state.trackedDeadlines?.length || 0;
-      const next = await persistDateChange((current) =>
-        deadlines.importTracker(
-          { ...current, deadlineImportVersion: undefined },
-          tracker,
-          feed,
-        ),
+      const next = await updateState((current) =>
+        deadlines.importTracker(current, tracker, feed),
       );
       return {
         state: next,
         count: (next.trackedDeadlines?.length || 0) - before,
       };
     });
-    protocol.handle("research-pdf", async (request) => {
-      const token = new URL(request.url).pathname.slice(1);
-      const document = pdfs.get(token);
-      if (!document) return new Response("Document expired", { status: 404 });
-      try {
-        const bytes = document.bytes || (await fs.readFile(document.file));
-        return new Response(bytes, {
-          headers: {
-            "Content-Type": "application/pdf",
-            "Cache-Control": "no-store",
-          },
-        });
-      } catch {
-        return new Response("Document unavailable", { status: 404 });
-      }
-    });
     handle("workspace:load", () => state);
     handle("catalog:list", () => catalog.researchCatalog());
     handle("catalog:add", async (ids) => {
       const collection = await catalog.researchCatalog();
-      // Keep catalog additions in the same queue as ordinary workspace edits.
-      let result;
-      saveQueue = saveQueue
-        .catch(() => {})
-        .then(async () => {
-          result = core.validateState(
-            catalog.mergeCandidates(state, collection, ids),
-          );
-          if (result.projects.length !== state.projects.length) {
-            await fs.copyFile(
-              store,
-              `${store}.before-research-${Date.now()}.bak`,
-            );
-            await core.atomicWrite(store, JSON.stringify(result, null, 2));
-            state = result;
-          }
-        });
-      await saveQueue;
-      return state;
+      return updateState(
+        (current) => catalog.mergeCandidates(current, collection, ids),
+        "research",
+      );
     });
+    // Memory changes at once, so no handler waits for the disk; the queued
+    // write stores whatever state is current when it runs.
     handle("workspace:save", (next) => {
       core.validateState(next);
-      saveQueue = saveQueue
-        .catch(() => {})
-        .then(async () => {
-          await core.atomicWrite(store, JSON.stringify(next, null, 2));
-          for (const [key, session] of terminals) {
-            const nextProject = next.projects.find(
-              (p) => p.id === session.projectId,
-            );
-            const oldProject = state.projects.find(
-              (p) => p.id === session.projectId,
-            );
-            if (
-              !nextProject ||
-              nextProject.folder !== oldProject?.folder ||
-              (key.endsWith(":ssh") &&
-                nextProject.sshHost !== oldProject?.sshHost)
-            ) {
-              terminals.delete(key);
-              session.process.kill();
-            }
-          }
-          state = next;
-          applyAppearance();
-        });
-      return saveQueue.then(() => true);
+      stopTerminals(({ projectId }, key) => {
+        const after = next.projects.find((p) => p.id === projectId);
+        const before = state.projects.find((p) => p.id === projectId);
+        return (
+          !after ||
+          after.folder !== before?.folder ||
+          (key.endsWith(":ssh") && after.sshHost !== before?.sshHost)
+        );
+      });
+      state = next;
+      applyAppearance();
+      return queue(() => writeJson(store, state)).then(() => true);
     });
     handle("workspace:export", async () => {
       const choice = await dialog.showSaveDialog(win, {
@@ -374,8 +290,7 @@ app
         filters: [{ name: "Workspace JSON", extensions: ["json"] }],
       });
       if (choice.canceled) return false;
-      await saveQueue;
-      await core.atomicWrite(choice.filePath, JSON.stringify(state, null, 2));
+      await writeJson(choice.filePath, state);
       return true;
     });
     handle("workspace:import", async () => {
@@ -400,16 +315,9 @@ app
           "A backup of your current workspace will be saved automatically. Project files are not changed.",
       });
       if (confirm.response !== 1) return null;
-      await saveQueue;
-      await core.atomicWrite(
-        `${store}.backup-${Date.now()}.json`,
-        JSON.stringify(state, null, 2),
-      );
-      await core.atomicWrite(store, JSON.stringify(imported, null, 2));
-      for (const t of terminals.values()) t.process.kill();
-      terminals.clear();
+      await updateState(() => imported, "import");
+      stopTerminals();
       pdfs.clear();
-      state = imported;
       return state;
     });
     handle("folder:choose", async (id) => {
@@ -419,10 +327,12 @@ app
         title: "Choose a project folder",
       });
       if (result.canceled) return null;
-      return {
-        folder: result.filePaths[0],
-        files: await core.listFiles(result.filePaths[0]),
-      };
+      const folder = result.filePaths[0];
+      const files = await core.listFiles(folder);
+      const mainFile = files.includes("main.tex")
+        ? "main.tex"
+        : files.find((f) => f.endsWith(".tex")) || "";
+      return { folder, files, mainFile };
     });
     handle("files:list", (id) => core.listFiles(project(id).folder));
     handle("files:project", (id) => core.projectFiles(project(id)));
@@ -436,8 +346,7 @@ app
     for (const operation of ["init", "connect", "commit", "sync"]) {
       handle(`git:${operation}`, async (id, rootId, argument, files) => {
         const folder = core.fileRoot(project(id), rootId);
-        const current = await git.status(folder);
-        const key = current.repository || (await fs.realpath(folder));
+        const key = await git.toplevel(folder);
         if (gitOperations.has(key))
           throw new Error(
             "A Git operation is already running for this repository.",
@@ -450,24 +359,45 @@ app
         }
       });
     }
-    handle("file:read", async (id, relative, rootId) => {
+    async function textTarget(id, relative, rootId) {
       const target = await core.safeFile(
         core.fileRoot(project(id), rootId),
         relative,
       );
       if (!core.isTextFile(target)) throw new Error("Unsupported text file.");
-      const stat = await fs.stat(target);
-      if (stat.size > 2 * 1024 * 1024)
+      return target;
+    }
+    handle("file:read", async (id, relative, rootId) => {
+      const target = await textTarget(id, relative, rootId);
+      if ((await fs.stat(target)).size > 2 * 1024 * 1024)
         throw new Error("File is too large to edit (maximum 2 MB).");
       return fs.readFile(target, "utf8");
     });
+    handle(
+      "file:mtime",
+      async (id, relative, rootId) =>
+        (await fs.stat(await textTarget(id, relative, rootId))).mtimeMs,
+    );
     handle("project:open-reference", async (id, reference, rootId) => {
-      const resolved = await resolveProjectReference(project(id), reference, rootId);
+      const resolved = await resolveProjectReference(
+        project(id),
+        reference,
+        rootId,
+      );
       if (resolved.kind === "pdf")
-        return { kind: "pdf", url: pdfUrl(resolved.target, id), name: path.basename(resolved.target) };
-      return { kind: "text", file: resolved.file, rootId: resolved.rootId, line: resolved.line };
+        return {
+          kind: "pdf",
+          url: pdfUrl(resolved.target, id),
+          name: path.basename(resolved.target),
+        };
+      return {
+        kind: "text",
+        file: resolved.file,
+        rootId: resolved.rootId,
+        line: resolved.line,
+      };
     });
-    handle("file:write", async (id, relative, contents, rootId) => {
+    handle("file:write", async (id, relative, contents, rootId, expected) => {
       if (ai?.isRunning(id))
         throw new Error(
           "Wait for the project agent to finish or stop it before saving.",
@@ -477,43 +407,57 @@ app
         Buffer.byteLength(contents) > 2 * 1024 * 1024
       )
         throw new Error("File is too large.");
-      const target = await core.safeFile(
-        core.fileRoot(project(id), rootId),
-        relative,
-      );
-      if (!core.isTextFile(target)) throw new Error("Unsupported text file.");
+      const target = await textTarget(id, relative, rootId);
+      if (
+        expected !== undefined &&
+        (await fs.stat(target)).mtimeMs !== expected
+      )
+        throw new Error("Changed on disk since it was opened.");
       await core.atomicWrite(target, contents);
+      return (await fs.stat(target)).mtimeMs;
+    });
+    handle("file:create", async (id, name, rootId) => {
+      if (!/\.(tex|bib|md|txt)$/.test(name))
+        throw new Error("Use a filename ending in .tex, .bib, .md, or .txt.");
+      const target = await core.safeNewPath(
+        core.fileRoot(project(id), rootId),
+        name,
+      );
+      await fs
+        .writeFile(
+          target,
+          name.endsWith(".tex") ? "\\section{New Section}\n" : "",
+          { flag: "wx" },
+        )
+        .catch((error) => {
+          throw error.code === "EEXIST"
+            ? new Error(`${name} already exists in this project.`)
+            : error;
+        });
       return true;
     });
-    handle("file:create", async (id, name) => {
-      if (
-        typeof name !== "string" ||
-        !/^[a-zA-Z0-9_. -]+\.(tex|bib|md|txt)$/.test(name) ||
-        name.startsWith(".")
-      )
-        throw new Error(
-          "Use a simple filename ending in .tex, .bib, .md, or .txt.",
-        );
-      const root = await fs.realpath(project(id).folder);
-      const target = path.join(root, name);
-      await fs.writeFile(
-        target,
-        name.endsWith(".tex") ? "\\section{New Section}\n" : "",
-        { flag: "wx" },
+    handle("file:rename", async (id, rootId, from, to) => {
+      const source = await textTarget(id, from, rootId);
+      const target = await core.safeNewPath(
+        core.fileRoot(project(id), rootId),
+        to,
       );
-      return core.listFiles(root);
+      if (!core.isTextFile(target))
+        throw new Error("Keep an editable extension, such as .tex or .py.");
+      const existing = await fs.lstat(target).catch(() => null);
+      // A case-only rename on a case-insensitive volume finds the source itself.
+      if (existing && existing.ino !== (await fs.stat(source)).ino)
+        throw new Error(`${to} already exists in this project.`);
+      await fs.rename(source, target);
     });
+    handle("file:trash", async (id, rootId, file) =>
+      shell.trashItem(await textTarget(id, file, rootId)),
+    );
     handle("pdf:last", async (id) => {
       const p = project(id);
       if (!p.folder || !p.mainFile) return null;
       try {
-        const main = await core.safeFile(p.folder, p.mainFile);
-        const file = path.join(
-          path.dirname(main),
-          ".research-build",
-          path.basename(main, ".tex") + ".pdf",
-        );
-        await fs.access(file);
+        const file = core.pdfPath(await core.safeFile(p.folder, p.mainFile));
         return { url: pdfUrl(file, id), name: path.basename(file) };
       } catch {
         return null;
@@ -535,14 +479,12 @@ app
     const annotationStore = createAnnotationStore(
       path.join(app.getPath("userData"), "pdf-annotations"),
     );
-    let annotationQuitReady = false;
-    app.on("before-quit", (event) => {
-      if (annotationQuitReady || !annotationStore.hasPending()) return;
+    // will-quit comes after the window's pagehide, so the reader's last save
+    // is already queued.
+    app.on("will-quit", (event) => {
+      if (!annotationStore.hasPending()) return;
       event.preventDefault();
-      void annotationStore.flush().finally(() => {
-        annotationQuitReady = true;
-        app.quit();
-      });
+      void annotationStore.flush().finally(() => app.quit());
     });
     handle("pdf:read-annotations", async (id, url) => {
       const document = await pdfDocument(id, url);
@@ -555,7 +497,7 @@ app
       return {
         key: metadata.key,
         name: metadata.name,
-        data: new Uint8Array(document.bytes),
+        data: document.bytes,
         annotations: metadata.annotations,
         updatedAt: metadata.updatedAt,
       };
@@ -620,18 +562,30 @@ app
       if (builds.has(id)) throw new Error("This project is already compiling.");
       const controller = new AbortController();
       builds.set(id, controller);
+      const output = coalesce(
+        (text) => send("latex:output", { projectId: id, text }),
+        100,
+      );
       try {
         const result = await core.compile(
           project(id),
-          (text) => send("latex:output", { projectId: id, text }),
+          output,
           environment,
           controller.signal,
         );
         return { ...result, pdf: result.pdf ? pdfUrl(result.pdf, id) : null };
       } finally {
+        output.flush();
         builds.delete(id);
       }
     });
+    handle("latex:cancel", (id) => builds.get(id)?.abort());
+    handle("synctex:forward", (id, file, line, rootId) =>
+      core.synctexForward(project(id), file, line, rootId, environment),
+    );
+    handle("synctex:inverse", (id, page, x, y) =>
+      core.synctexInverse(project(id), page, x, y, environment),
+    );
     handle("terminal:start", async (id, mode) => {
       const p = project(id);
       if (!["local", "ssh"].includes(mode))
@@ -659,11 +613,18 @@ app
       });
       const session = { process: child, history: "", projectId: id };
       terminals.set(key, session);
+      const output = coalesce(
+        (text) => send("terminal:data", { key, text }),
+        8,
+      );
       child.onData((text) => {
-        session.history = (session.history + text).slice(-100000);
-        send("terminal:data", { key, text });
+        session.history += text;
+        if (session.history.length > 200000)
+          session.history = session.history.slice(-100000);
+        output(text);
       });
       child.onExit(({ exitCode }) => {
+        output.flush();
         if (terminals.get(key) === session) {
           terminals.delete(key);
           send("terminal:exit", { key, exitCode });
@@ -677,32 +638,29 @@ app
       terminals.get(key)?.process.write(text);
     });
     handle("terminal:resize", (key, cols, rows) => {
+      const child = terminals.get(key)?.process;
       if (
+        child &&
         Number.isInteger(cols) &&
         Number.isInteger(rows) &&
         cols > 0 &&
         cols < 600 &&
         rows > 0 &&
-        rows < 300
+        rows < 300 &&
+        (cols !== child.cols || rows !== child.rows)
       )
-        terminals.get(key)?.process.resize(cols, rows);
+        child.resize(cols, rows);
     });
-    handle("terminal:stop", (key) => {
-      const session = terminals.get(key);
-      if (session) {
-        terminals.delete(key);
-        session.process.kill();
-      }
-    });
+    handle("terminal:stop", (key) => stopTerminals((_, k) => k === key));
     handle("link:open", async (url) => {
       const parsed = new URL(url);
       if (!["https:", "http:"].includes(parsed.protocol))
         throw new Error("Only web links can be opened.");
       await shell.openExternal(parsed.href);
     });
-    handle("folder:reveal", (id, rootId) => {
+    handle("folder:reveal", async (id, rootId, file) => {
       const folder = core.fileRoot(project(id), rootId);
-      if (folder) shell.showItemInFolder(folder);
+      shell.showItemInFolder(file ? await core.safeFile(folder, file) : folder);
     });
     handle("app:info", () => ({ dataPath: store, version: app.getVersion() }));
     ai = createAI({
@@ -717,6 +675,10 @@ app
       fetcher: (url, options) => net.fetch(url, options),
       project,
       environment,
+      skillRoots: [
+        path.join(app.getPath("home"), ".agents", "skills"),
+        path.join(app.getPath("home"), ".codex", "skills"),
+      ],
       scope: async (id, rootId) => {
         if (builds.has(id))
           throw new AIError(
@@ -777,6 +739,8 @@ app
       "ai:select-profile": (id) => ai.selectProfile(id),
       "ai:disconnect": () => ai.disconnect(),
       "ai:models": () => ai.refreshModels(),
+      "ai:skills": (id, rootId, forceReload) =>
+        ai.skills(id, rootId, forceReload),
       "ai:conversation": (id) => ai.conversation(id),
       "ai:send": (request) => ai.send(request),
       "ai:stop": (id) => ai.stop(id),
@@ -793,19 +757,24 @@ app
       });
     createWindow();
     nativeTheme.on("updated", () =>
-      win?.setBackgroundColor(
-        nativeTheme.shouldUseDarkColors ? "#1f1f1f" : "#fafbfc",
-      ),
+      win?.setBackgroundColor(windowBackground()),
     );
     if (
       !process.env.RESEARCH_TEST_DATA ||
       process.env.RESEARCH_TEST_FEED_NETWORK
     ) {
-      const refresh = () =>
-        void feedResult(true)
-          .then((result) => send("deadlines:updated", result))
-          .catch((error) => console.error(error.message));
-      setTimeout(refresh, 1500).unref();
+      // refresh() keeps the same conferences array when nothing changed.
+      const refresh = async () => {
+        try {
+          const before = (await deadlineFeed.snapshot()).conferences;
+          const result = await feedResult(true);
+          if (result.feed.conferences !== before)
+            send("deadlines:updated", result);
+        } catch (error) {
+          console.error(error.message);
+        }
+      };
+      setTimeout(refresh, 60000).unref();
       feedTimer = setInterval(refresh, 6 * 60 * 60 * 1000);
       feedTimer.unref();
     }

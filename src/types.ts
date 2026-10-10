@@ -131,7 +131,6 @@ export interface Project {
   tasks: Task[];
   deadlines: Deadline[];
   updatedAt: string;
-  example?: boolean;
   catalogId?: string;
   topic?: string;
   icon?: string;
@@ -139,6 +138,7 @@ export interface Project {
   folderLabel?: string;
   localFolders?: LocalFolder[];
   links?: { label: string; url: string }[];
+  compileOnSave?: boolean;
 }
 export interface ResearchCandidate {
   id: string;
@@ -156,16 +156,8 @@ export interface ResearchCatalog {
 }
 export interface Workspace {
   version: 1;
-  areaLabelVersion?: 1 | 2;
-  localFilesVersion?: 1;
-  researchSetupVersion?: 1;
-  flowWiseStatusVersion?: 1;
-  deadlineImportVersion?: 1;
-  webDeadlineSetupVersion?: 1;
   appearance?: Appearance;
-  appearanceDefaultVersion?: 1;
-  submissionPlanVersion?: 1;
-  trackedDeadlines?: TrackedDeadline[];
+  trackedDeadlines: TrackedDeadline[];
   areas: Area[];
   projects: Project[];
 }
@@ -180,6 +172,11 @@ export interface ResearchAPI {
   aiSelectProfile(id: string): Promise<AIResult<AISession>>;
   aiDisconnect(): Promise<AIResult<AISession>>;
   aiModels(): Promise<AIResult<AIState>>;
+  aiSkills(
+    projectId: string,
+    rootId: string,
+    forceReload?: boolean,
+  ): Promise<AIResult<AISkillCatalog>>;
   aiConversation(projectId: string): Promise<AIResult<AIConversation>>;
   aiSend(request: {
     projectId: string;
@@ -187,6 +184,7 @@ export interface ResearchAPI {
     model: string;
     rootId: string;
     context?: AIContext;
+    skillIds?: string[];
   }): Promise<AIResult<AIConversation>>;
   aiAnswer(request: {
     projectId: string;
@@ -240,7 +238,11 @@ export interface ResearchAPI {
   acceptDeadlineUpdates(ids: string[]): Promise<Workspace>;
   importMacDeadlines(): Promise<{ state: Workspace; count: number }>;
   onDeadlineFeed(fn: (result: DeadlineFeedResult) => void): () => void;
-  chooseFolder(id: string): Promise<{ folder: string; files: string[] } | null>;
+  deadlineUpdates(): Promise<DeadlineUpdate[]>;
+  /** `mainFile` is the entry file main picks from the folder's files, or "". */
+  chooseFolder(
+    id: string,
+  ): Promise<{ folder: string; files: string[]; mainFile: string } | null>;
   listFiles(id: string): Promise<string[]>;
   projectFiles(id: string): Promise<ProjectFileRoot[]>;
   gitStatus(id: string, rootId: string): Promise<GitStatus>;
@@ -259,22 +261,55 @@ export interface ResearchAPI {
     direction: "fetch" | "pull" | "push" | "sync",
   ): Promise<GitStatus>;
   readFile(id: string, file: string, rootId?: string): Promise<string>;
-  openProjectReference(id: string, reference: string, rootId?: string): Promise<
+  openProjectReference(
+    id: string,
+    reference: string,
+    rootId?: string,
+  ): Promise<
     | { kind: "text"; file: string; rootId: string; line?: number }
     | { kind: "pdf"; url: string; name: string }
   >;
+  fileMtime(id: string, file: string, rootId?: string): Promise<number>;
+  /**
+   * Resolves to the new mtimeMs. With `expectedMtime`, rejects with a message
+   * starting "Changed on disk" when the file on disk has another mtime.
+   */
   writeFile(
     id: string,
     file: string,
     content: string,
     rootId?: string,
-  ): Promise<boolean>;
-  createFile(id: string, name: string): Promise<string[]>;
+    expectedMtime?: number,
+  ): Promise<number>;
+  /** `name` is a path relative to the root, in a folder that exists. */
+  createFile(id: string, name: string, rootId?: string): Promise<boolean>;
+  /** Rejects instead of replacing an existing file. */
+  renameFile(
+    id: string,
+    rootId: string,
+    from: string,
+    to: string,
+  ): Promise<void>;
+  trashFile(id: string, rootId: string, file: string): Promise<void>;
   lastPdf(id: string): Promise<{ url: string; name: string } | null>;
   choosePdf(id: string): Promise<{ url: string; name: string } | null>;
+  /** `pdf` keeps the same URL while the PDF's size and mtime are unchanged. */
   compile(
     id: string,
   ): Promise<{ ok: boolean; log: string; pdf: string | null }>;
+  cancelCompile(id: string): Promise<void>;
+  synctexForward(
+    id: string,
+    file: string,
+    line: number,
+    rootId?: string,
+  ): Promise<import("./pdf-types").PdfTarget | null>;
+  synctexInverse(
+    id: string,
+    page: number,
+    x: number,
+    y: number,
+  ): Promise<{ file: string; rootId: string; line: number } | null>;
   onCompileOutput(
     fn: (data: { projectId: string; text: string }) => void,
   ): () => void;
@@ -290,7 +325,8 @@ export interface ResearchAPI {
     fn: (data: { key: string; exitCode: number }) => void,
   ): () => void;
   openLink(url: string): Promise<void>;
-  revealFolder(id: string, rootId?: string): Promise<void>;
+  /** Shows the root, or `file` inside it, in Finder. */
+  revealFolder(id: string, rootId?: string, file?: string): Promise<void>;
   info(): Promise<{ dataPath: string; version: string }>;
 }
 export interface AIErrorInfo {
@@ -334,6 +370,18 @@ export interface AIContext {
   rootId: string;
   text: string;
 }
+export interface AISkill {
+  id: string;
+  name: string;
+  displayName: string;
+  description: string;
+  scope: "user" | "repo" | "system" | "admin";
+  enabled: boolean;
+}
+export interface AISkillCatalog {
+  skills: AISkill[];
+  warnings: number;
+}
 export interface AIMessage {
   id: string;
   role: "user" | "assistant";
@@ -342,6 +390,7 @@ export interface AIMessage {
   model?: string;
   status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
   attachments?: { name: string; kind: string }[];
+  skills?: { name: string; displayName: string }[];
   usage?: { inputTokens: number; outputTokens: number };
   error?: AIErrorInfo;
   activities?: AIActivity[];
@@ -389,39 +438,51 @@ declare global {
     research?: ResearchAPI;
   }
 }
-export const stages: { id: Stage; name: string; color: string }[] = [
-  { id: "exploration", name: "Idea Exploration", color: "#8eb7df" },
-  { id: "experiments", name: "Experiments", color: "#d7b377" },
-  { id: "writing", name: "Paper Writing", color: "#91b0e9" },
-  { id: "submitted", name: "Submitted", color: "#b39bd7" },
-  { id: "revision", name: "Revision", color: "#da9c84" },
-  { id: "accepted", name: "Accepted", color: "#80c7ae" },
-  { id: "published", name: "Published", color: "#92bace" },
+export const stages: { id: Stage; name: string }[] = [
+  { id: "exploration", name: "Idea Exploration" },
+  { id: "experiments", name: "Experiments" },
+  { id: "writing", name: "Paper Writing" },
+  { id: "submitted", name: "Submitted" },
+  { id: "revision", name: "Revision" },
+  { id: "accepted", name: "Accepted" },
+  { id: "published", name: "Published" },
 ];
+export const stageName = Object.fromEntries(
+  stages.map((s) => [s.id, s.name]),
+) as Record<Stage, string>;
+export type View =
+  | "overview"
+  | "board"
+  | "deadlines"
+  | "details"
+  | "workbench"
+  | "settings"
+  | "collection";
+export type Navigate = (
+  view: View,
+  options?: { projectId?: string; area?: string },
+) => void;
+/** Resolves false when the save failed; the failure is already reported. */
+export type Commit = (
+  transform: (state: Workspace) => Workspace,
+) => Promise<boolean>;
+export type CommitWithUndo = (
+  label: string,
+  transform: (state: Workspace) => Workspace,
+) => Promise<boolean>;
+/** A function of the latest project keeps newer edits when a save is retried. */
+export type ProjectChanges =
+  Partial<Project> | ((project: Project) => Partial<Project>);
+export type UpdateProject = (
+  id: string,
+  changes: ProjectChanges,
+  undo?: string,
+) => Promise<boolean>;
 export const deadlineKinds: { id: DeadlineKind; name: string }[] = [
   { id: "abstract", name: "Abstract" },
-  { id: "submission", name: "Submission" },
+  { id: "submission", name: "Paper" },
   { id: "notification", name: "Decision" },
   { id: "revision", name: "Revision" },
   { id: "camera-ready", name: "Camera-ready" },
   { id: "other", name: "Milestone" },
 ];
-export function dateLabel(date: string) {
-  return new Date(date + "T12:00:00").toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-export function daysUntil(date: string) {
-  const now = new Date();
-  return Math.round(
-    (new Date(date + "T00:00:00").getTime() -
-      new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) /
-      86400000,
-  );
-}
-export function dueLabel(date: string) {
-  const days = daysUntil(date);
-  return days === 0 ? "Today" : days < 0 ? `${-days}d ago` : `In ${days}d`;
-}

@@ -1,14 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
-  Check,
   CheckCheck,
-  ChevronRight,
-  Circle,
   ExternalLink,
   FileDiff,
+  FilePen,
   GitBranch,
   GitCommitHorizontal,
   Github,
@@ -16,37 +13,73 @@ import {
   Link2,
   LoaderCircle,
   RefreshCw,
-  X,
 } from "lucide-react";
+import Modal from "./Modal";
+import { monthDay, timeLabel } from "./dates";
+import { plural } from "./components/ui";
 import type { GitDiff, GitStatus, ProjectFileRoot } from "./types";
 
 const conflicts = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"]);
 function changeLabel(status: string) {
   if (conflicts.has(status)) return "Conflict";
-  if (status === "??") return "New";
+  if (status === "??") return "Untracked";
   if (status.includes("R")) return "Renamed";
   if (status.includes("D")) return "Deleted";
   if (status.includes("A")) return "Added";
   return "Modified";
 }
+const notices = {
+  init: "Local repository created.",
+  connect: "Remote connected. Check remote to see its latest commits.",
+  commit: "Commit saved locally. Push to publish it to your remote.",
+  fetch: "Remote status updated.",
+  pull: "Remote changes pulled.",
+  push: "Commits pushed to the remote.",
+  sync: "Repository synchronized.",
+};
+type Operation = keyof typeof notices;
 function githubLink(remote: string) {
   const match = remote.match(
     /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/,
   );
   return match ? `https://github.com/${match[1]}` : "";
 }
-export default function GitPanel({
+type DiffRow = { line: string; kind?: string; left?: number; right?: number };
+// Drops the patch header and numbers each row with its old (left) and new
+// (right) file line, counted from the @@ hunk headers.
+function diffRows(text: string) {
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => line.startsWith("@@"));
+  if (start < 0) return null;
+  let left = 0,
+    right = 0;
+  return lines.slice(start).map((line): DiffRow => {
+    if (line.startsWith("@@")) {
+      const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(line);
+      [left, right] = hunk ? [+hunk[1], +hunk[2]] : [0, 1];
+      return { line, kind: "hunk" };
+    }
+    if (line.startsWith("+")) return { line, kind: "addition", right: right++ };
+    if (line.startsWith("-")) return { line, kind: "deletion", left: left++ };
+    if (line.startsWith("\\")) return { line };
+    return { line, left: left++, right: right++ };
+  });
+}
+export default memo(function GitPanel({
   projectId,
   roots,
   revision,
   save,
   changed,
+  onOpenFile,
 }: {
   projectId: string;
   roots: ProjectFileRoot[];
   revision: number;
-  save(): Promise<void>;
+  /** Writes unsaved edits and resolves to the saved file, if any. */
+  save(): Promise<string | void>;
   changed(): Promise<void>;
+  onOpenFile(file: string, rootId: string): void;
 }) {
   const [show, setShow] = useState(false);
   const [rootId, setRootId] = useState("primary");
@@ -57,17 +90,14 @@ export default function GitPanel({
   const [checking, setChecking] = useState(false);
   const [message, setMessage] = useState("");
   const [url, setUrl] = useState("");
-  const [excluded, setExcluded] = useState<string[]>([]);
+  const [excluded, setExcluded] = useState(new Set<string>());
   const [activeFile, setActiveFile] = useState("");
   const [preview, setPreview] = useState<GitDiff | null>(null);
   const [previewError, setPreviewError] = useState("");
   const [checkedAt, setCheckedAt] = useState("");
   const request = useRef(0);
-  const dialog = useRef<HTMLElement>(null);
-  const toggle = useRef<HTMLButtonElement>(null);
-  const available = roots.some((root) => root.id === rootId)
-    ? rootId
-    : roots[0]?.id;
+  const root = roots.find((root) => root.id === rootId) || roots[0];
+  const available = root?.id;
   const refresh = useCallback(async () => {
     const token = ++request.current;
     if (!available) {
@@ -93,7 +123,7 @@ export default function GitPanel({
   }, [projectId, available]);
   useEffect(() => {
     setStatus(null);
-    setExcluded([]);
+    setExcluded(new Set());
     setActiveFile("");
     setNotice("");
     setCheckedAt("");
@@ -106,49 +136,8 @@ export default function GitPanel({
   useEffect(() => {
     void refresh();
   }, [refresh, revision]);
-  useEffect(() => {
-    if (!show) return;
-    const previous = document.activeElement;
-    dialog.current?.focus();
-    const keydown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!busy) setShow(false);
-      }
-      if (event.key === "Tab") {
-        const controls = Array.from(
-          dialog.current?.querySelectorAll<HTMLElement>(
-            'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex="0"]',
-          ) || [],
-        );
-        const first = controls[0],
-          last = controls.at(-1);
-        if (
-          event.shiftKey &&
-          (document.activeElement === first ||
-            document.activeElement === dialog.current)
-        ) {
-          event.preventDefault();
-          last?.focus();
-        } else if (
-          !event.shiftKey &&
-          (document.activeElement === last ||
-            document.activeElement === dialog.current)
-        ) {
-          event.preventDefault();
-          first?.focus();
-        }
-      }
-    };
-    document.addEventListener("keydown", keydown, true);
-    return () => {
-      document.removeEventListener("keydown", keydown, true);
-      if (previous instanceof HTMLElement) previous.focus();
-    };
-  }, [show, busy]);
   const changes = status?.changes || [];
-  const selected = changes.filter((change) => !excluded.includes(change.file));
+  const selected = changes.filter((change) => !excluded.has(change.file));
   const focused = changes.some((change) => change.file === activeFile)
     ? activeFile
     : changes[0]?.file;
@@ -170,54 +159,41 @@ export default function GitPanel({
       cancelled = true;
     };
   }, [show, available, projectId, focused, status]);
-  async function operate(
-    operation:
-      "init" | "connect" | "commit" | "fetch" | "pull" | "push" | "sync",
-  ) {
+  const rows = useMemo(() => preview && diffRows(preview.text), [preview]);
+  async function operate(operation: Operation) {
     if (!available || busy) return;
+    const git = window.research!;
+    const calls: Record<Operation, () => Promise<GitStatus>> = {
+      init: () => git.gitInit(projectId, available),
+      connect: () => git.gitConnect(projectId, available, url),
+      commit: () =>
+        git.gitCommit(
+          projectId,
+          available,
+          message,
+          selected.map((change) => change.file),
+        ),
+      fetch: () => git.gitSync(projectId, available, "fetch"),
+      pull: () => git.gitSync(projectId, available, "pull"),
+      push: () => git.gitSync(projectId, available, "push"),
+      sync: () => git.gitSync(projectId, available, "sync"),
+    };
     setBusy(operation);
     setError("");
     setNotice("");
     try {
       await save();
-      const result =
-        operation === "init"
-          ? await window.research!.gitInit(projectId, available)
-          : operation === "connect"
-            ? await window.research!.gitConnect(projectId, available, url)
-            : operation === "commit"
-              ? await window.research!.gitCommit(
-                  projectId,
-                  available,
-                  message,
-                  selected.map((change) => change.file),
-                )
-              : await window.research!.gitSync(projectId, available, operation);
+      const result = await calls[operation]();
       request.current++;
       setChecking(false);
       setStatus(result);
       if (operation === "commit") {
         setMessage("");
-        setExcluded([]);
+        setExcluded(new Set());
       }
       if (["fetch", "pull", "sync"].includes(operation))
-        setCheckedAt(
-          new Date().toLocaleTimeString([], {
-            hour: "2-digit",
-            minute: "2-digit",
-          }),
-        );
-      setNotice(
-        {
-          init: "Local repository created.",
-          connect: "Remote connected. Check remote to see its latest commits.",
-          commit: "Commit saved locally. Push to publish it to your remote.",
-          fetch: "Remote status updated.",
-          pull: "Remote changes pulled.",
-          push: "Commits pushed to the remote.",
-          sync: "Repository synchronized.",
-        }[operation],
-      );
+        setCheckedAt(timeLabel(Date.now()));
+      setNotice(notices[operation]);
       if (["pull", "sync"].includes(operation)) await changed();
     } catch (error) {
       await refresh();
@@ -226,30 +202,51 @@ export default function GitPanel({
       setBusy("");
     }
   }
+  const connected = !!status?.connected;
+  const clean = !changes.length;
+  const hasHistory = !!status?.history?.length;
   const hasConflict = changes.some((change) => conflicts.has(change.status));
   const locked = !!busy || checking;
-  const blocked = changes.length > 0 || !!status?.detached || hasConflict;
+  const blocked = !clean || !!status?.detached;
   const divergent = !!status?.ahead && !!status?.behind;
   const remotePage = githubLink(status?.remote || "");
-  const syncTitle = status?.detached
-    ? "Detached HEAD"
-    : hasConflict
-      ? "Resolve conflicts"
-      : changes.length
-        ? "Review local changes"
+  const [syncTitle, syncHint] = hasConflict
+    ? ["Resolve conflicts", "Resolve conflicted files in the terminal first."]
+    : status?.detached
+      ? [
+          "Detached HEAD",
+          "Check out a branch in the terminal before publishing.",
+        ]
+      : !clean
+        ? [
+            "Review local changes",
+            "Commit or stash your local changes before syncing.",
+          ]
         : divergent
-          ? "Branches have diverged"
-          : !status?.remote
-            ? "Local repository"
-            : status.behind
-              ? "Remote changes available"
-              : status.ahead
-                ? "Ready to push"
-                : "Up to date with fetched remote";
+          ? [
+              "Branches have diverged",
+              "Both branches have new commits. Reconcile them in the terminal before syncing.",
+            ]
+          : [
+              status?.behind
+                ? "Remote changes available"
+                : status?.ahead
+                  ? "Ready to push"
+                  : "Up to date with fetched remote",
+              "Sync pulls remote changes, then pushes your local commits.",
+            ];
+  // Git paths start at the repository root, which can sit above this folder.
+  const repository = status?.repository || "";
+  const prefix = root?.folder.startsWith(`${repository}/`)
+    ? `${root.folder.slice(repository.length + 1)}/`
+    : "";
+  const editorPath = (file: string) =>
+    file.startsWith(prefix) && root?.files.includes(file.slice(prefix.length))
+      ? file.slice(prefix.length)
+      : "";
   return (
     <>
       <button
-        ref={toggle}
         className="button small git-toggle"
         disabled={!roots.length}
         onClick={async () => {
@@ -257,7 +254,9 @@ export default function GitPanel({
           setError("");
           setNotice("");
           try {
-            await save();
+            const saved = await save();
+            if (saved)
+              setNotice(`Saved ${saved} so the review includes your edits.`);
             await refresh();
           } catch (error) {
             setError((error as Error).message);
@@ -265,8 +264,8 @@ export default function GitPanel({
         }}
       >
         <GitBranch size={14} />
-        {status?.connected ? status.branch : "Git"}
-        {!!changes.length && <small>{changes.length}</small>}
+        {status?.connected ? `Git · ${status.branch}` : "Git"}
+        {!clean && <small>{changes.length}</small>}
         {!!status?.ahead && (
           <span className="git-outgoing">
             <ArrowUp size={11} />
@@ -274,502 +273,405 @@ export default function GitPanel({
           </span>
         )}
       </button>
-      {show &&
-        createPortal(
-          <div
-            className="modal-backdrop"
-            onMouseDown={(event) => {
-              if (event.target === event.currentTarget && !busy) setShow(false);
-            }}
-          >
-            <section
-              ref={dialog}
-              tabIndex={-1}
-              className="modal git-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-label="Git repository"
+      {show && (
+        <Modal
+          title={
+            <>
+              <GitBranch size={19} /> Source control
+            </>
+          }
+          onClose={() => setShow(false)}
+          locked={!!busy}
+          className="git-modal"
+        >
+          <div className="git-heading-tools">
+            {locked && (
+              <span className="git-progress">
+                <LoaderCircle size={13} className="spin" />
+                {busy ? `Git ${busy}…` : "Checking repository…"}
+              </span>
+            )}
+            {roots.length > 1 && (
+              <select
+                aria-label="Local folder"
+                value={available || ""}
+                disabled={locked}
+                onChange={(event) => setRootId(event.target.value)}
+              >
+                {roots.map((root) => (
+                  <option key={root.id} value={root.id}>
+                    {root.label} · {root.folder.split("/").pop()}
+                  </option>
+                ))}
+              </select>
+            )}
+            <button
+              className="icon-button"
+              title="Refresh Git status"
+              disabled={locked}
+              onClick={refresh}
             >
-              <header className="git-title">
-                <div>
-                  <h2>
-                    <GitBranch size={19} /> Source control
-                  </h2>
-                  <p>Review your work, commit locally, then publish.</p>
-                </div>
-                <button
-                  className="icon-button"
-                  title="Close Git"
-                  disabled={!!busy}
-                  onClick={() => setShow(false)}
-                >
-                  <X size={18} />
-                </button>
-              </header>
-              <div className="git-repo-bar">
-                <label>
-                  Local folder
-                  <select
-                    value={available || ""}
-                    disabled={locked}
-                    onChange={(event) => setRootId(event.target.value)}
-                  >
-                    {roots.map((root) => (
-                      <option key={root.id} value={root.id}>
-                        {root.label} · {root.folder.split("/").pop()}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {status?.connected && (
-                  <div className="git-repository">
-                    <strong>
-                      <GitBranch size={14} />
-                      {status.branch}
-                    </strong>
-                    <span title={status.repository}>
-                      {status.repository?.split("/").pop()}
-                    </span>
-                  </div>
+              <RefreshCw size={15} className={checking ? "spin" : ""} />
+            </button>
+          </div>
+          {error && (
+            <pre className="git-error" role="alert">
+              {error}
+            </pre>
+          )}
+          {notice && (
+            <div className="git-notice" role="status">
+              <CheckCheck size={14} />
+              {notice}
+            </div>
+          )}
+          <div className="git-body">
+            <div className="git-review">
+              <div className="git-changes-heading">
+                <strong>
+                  {!clean
+                    ? `Changes · ${changes.length}`
+                    : connected
+                      ? "Working tree clean"
+                      : "Track your manuscript"}
+                </strong>
+                {!clean && (
+                  <label className="git-select-all">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all changes"
+                      checked={selected.length === changes.length}
+                      disabled={locked}
+                      onChange={(event) =>
+                        setExcluded(
+                          new Set(
+                            event.target.checked
+                              ? []
+                              : changes.map((change) => change.file),
+                          ),
+                        )
+                      }
+                    />
+                    {selected.length} selected
+                  </label>
                 )}
-                <button
-                  className="icon-button"
-                  title="Refresh Git status"
-                  disabled={locked}
-                  onClick={refresh}
-                >
-                  <RefreshCw size={15} className={checking ? "spin" : ""} />
-                </button>
               </div>
-              <ol className="git-workflow" aria-label="Git workflow">
-                {["Connect", "Review", "Commit", "Push"].map((step, index) => {
-                  const done =
-                    index === 0
-                      ? !!status?.connected
-                      : index === 1
-                        ? !!status?.connected && !changes.length
-                        : index === 2
-                          ? !!status?.history?.length && !changes.length
-                          : !!status?.remote &&
-                            !status.ahead &&
-                            !status.behind &&
-                            !changes.length &&
-                            !!status.hasRemoteBranch;
-                  const current =
-                    index === 0
-                      ? !status?.connected
-                      : index === 1
-                        ? !!changes.length
-                        : index === 2
-                          ? !!status?.connected && !status.history?.length
-                          : !!status?.connected &&
-                            !changes.length &&
-                            (!status.remote || !!status.ahead);
-                  return (
-                    <li
-                      key={step}
-                      className={done ? "done" : current ? "current" : ""}
-                    >
-                      {done ? <Check size={13} /> : <span>{index + 1}</span>}
-                      {step}
-                      {index < 3 && <ChevronRight size={12} />}
-                    </li>
-                  );
-                })}
-              </ol>
-              {error && (
-                <pre className="git-error" role="alert">
-                  {error}
-                </pre>
-              )}
-              {notice && (
-                <div className="git-notice" role="status">
-                  <CheckCheck size={14} />
-                  {notice}
-                </div>
-              )}
-              <div className="git-body">
-                <div className="git-review">
-                  <div className="git-changes-heading">
-                    <strong>
-                      {changes.length
-                        ? `Changes · ${changes.length}`
-                        : status?.connected
-                          ? "Working tree clean"
-                          : "Track your manuscript"}
-                    </strong>
-                    {!!changes.length && (
-                      <label className="git-select-all">
-                        <input
-                          type="checkbox"
-                          aria-label="Select all changes"
-                          checked={selected.length === changes.length}
-                          disabled={locked}
-                          onChange={(event) =>
-                            setExcluded(
-                              event.target.checked
-                                ? []
-                                : changes.map((change) => change.file),
-                            )
-                          }
-                        />
-                        {selected.length} selected
-                      </label>
-                    )}
-                  </div>
-                  {changes.length ? (
-                    <div className="git-review-grid">
-                      <div className="git-changes">
-                        {changes.map((change) => (
-                          <div
-                            key={change.file}
-                            className={focused === change.file ? "active" : ""}
-                          >
-                            <input
-                              type="checkbox"
-                              aria-label={`Include ${change.file} in commit`}
-                              checked={!excluded.includes(change.file)}
-                              disabled={locked || hasConflict}
-                              onChange={(event) =>
-                                setExcluded((current) =>
-                                  event.target.checked
-                                    ? current.filter(
-                                        (file) => file !== change.file,
-                                      )
-                                    : [...current, change.file],
-                                )
-                              }
-                            />
-                            <button
-                              onClick={() => setActiveFile(change.file)}
-                              title={change.file}
-                            >
-                              <FileDiff size={14} />
-                              <span>{change.file}</span>
-                              <code
-                                className={`git-file-${changeLabel(change.status).toLowerCase()}`}
-                              >
-                                {changeLabel(change.status)}
-                              </code>
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="git-diff-pane">
-                        <div className="git-diff-title">
-                          <FileDiff size={14} />
-                          <span title={focused}>{focused}</span>
-                          <small>Compared to last commit</small>
-                        </div>
+              {!clean ? (
+                <div className="git-review-grid">
+                  <div className="git-changes">
+                    {changes.map((change) => {
+                      const label = changeLabel(change.status);
+                      const local = editorPath(change.file);
+                      return (
                         <div
-                          className="git-diff"
-                          role="region"
-                          aria-label="File diff"
-                          tabIndex={0}
+                          key={change.file}
+                          className={focused === change.file ? "active" : ""}
                         >
-                          {preview ? (
-                            <pre>
-                              {preview.text.split("\n").map((line, index) => (
-                                <div
-                                  key={index}
-                                  className={
-                                    line.startsWith("+") &&
-                                    !line.startsWith("+++")
-                                      ? "addition"
-                                      : line.startsWith("-") &&
-                                          !line.startsWith("---")
-                                        ? "deletion"
-                                        : line.startsWith("@@")
-                                          ? "hunk"
-                                          : ""
-                                  }
-                                >
-                                  <span className="git-diff-line">
-                                    {index + 1}
-                                  </span>
-                                  <code>{line || " "}</code>
-                                </div>
-                              ))}
-                            </pre>
-                          ) : (
-                            <p>{previewError || "Loading difference…"}</p>
-                          )}
-                          {preview?.truncated && (
-                            <p className="git-caption">
-                              Preview limited to 1,200 lines.
-                            </p>
+                          <input
+                            type="checkbox"
+                            aria-label={`Include ${change.file} in commit`}
+                            checked={!excluded.has(change.file)}
+                            disabled={locked || hasConflict}
+                            onChange={() =>
+                              setExcluded((current) => {
+                                const next = new Set(current);
+                                if (!next.delete(change.file))
+                                  next.add(change.file);
+                                return next;
+                              })
+                            }
+                          />
+                          <button
+                            onClick={() => setActiveFile(change.file)}
+                            title={change.file}
+                          >
+                            <FileDiff size={14} />
+                            <span>{change.file}</span>
+                            <code title={label} data-status={label[0]}>
+                              {label[0]}
+                            </code>
+                          </button>
+                          {local && (
+                            <button
+                              className="icon-button"
+                              title="Open in editor"
+                              aria-label={`Open ${change.file} in editor`}
+                              disabled={!!busy}
+                              onClick={() => {
+                                setShow(false);
+                                onOpenFile(local, available!);
+                              }}
+                            >
+                              <FilePen size={13} />
+                            </button>
                           )}
                         </div>
-                      </div>
+                      );
+                    })}
+                  </div>
+                  <div className="git-diff-pane">
+                    <div className="git-diff-title">
+                      <FileDiff size={14} />
+                      <span title={focused}>{focused}</span>
+                      <small>Compared to last commit</small>
                     </div>
-                  ) : (
-                    <div className="git-empty">
-                      {status?.connected ? (
-                        <CheckCheck size={28} />
+                    <div
+                      className="git-diff"
+                      role="region"
+                      aria-label="File diff"
+                      tabIndex={0}
+                    >
+                      {rows ? (
+                        <pre>
+                          {rows.map(({ line, kind, left, right }, index) => (
+                            <div key={index} className={kind}>
+                              <span className="git-diff-line">{left}</span>
+                              <span className="git-diff-line">{right}</span>
+                              <code>{line || " "}</code>
+                            </div>
+                          ))}
+                        </pre>
                       ) : (
-                        <GitBranch size={28} />
+                        <p>
+                          {preview?.text ||
+                            previewError ||
+                            "Loading difference…"}
+                        </p>
                       )}
-                      <strong>
-                        {status?.connected
-                          ? "Your files match the last commit"
-                          : "A version history for your research"}
-                      </strong>
-                      <p>
-                        {status?.connected
-                          ? "Your next edits will appear here. Review each file before creating a commit."
-                          : "Initialize this local folder, or connect an existing remote to begin tracking your work."}
-                      </p>
-                      {status && !status.connected && (
-                        <button
-                          className="button"
-                          disabled={locked}
-                          onClick={() => void operate("init")}
-                        >
-                          <GitBranch size={14} />
-                          Initialize repository
-                        </button>
+                      {preview?.truncated && (
+                        <p className="git-caption">
+                          Preview limited to 1,200 lines.
+                        </p>
                       )}
                     </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="git-empty">
+                  {connected ? (
+                    <CheckCheck size={28} />
+                  ) : (
+                    <GitBranch size={28} />
                   )}
-                  {!!status?.history?.length && (
-                    <section className="git-history">
-                      <h3>
-                        <History size={14} /> Recent commits{" "}
-                        <span>Local branch</span>
-                      </h3>
-                      {status.history.slice(0, 4).map((commit) => (
-                        <div key={commit.hash}>
-                          <GitCommitHorizontal size={14} />
-                          <span>
-                            <strong title={commit.subject}>
-                              {commit.subject}
-                            </strong>
-                            <small>
-                              {commit.author} ·{" "}
-                              {new Date(commit.date).toLocaleDateString(
-                                undefined,
-                                { month: "short", day: "numeric" },
-                              )}
-                            </small>
-                          </span>
-                          <code>{commit.hash}</code>
-                        </div>
-                      ))}
-                    </section>
+                  <strong>
+                    {connected
+                      ? "Your files match the last commit"
+                      : "A version history for your research"}
+                  </strong>
+                  <p>
+                    {connected
+                      ? "Your next edits will appear here. Review each file before creating a commit."
+                      : "Initialize this local folder, or connect an existing remote to begin tracking your work."}
+                  </p>
+                  {status && !connected && (
+                    <button
+                      className="button"
+                      disabled={locked}
+                      onClick={() => void operate("init")}
+                    >
+                      <GitBranch size={14} />
+                      Initialize repository
+                    </button>
                   )}
                 </div>
-                <aside className="git-actions">
-                  <section className="git-action-section">
-                    <h3>
-                      <GitCommitHorizontal size={15} /> Commit
-                    </h3>
+              )}
+              {!!status?.history?.length && (
+                <section className="git-history">
+                  <h3>
+                    <History size={14} /> Recent commits{" "}
+                    <span>Local branch</span>
+                  </h3>
+                  {status.history.slice(0, 4).map((commit) => (
+                    <div key={commit.hash}>
+                      <GitCommitHorizontal size={14} />
+                      <span>
+                        <strong title={commit.subject}>{commit.subject}</strong>
+                        <small>
+                          {commit.author} · {monthDay(commit.date)}
+                        </small>
+                      </span>
+                      <code>{commit.hash}</code>
+                    </div>
+                  ))}
+                </section>
+              )}
+            </div>
+            <aside className="git-actions">
+              <section className="git-action-section">
+                <h3>
+                  <GitCommitHorizontal size={15} /> Commit
+                </h3>
+                <p className="git-caption">
+                  Save a checkpoint of the selected files.
+                </p>
+                <form
+                  className="git-commit"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void operate("commit");
+                  }}
+                >
+                  <label>
+                    Commit message
+                    <textarea
+                      rows={3}
+                      maxLength={1000}
+                      value={message}
+                      disabled={locked || !connected}
+                      onChange={(event) => setMessage(event.target.value)}
+                      placeholder="Describe what changed"
+                    />
+                  </label>
+                  <button
+                    className="button primary"
+                    disabled={
+                      locked ||
+                      !selected.length ||
+                      !message.trim() ||
+                      hasConflict ||
+                      !!status?.detached
+                    }
+                  >
+                    <GitCommitHorizontal size={14} />
+                    Commit changes
+                  </button>
+                  <span className="git-caption">
+                    {selected.length
+                      ? `${plural(selected.length, "file")} included · saves locally`
+                      : "Select changed files to commit"}
+                  </span>
+                </form>
+              </section>
+              <section className="git-action-section">
+                <h3>
+                  {remotePage ? <Github size={15} /> : <Link2 size={15} />}{" "}
+                  Remote
+                  {remotePage && (
+                    <button
+                      className="icon-button"
+                      title="Open repository on GitHub"
+                      onClick={() => void window.research!.openLink(remotePage)}
+                    >
+                      <ExternalLink size={13} />
+                    </button>
+                  )}
+                </h3>
+                {status?.remote ? (
+                  <>
+                    <div className="git-remote-detail">
+                      <strong title={status.remote}>
+                        {remotePage
+                          ? remotePage.replace("https://github.com/", "")
+                          : status.remoteName}
+                      </strong>
+                      <span title={status.remote}>{status.remote}</span>
+                      <small>
+                        {status.remoteName}/{status.remoteBranch}
+                      </small>
+                    </div>
+                    <div className="git-sync-summary">
+                      <strong>{syncTitle}</strong>
+                      <div>
+                        <span>
+                          <ArrowUp size={13} />
+                          {status.ahead} outgoing
+                        </span>
+                        <span>
+                          <ArrowDown size={13} />
+                          {status.behind} incoming
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      className="button small git-fetch"
+                      disabled={locked}
+                      onClick={() => void operate("fetch")}
+                    >
+                      <RefreshCw size={13} />
+                      Check remote
+                    </button>
                     <p className="git-caption">
-                      Save a checkpoint of the selected files.
+                      {checkedAt
+                        ? `Last checked ${checkedAt}`
+                        : "Counts reflect the last fetch. Check remote for updates."}
                     </p>
+                    <div className="git-sync">
+                      <div>
+                        <button
+                          className="button small"
+                          disabled={locked || blocked || divergent}
+                          onClick={() => void operate("pull")}
+                        >
+                          <ArrowDown size={14} />
+                          Pull
+                        </button>
+                        <button
+                          className="button small"
+                          disabled={
+                            locked || blocked || !!status.behind || !hasHistory
+                          }
+                          onClick={() => void operate("push")}
+                        >
+                          <ArrowUp size={14} />
+                          Push
+                        </button>
+                        <button
+                          className="button primary small"
+                          disabled={
+                            locked || blocked || divergent || !hasHistory
+                          }
+                          onClick={() => void operate("sync")}
+                        >
+                          <RefreshCw size={14} />
+                          Sync
+                        </button>
+                      </div>
+                    </div>
+                    <p className="git-caption">{syncHint}</p>
+                  </>
+                ) : (
+                  status && (
                     <form
-                      className="git-commit"
+                      className="git-connect"
                       onSubmit={(event) => {
                         event.preventDefault();
-                        void operate("commit");
+                        void operate("connect");
                       }}
                     >
+                      <p>
+                        {connected
+                          ? "Version history is local. Connect a remote to publish and collaborate."
+                          : "Connect this folder to a GitHub or Git remote."}
+                      </p>
                       <label>
-                        Commit message
-                        <textarea
-                          rows={3}
-                          maxLength={1000}
-                          value={message}
-                          disabled={locked || !status?.connected}
-                          onChange={(event) => setMessage(event.target.value)}
-                          placeholder="Describe what changed"
+                        Git remote URL
+                        <input
+                          required
+                          value={url}
+                          disabled={locked}
+                          onChange={(event) => setUrl(event.target.value)}
+                          placeholder="git@github.com:you/paper.git"
                         />
                       </label>
                       <button
-                        className="button primary"
-                        disabled={
-                          locked ||
-                          !selected.length ||
-                          !message.trim() ||
-                          hasConflict ||
-                          !!status?.detached
-                        }
+                        className="button"
+                        disabled={locked || !url.trim()}
                       >
-                        <GitCommitHorizontal size={14} />
-                        Commit changes
+                        <Link2 size={14} />
+                        Connect remote
                       </button>
-                      <span className="git-caption">
-                        {selected.length
-                          ? `${selected.length} file${selected.length === 1 ? "" : "s"} included · saves locally`
-                          : "Select changed files to commit"}
-                      </span>
+                      <p className="git-caption">
+                        Use an existing repository URL. Authentication uses your
+                        configured Git credentials or SSH key.
+                      </p>
                     </form>
-                  </section>
-                  <section className="git-action-section">
-                    <h3>
-                      {remotePage ? <Github size={15} /> : <Link2 size={15} />}{" "}
-                      Remote
-                      {remotePage && (
-                        <button
-                          className="icon-button"
-                          title="Open repository on GitHub"
-                          onClick={() =>
-                            void window.research!.openLink(remotePage)
-                          }
-                        >
-                          <ExternalLink size={13} />
-                        </button>
-                      )}
-                    </h3>
-                    {status?.remote ? (
-                      <>
-                        <div className="git-remote-detail">
-                          <strong title={status.remote}>
-                            {remotePage
-                              ? remotePage.replace("https://github.com/", "")
-                              : status.remoteName}
-                          </strong>
-                          <span title={status.remote}>{status.remote}</span>
-                          <small>
-                            {status.remoteName}/{status.remoteBranch}
-                          </small>
-                        </div>
-                        <div className="git-sync-summary">
-                          <strong>{syncTitle}</strong>
-                          <div>
-                            <span>
-                              <ArrowUp size={13} />
-                              {status.ahead} outgoing
-                            </span>
-                            <span>
-                              <ArrowDown size={13} />
-                              {status.behind} incoming
-                            </span>
-                          </div>
-                        </div>
-                        <button
-                          className="button small git-fetch"
-                          disabled={locked}
-                          onClick={() => void operate("fetch")}
-                        >
-                          <RefreshCw size={13} />
-                          Check remote
-                        </button>
-                        <p className="git-caption">
-                          {checkedAt
-                            ? `Last checked at ${checkedAt}`
-                            : "Counts reflect the last fetch. Check remote for updates."}
-                        </p>
-                        <div className="git-sync">
-                          <div>
-                            <button
-                              className="button small"
-                              disabled={locked || blocked || divergent}
-                              onClick={() => void operate("pull")}
-                            >
-                              <ArrowDown size={14} />
-                              Pull
-                            </button>
-                            <button
-                              className="button small"
-                              disabled={
-                                locked ||
-                                blocked ||
-                                !!status.behind ||
-                                !status.history?.length
-                              }
-                              onClick={() => void operate("push")}
-                            >
-                              <ArrowUp size={14} />
-                              Push
-                            </button>
-                            <button
-                              className="button primary small"
-                              disabled={
-                                locked ||
-                                blocked ||
-                                divergent ||
-                                !status.history?.length
-                              }
-                              onClick={() => void operate("sync")}
-                            >
-                              <RefreshCw size={14} />
-                              Sync
-                            </button>
-                          </div>
-                        </div>
-                        <p className="git-caption">
-                          {hasConflict
-                            ? "Resolve conflicted files in the terminal first."
-                            : status.detached
-                              ? "Check out a branch in the terminal before publishing."
-                              : changes.length
-                                ? "Commit or stash your local changes before syncing."
-                                : divergent
-                                  ? "Both branches have new commits. Reconcile them in the terminal before syncing."
-                                  : "Sync pulls remote changes, then pushes your local commits."}
-                        </p>
-                      </>
-                    ) : (
-                      status && (
-                        <form
-                          className="git-connect"
-                          onSubmit={(event) => {
-                            event.preventDefault();
-                            void operate("connect");
-                          }}
-                        >
-                          <p>
-                            {status.connected
-                              ? "Version history is local. Connect a remote to publish and collaborate."
-                              : "Connect this folder to a GitHub or Git remote."}
-                          </p>
-                          <label>
-                            Git remote URL
-                            <input
-                              required
-                              value={url}
-                              disabled={locked}
-                              onChange={(event) => setUrl(event.target.value)}
-                              placeholder="git@github.com:you/paper.git"
-                            />
-                          </label>
-                          <button
-                            className="button"
-                            disabled={locked || !url.trim()}
-                          >
-                            <Link2 size={14} />
-                            Connect remote
-                          </button>
-                          <p className="git-caption">
-                            Use an existing repository URL. Authentication uses
-                            your configured Git credentials or SSH key.
-                          </p>
-                        </form>
-                      )
-                    )}
-                  </section>
-                </aside>
-              </div>
-              <footer className="git-footer">
-                {busy || checking ? (
-                  <span className="git-progress">
-                    <LoaderCircle size={13} className="spin" />
-                    {busy ? `Git ${busy}…` : "Checking repository…"}
-                  </span>
-                ) : (
-                  <span>
-                    <Circle size={7} fill="currentColor" />{" "}
-                    {status?.connected
-                      ? "Local Git repository"
-                      : "Local folder"}
-                  </span>
+                  )
                 )}
-                <span>Save → Commit → Push</span>
-              </footer>
-            </section>
-          </div>,
-          document.body,
-        )}
+              </section>
+            </aside>
+          </div>
+        </Modal>
+      )}
     </>
   );
-}
+});

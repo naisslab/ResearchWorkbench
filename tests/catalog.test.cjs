@@ -7,29 +7,8 @@ const {
   researchCatalog,
   mergeCandidates,
   activateCurrentResearch,
-  correctFlowWiseStatus,
 } = require("../electron/catalog.cjs");
 const { validateState } = require("../electron/core.cjs");
-
-test("FlowWise correction changes revision to accepted once without losing project notes", () => {
-  const state = {
-    projects: [
-      {
-        name: "FlowWise",
-        catalogId: "flowwise",
-        stage: "revision",
-        notes: "Keep these notes",
-      },
-      { name: "Another project", stage: "revision" },
-    ],
-  };
-  const next = correctFlowWiseStatus(state);
-  assert.equal(next.projects[0].stage, "accepted");
-  assert.equal(next.projects[0].notes, "Keep these notes");
-  assert.equal(next.projects[1], state.projects[1]);
-  assert.equal(state.projects[0].stage, "revision");
-  assert.equal(correctFlowWiseStatus(next), next);
-});
 
 test("current research replaces placeholders and preserves existing project edits", async () => {
   const catalog = await researchCatalog(
@@ -101,10 +80,11 @@ test("catalog retains evidence without inventing deadlines or unavailable local 
     catalog.candidates.find((c) => c.id === "flowwise").project.folder,
     "",
   );
-  assert.equal(
-    catalog.candidates.find((c) => c.id === "ghostaccess").project.stage,
-    "accepted",
-  );
+  for (const id of ["ghostaccess", "flowwise"])
+    assert.equal(
+      catalog.candidates.find((c) => c.id === id).project.stage,
+      "accepted",
+    );
   assert.ok(
     catalog.candidates.every(
       (c) =>
@@ -181,96 +161,4 @@ test("workspace validation checks external project links before persistence", as
   );
   state.projects[0].links = [{ label: "Bad link", url: "javascript:alert(1)" }];
   assert.throws(() => validateState(state), /HTTP or HTTPS/);
-});
-
-test("folder organization attaches local code once and preserves custom folder choices", async (t) => {
-  const { organizeLocalFolders } = require("../electron/catalog.cjs");
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "research-folders-"));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
-  await fs.mkdir(path.join(root, "pacc-paper"));
-  await fs.mkdir(path.join(root, "pacc"));
-  await fs.writeFile(path.join(root, "pacc-paper", "paper.tex"), "draft");
-  const catalog = await researchCatalog(root);
-  const source = catalog.candidates.find((c) => c.id === "pacc").project;
-  const old = { ...source };
-  delete old.localFolders;
-  delete old.folderLabel;
-  const custom = { ...old, id: "custom", folder: "/custom/paper" };
-  const state = { projects: [old, custom] };
-  const next = organizeLocalFolders(state, catalog);
-  assert.equal(next.projects[0].folderLabel, "Manuscript");
-  assert.equal(
-    next.projects[0].localFolders[0].folder,
-    path.join(root, "pacc"),
-  );
-  assert.equal(next.projects[1], custom);
-  next.projects[0].localFolders = [];
-  assert.equal(organizeLocalFolders(next, catalog), next);
-});
-
-test("new manuscript import fills empty roots once, preserves custom folders and retries missing sources", () => {
-  const { attachImportedManuscripts } = require("../electron/catalog.cjs");
-  const state = {
-    projects: [
-      {
-        id: "web",
-        catalogId: "web-rag",
-        folder: "",
-        notes: "My notes",
-        links: [{ label: "Existing", url: "https://example.com/existing" }],
-        stage: "revision",
-        localFolders: [],
-      },
-      {
-        id: "hill",
-        catalogId: "hillinfer",
-        folder: "/my/custom/folder",
-        mainFile: "custom.tex",
-      },
-      { id: "sok", catalogId: "synthetic-data-sok", folder: "" },
-    ],
-  };
-  const catalog = {
-    candidates: [
-      {
-        id: "web-rag",
-        project: {
-          folder: "/import/web",
-          links: [{ label: "Existing", url: "https://example.com/existing" }, { label: "Overleaf", url: "https://www.overleaf.com/project/verified" }],
-          folderLabel: "Manuscript",
-          mainFile: "main.tex",
-          localFolders: [],
-        },
-      },
-      {
-        id: "hillinfer",
-        project: { folder: "/import/hill", mainFile: "usenix.tex" },
-      },
-      { id: "synthetic-data-sok", project: { folder: "", mainFile: "" } },
-    ],
-  };
-  const next = attachImportedManuscripts(state, catalog);
-  assert.equal(next.projects[0].folder, "/import/web");
-  assert.equal(next.projects[0].notes, "My notes");
-  assert.equal(next.projects[0].stage, "revision");
-  assert.deepEqual(next.projects[0].links.map(link => link.url), ["https://example.com/existing", "https://www.overleaf.com/project/verified"]);
-  assert.equal(next.projects[1], state.projects[1]);
-  assert.equal(next.projects[2], state.projects[2]);
-  assert.equal(next.manuscriptImports["synthetic-data-sok"], undefined);
-  assert.equal(attachImportedManuscripts(next, catalog), next);
-  const detached = {
-    ...next,
-    projects: next.projects.map((p) => ({ ...p, folder: "" })),
-  };
-  assert.equal(attachImportedManuscripts(detached, catalog), detached);
-  catalog.candidates[2].project = {
-    folder: "/import/sok",
-    folderLabel: "Manuscript",
-    mainFile: "paper.tex",
-    localFolders: [],
-  };
-  assert.equal(
-    attachImportedManuscripts(next, catalog).projects[2].folder,
-    "/import/sok",
-  );
 });

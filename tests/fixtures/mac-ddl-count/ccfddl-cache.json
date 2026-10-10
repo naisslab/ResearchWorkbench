@@ -1,0 +1,50 @@
+{
+  "lastSuccessAt": "2026-10-09T00:00:00Z",
+  "blobs": {
+    "conference/DS/sigmetrics.yml": {
+      "parsed": {
+        "title": "SIGMETRICS",
+        "area": "DS",
+        "dblpKey": "sigmetrics",
+        "confs": [
+          {
+            "year": 2099,
+            "id": "sigmetrics99",
+            "timezone": "AoE",
+            "date": "June 7-11, 2099",
+            "place": "Atlanta, Georgia, USA",
+            "timeline": [
+              {
+                "abstractDeadline": "2099-01-05T11:59:59Z",
+                "deadline": "2099-01-12T11:59:59Z",
+                "comment": "winter round"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "conference/MX/www.yml": {
+      "parsed": {
+        "title": "WWW",
+        "area": "MX",
+        "dblpKey": "www",
+        "confs": [
+          {
+            "year": 2099,
+            "id": "www99",
+            "timezone": "AoE",
+            "date": "May 10-14, 2099",
+            "place": "Dublin, Ireland",
+            "timeline": [
+              {
+                "abstractDeadline": "2098-10-19T11:59:59Z",
+                "deadline": "2098-10-26T11:59:59Z"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

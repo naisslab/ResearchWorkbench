@@ -1,4 +1,5 @@
-import type { Project, Stage, TrackedDeadline } from "./types";
+import type { DeadlineKind, Project, Stage, TrackedDeadline } from "./types";
+import { localDate, upcomingItems } from "./dates.ts";
 
 export const priorityStages: Stage[] = [
   "writing",
@@ -9,36 +10,27 @@ export const priorityStages: Stage[] = [
   "accepted",
   "published",
 ];
+const submissionKinds: DeadlineKind[] = ["abstract", "submission", "revision"];
 
 export function sortProjects(
   projects: Project[],
-  today = new Date().toLocaleDateString("en-CA"),
+  today = localDate(Date.now()),
   trackedDates: TrackedDeadline[] = [],
 ) {
-  const nextSubmission = (project: Project) =>
-    [
-      ...project.deadlines,
-      ...trackedDates
-        .filter(
-          (d) =>
-            d.status !== "finished" &&
-            (d.projectIds?.includes(project.id) || d.projectId === project.id),
-        )
-        .map((d) => ({
-          kind: d.kind,
-          date: new Date(d.time).toLocaleDateString("en-CA"),
-        })),
-    ]
-      .filter(
-        (d) =>
-          ["abstract", "submission", "revision"].includes(d.kind) &&
-          d.date >= today,
-      )
-      .map((d) => d.date)
-      .sort()[0] || "9999-12-31";
+  const items = upcomingItems(
+    { projects, trackedDeadlines: trackedDates },
+    Date.parse(`${today}T00:00:00`),
+  );
+  // Items are in time order, so a project's first match is its next submission.
+  const next = new Map<string, number>();
+  items.forEach((d, index) => {
+    if (d.upcoming && submissionKinds.includes(d.kind))
+      for (const id of d.projectIds) if (!next.has(id)) next.set(id, index);
+  });
+  const rank = (p: Project) => next.get(p.id) ?? items.length;
   return [...projects].sort(
     (a, b) =>
       priorityStages.indexOf(a.stage) - priorityStages.indexOf(b.stage) ||
-      nextSubmission(a).localeCompare(nextSubmission(b)),
+      rank(a) - rank(b),
   );
 }

@@ -2,6 +2,7 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const data = require("./research-catalog.json");
+const { DEFAULT_AREAS, stringList } = require("./core.cjs");
 
 async function researchCatalog(
   root = path.join(os.homedir(), "Documents", "GitHub"),
@@ -73,17 +74,13 @@ async function researchCatalog(
       };
     }),
   );
-  return { checkedAt: data.checkedAt, areas: data.areas, candidates };
+  return { checkedAt: data.checkedAt, areas: DEFAULT_AREAS, candidates };
 }
 
 function mergeCandidates(state, catalog, ids) {
-  if (
-    !Array.isArray(ids) ||
-    ids.length > 500 ||
-    ids.some((id) => typeof id !== "string")
-  )
-    throw new Error("Choose projects from the research collection.");
-  const selected = new Set(ids);
+  const selected = new Set(
+    stringList(ids, 500, "Choose projects from the research collection."),
+  );
   if ([...selected].some((id) => !catalog.candidates.some((c) => c.id === id)))
     throw new Error("Unknown research project.");
   const additions = catalog.candidates.filter(
@@ -96,6 +93,7 @@ function mergeCandidates(state, catalog, ids) {
           p.name.trim().toLowerCase() === c.project.name.trim().toLowerCase(),
       ),
   );
+  if (!additions.length) return state;
   const areaIds = new Set(additions.map((c) => c.project.areaId));
   return {
     ...state,
@@ -123,87 +121,4 @@ function activateCurrentResearch(state, catalog) {
   };
 }
 
-function correctFlowWiseStatus(state) {
-  if (state.flowWiseStatusVersion === 1) return state;
-  return {
-    ...state,
-    flowWiseStatusVersion: 1,
-    projects: state.projects.map((p) =>
-      (p.catalogId === "flowwise" ||
-        p.name.trim().toLowerCase() === "flowwise") &&
-      !["accepted", "published"].includes(p.stage)
-        ? { ...p, stage: "accepted", updatedAt: new Date().toISOString() }
-        : p,
-    ),
-  };
-}
-
-function organizeLocalFolders(state, catalog) {
-  if (state.localFilesVersion === 1) return state;
-  return {
-    ...state,
-    localFilesVersion: 1,
-    projects: state.projects.map((project) => {
-      const source = catalog.candidates.find(
-        (c) => c.id === project.catalogId,
-      )?.project;
-      // A custom folder attachment takes precedence over the catalog.
-      if (
-        !source ||
-        source.folder !== project.folder ||
-        project.localFolders !== undefined
-      )
-        return project;
-      return {
-        ...project,
-        folderLabel: source.folderLabel,
-        localFolders: source.localFolders,
-      };
-    }),
-  };
-}
-
-function attachImportedManuscripts(state, catalog) {
-  const imported = { ...state.manuscriptImports };
-  let changed = false;
-  const projects = state.projects.map((project) => {
-    const id = project.catalogId;
-    if (
-      !["web-rag", "hillinfer", "synthetic-data-sok"].includes(id) ||
-      imported[id]
-    )
-      return project;
-    const source = catalog.candidates.find(
-      (candidate) => candidate.id === id,
-    )?.project;
-    if (!source?.folder || !source.mainFile) return project;
-    imported[id] = true;
-    changed = true;
-    // Preserve custom attachments and every user-edited project field.
-    if (project.folder) return project;
-    return {
-      ...project,
-      folder: source.folder,
-      folderLabel: source.folderLabel,
-      mainFile: source.mainFile,
-      links: [
-        ...(project.links || []),
-        ...(source.links || []).filter(
-          (link) => !(project.links || []).some((existing) => existing.url === link.url),
-        ),
-      ],
-      localFolders: source.localFolders,
-      updatedAt: new Date().toISOString(),
-    };
-  });
-  return changed ? { ...state, projects, manuscriptImports: imported } : state;
-}
-
-module.exports = {
-  researchCatalog,
-  mergeCandidates,
-  activateCurrentResearch,
-  correctFlowWiseStatus,
-  organizeLocalFolders,
-  attachImportedManuscripts,
-};
+module.exports = { researchCatalog, mergeCandidates, activateCurrentResearch };

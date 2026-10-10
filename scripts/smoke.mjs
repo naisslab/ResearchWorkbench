@@ -1,30 +1,8 @@
-import { _electron as electron } from "playwright";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-const runGit = promisify(execFile);
-const root = await fs.mkdtemp(path.join(os.tmpdir(), "research-ui-"));
-let desktop;
-let currentPage;
-const failures = [];
-async function launch() {
-  desktop = await electron.launch({
-    executablePath: process.env.RESEARCH_APP_PATH || undefined,
-    args: process.env.RESEARCH_APP_PATH ? [] : ["."],
-    cwd: process.cwd(),
-    env: { ...process.env, RESEARCH_TEST_DATA: root, RESEARCH_DEV_URL: "" },
-  });
-  const page = await desktop.firstWindow();
-  currentPage = page;
-  page.on("pageerror", (error) => failures.push(error.message));
-  await page
-    .getByRole("heading", { name: "Research Overview", exact: true })
-    .waitFor();
-  return page;
-}
+import { launchApp, smoke, stubDialogs } from "./smoke-harness.mjs";
+
 async function dragDivider(page, name, dx, dy = 0) {
   const divider = page.getByRole("separator", { name, exact: true });
   const box = await divider.boundingBox();
@@ -35,16 +13,11 @@ async function dragDivider(page, name, dx, dy = 0) {
   await page.mouse.down();
   await page.mouse.move(x + dx, y + dy, { steps: 12 });
   await page.mouse.up();
-  assert.equal(
-    await page.evaluate(() =>
-      document.documentElement.classList.contains("panel-dragging"),
-    ),
-    false,
-  );
+  await page.locator(".drag-shield").waitFor({ state: "detached" });
   return Number(await divider.getAttribute("aria-valuenow"));
 }
-try {
-  let page = await launch();
+await smoke("ui", async (root) => {
+  let { app, page } = await launchApp();
   await page.screenshot({ path: "output/playwright/overview.png" });
   assert.equal(await page.locator(".project-card").count(), 25);
   assert.equal(
@@ -121,11 +94,11 @@ try {
     .getByRole("heading", { name: "Project Board", exact: true })
     .waitFor();
   await page.getByRole("button", { name: "Overview", exact: false }).click();
-  await desktop.evaluate(({ BrowserWindow }) =>
+  await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setSize(1100, 780),
   );
   await page.screenshot({ path: "output/playwright/overview-compact.png" });
-  await desktop.evaluate(({ BrowserWindow }) =>
+  await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setSize(1510, 980),
   );
   await page.getByRole("button", { name: "New project", exact: true }).click();
@@ -151,7 +124,7 @@ try {
     .filter({ hasText: "Add milestone" })
     .click();
   await page.getByLabel("Milestone name").fill("Test submission");
-  await page.getByLabel("Date", { exact: true }).fill("2026-11-15");
+  await page.getByLabel("Date", { exact: true }).fill("2099-11-15");
   await page.getByLabel("Source link").fill("https://example.com/cfp");
   await page
     .locator(".modal")
@@ -170,17 +143,13 @@ This manuscript exists only in the automated test workspace.
 \end{document}
 `,
   );
-  await desktop.evaluate(({ dialog }, folder) => {
-    dialog.showOpenDialog = async () => ({
-      canceled: false,
-      filePaths: [folder],
-    });
-  }, manuscriptFolder);
+  await stubDialogs(app, { open: manuscriptFolder });
   await page
     .locator(".details-aside .button.full-width")
     .filter({ hasText: "Attach folder" })
     .click();
   await page.getByRole("button", { name: "Open workbench" }).click();
+  await page.getByRole("button", { name: "All panels", exact: true }).click();
   await page.locator(".cm-content").waitFor();
   assert.ok(
     (await page.locator(".cm-content").innerText()).includes(
@@ -194,12 +163,7 @@ This manuscript exists only in the automated test workspace.
     path.join(codeFolder, "src", "train.py"),
     "print('before')\n",
   );
-  await desktop.evaluate(({ dialog }, folder) => {
-    dialog.showOpenDialog = async () => ({
-      canceled: false,
-      filePaths: [folder],
-    });
-  }, codeFolder);
+  await stubDialogs(app, { open: codeFolder });
   await page
     .getByRole("button", { name: "Add local folder", exact: true })
     .click();
@@ -217,8 +181,8 @@ This manuscript exists only in the automated test workspace.
   await page.keyboard.press("Control+s");
   await page
     .locator(".editor-status")
-    .getByText("All changes saved", { exact: true })
-    .waitFor();
+    .getByText("Unsaved changes", { exact: true })
+    .waitFor({ state: "hidden" });
   assert.match(
     await fs.readFile(path.join(codeFolder, "src", "train.py"), "utf8"),
     /saved with Ctrl S/,
@@ -227,78 +191,49 @@ This manuscript exists only in the automated test workspace.
   await page.keyboard.press("Meta+s");
   await page
     .locator(".editor-status")
-    .getByText("All changes saved", { exact: true })
-    .waitFor();
+    .getByText("Unsaved changes", { exact: true })
+    .waitFor({ state: "hidden" });
   assert.match(
     await fs.readFile(path.join(codeFolder, "src", "train.py"), "utf8"),
     /saved with Command S/,
   );
+  // The tree's menu renames the open file, then trashes it into the test root
+  // rather than the user's Trash.
+  const trashed = path.join(root, "trashed.py");
+  await app.evaluate(({ shell }, trashed) => {
+    shell.trashItem = (file) =>
+      process.getBuiltinModule("node:fs/promises").rename(file, trashed);
+  }, trashed);
+  await page
+    .getByRole("button", { name: "train.py", exact: true })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Rename…" }).click();
+  await page.getByLabel("Filename").fill("src/model.py");
+  await page.getByRole("button", { name: "Rename", exact: true }).click();
+  await page
+    .getByRole("button", { name: "model.py", exact: true })
+    .click({ button: "right" });
+  assert.equal(
+    await page.getByRole("button", { name: "train.py", exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await page.locator(".editor-file-tab").innerText(),
+    "src/model.py",
+  );
+  await page.getByRole("menuitem", { name: "Move to Trash" }).click();
+  await page
+    .getByRole("button", { name: "Move to Trash", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "model.py", exact: true })
+    .waitFor({ state: "detached" });
+  assert.match(await fs.readFile(trashed, "utf8"), /saved with Command S/);
   await page.getByLabel("Find project files").fill("main.tex");
   await page
     .getByRole("button", { name: "main.tex entry", exact: true })
     .click();
   await page.getByLabel("Find project files").fill("");
-  // Connect a disposable Git remote, commit from the UI, and sync a real push.
-  const gitRemote = path.join(root, "ui-remote.git");
-  await fs.mkdir(gitRemote);
-  await runGit("/usr/bin/git", [
-    "-C",
-    gitRemote,
-    "init",
-    "--bare",
-    "--initial-branch=main",
-  ]);
-  await page.locator(".git-toggle").click();
-  await page.getByLabel("Git remote URL").fill(gitRemote);
-  await page
-    .getByRole("button", { name: "Connect remote", exact: true })
-    .click();
-  await page
-    .locator(".git-repository strong")
-    .filter({ hasText: /^main$/ })
-    .waitFor();
-  await runGit("/usr/bin/git", [
-    "-C",
-    manuscriptFolder,
-    "config",
-    "user.name",
-    "UI Test",
-  ]);
-  await runGit("/usr/bin/git", [
-    "-C",
-    manuscriptFolder,
-    "config",
-    "user.email",
-    "ui@example.com",
-  ]);
-  await page
-    .getByLabel("Commit message")
-    .fill("Initial manuscript from the desktop UI");
-  await page
-    .getByRole("button", { name: "Commit changes", exact: true })
-    .click();
-  await page.getByText("Working tree clean", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "Sync", exact: true }).click();
-  await page
-    .locator(".git-progress")
-    .waitFor({ state: "hidden", timeout: 30000 });
-  assert.equal(await page.locator(".git-error").count(), 0);
-  assert.match(
-    (
-      await runGit("/usr/bin/git", [
-        "-C",
-        gitRemote,
-        "log",
-        "--format=%s",
-        "main",
-      ])
-    ).stdout,
-    /Initial manuscript/,
-  );
-  await page.getByTitle("Close Git").click();
-  await page
-    .getByText("Connected", { exact: true })
-    .waitFor({ timeout: 10000 });
   await page.getByRole("button", { name: "Dates & deadlines" }).click();
   await page
     .getByRole("heading", { name: "Dates & Deadlines", exact: true })
@@ -324,7 +259,12 @@ This manuscript exists only in the automated test workspace.
   await page
     .getByRole("button", { name: "UI Integration Project", exact: true })
     .click();
+  await page.getByRole("button", { name: "All panels", exact: true }).click();
   await page.locator(".cm-content").waitFor();
+  await page
+    .locator(".bottom-tabs")
+    .getByRole("button", { name: "Terminal", exact: true })
+    .click();
   await page
     .getByText("Connected", { exact: true })
     .waitFor({ timeout: 10000 });
@@ -355,21 +295,14 @@ This manuscript exists only in the automated test workspace.
   await page
     .getByText("Build succeeded · PDF updated", { exact: false })
     .waitFor({ timeout: 30000 });
-  const pdfSrc = (
-    await page.locator(".pdf-reader").getAttribute("data-pdf-url")
-  ).split("#")[0];
-  assert.ok(pdfSrc.startsWith("research-pdf://document/"));
-  const pdfResponse = await desktop.evaluate(async ({ net }, url) => {
-    const response = await net.fetch(url);
-    const buffer = Buffer.from(await response.arrayBuffer());
-    return {
-      status: response.status,
-      magic: buffer.subarray(0, 5).toString(),
-      size: buffer.length,
-    };
-  }, pdfSrc);
-  assert.equal(pdfResponse.status, 200);
-  assert.equal(pdfResponse.magic, "%PDF-");
+  const pdfUrl = await page.locator(".pdf-reader").getAttribute("data-pdf-url");
+  const magic = await page.evaluate(async (url) => {
+    const { projects } = await window.research.load();
+    const id = projects.find((p) => p.name === "UI Integration Project").id;
+    const { data } = await window.research.readPdfAnnotations(id, url);
+    return String.fromCharCode(...new Uint8Array(data.slice(0, 5)));
+  }, pdfUrl);
+  assert.equal(magic, "%PDF-");
   await page.waitForTimeout(1500);
   await page.screenshot({ path: "output/playwright/workbench.png" });
   // Split panes resize by dragging even across the embedded PDF surface.
@@ -414,10 +347,7 @@ This manuscript exists only in the automated test workspace.
   await dragDivider(page, "Resize project files", 40);
   await dragDivider(page, "Resize editor and PDF", -55);
   await dragDivider(page, "Resize terminal panel", 0, -45);
-  const savedLayout = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("research-workbench.panels.v1")),
-  );
-  await desktop.evaluate(({ BrowserWindow }) =>
+  await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setSize(1050, 760),
   );
   const narrow = await page.evaluate(() => {
@@ -439,7 +369,7 @@ This manuscript exists only in the automated test workspace.
   // PDF pages repaint asynchronously after their viewport resizes.
   await page.waitForTimeout(800);
   await page.screenshot({ path: "output/playwright/workbench-compact.png" });
-  await desktop.evaluate(({ BrowserWindow }) =>
+  await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setSize(1510, 980),
   );
   await page.waitForTimeout(800);
@@ -459,72 +389,17 @@ This manuscript exists only in the automated test workspace.
       "Undefined control sequence",
     ),
   );
+  await page.getByLabel("Compile on save").check();
   await page.locator(".cm-content").fill(original);
   await page.getByRole("button", { name: /^Save/ }).click();
-  await page.getByText("All changes saved", { exact: true }).waitFor();
-  await page.locator(".git-toggle").click();
-  await page.locator(".git-progress").waitFor({ state: "hidden" });
-  const savedGitState = await page.evaluate(async () => {
-    const project = (await window.research.load()).projects.find(
-      (p) => p.name === "UI Integration Project",
-    );
-    return window.research.gitStatus(project.id, "primary");
-  });
-  if (savedGitState.changes.length) {
-    await page.getByLabel("Commit message").waitFor();
-    await page
-      .getByLabel("Commit message")
-      .fill("Save manuscript after compile verification");
-    await page
-      .getByRole("button", { name: "Commit changes", exact: true })
-      .click();
-    await page.getByText("Working tree clean", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "Push", exact: true }).click();
-    await page
-      .locator(".git-progress")
-      .waitFor({ state: "hidden", timeout: 30000 });
-  }
-  const peerFolder = path.join(root, "ui-peer");
-  await runGit("/usr/bin/git", ["clone", gitRemote, peerFolder]);
-  await runGit("/usr/bin/git", [
-    "-C",
-    peerFolder,
-    "config",
-    "user.name",
-    "Peer",
-  ]);
-  await runGit("/usr/bin/git", [
-    "-C",
-    peerFolder,
-    "config",
-    "user.email",
-    "peer@example.com",
-  ]);
-  await fs.appendFile(
-    path.join(peerFolder, "main.tex"),
-    "\n% Remote revision pulled in UI\n",
-  );
-  await runGit("/usr/bin/git", [
-    "-C",
-    peerFolder,
-    "commit",
-    "-am",
-    "Remote revision",
-  ]);
-  await runGit("/usr/bin/git", ["-C", peerFolder, "push"]);
-  await page.getByRole("button", { name: "Pull", exact: true }).click();
   await page
-    .locator(".git-progress")
-    .waitFor({ state: "hidden", timeout: 30000 });
-  assert.equal(await page.locator(".git-error").count(), 0);
-  assert.match(
-    await page.locator(".cm-content").innerText(),
-    /Remote revision pulled in UI/,
+    .getByText("Build succeeded · PDF updated")
+    .waitFor({ timeout: 30000 });
+  const savedLayout = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("research-workbench.panels.v1")),
   );
-  await page.screenshot({ path: "output/playwright/git.png" });
-  await page.getByTitle("Close Git").click();
-  await desktop.close();
-  page = await launch();
+  await app.close();
+  ({ app, page } = await launchApp());
   assert.deepEqual(
     await page.evaluate(() =>
       JSON.parse(localStorage.getItem("research-workbench.panels.v1")),
@@ -566,12 +441,11 @@ This manuscript exists only in the automated test workspace.
     Math.round((await page.locator(".bottom-panel").boundingBox()).height),
     Math.round(savedLayout.terminal),
   );
-  assert.equal(
-    (await page.evaluate(() => window.research.load())).projects.find(
-      (p) => p.name === "UI Integration Project",
-    ).localFolders[0].label,
-    "Code",
-  );
+  const integration = (
+    await page.evaluate(() => window.research.load())
+  ).projects.find((p) => p.name === "UI Integration Project");
+  assert.equal(integration.localFolders[0].label, "Code");
+  assert.equal(integration.compileOnSave, true);
   await page
     .getByRole("button", { name: "Research collection", exact: true })
     .click();
@@ -599,9 +473,7 @@ This manuscript exists only in the automated test workspace.
       .find((p) => p.catalogId === "pacc")
       .links.some((link) => link.url.includes("overleaf.com/project/")),
   );
-  await page
-    .getByRole("button", { name: "Needs review", exact: false })
-    .click();
+  await page.getByRole("tab", { name: "Needs review", exact: false }).click();
   assert.equal(await page.locator(".collection-card").count(), 12);
   assert.equal(
     await page
@@ -610,7 +482,7 @@ This manuscript exists only in the automated test workspace.
     0,
   );
   await page
-    .getByRole("button", { name: "Research archive", exact: false })
+    .getByRole("tab", { name: "Research archive", exact: false })
     .click();
   assert.equal(await page.locator(".collection-card").count(), 10);
   const archived = await page.evaluate(async () =>
@@ -643,8 +515,8 @@ This manuscript exists only in the automated test workspace.
   await page
     .getByRole("heading", { name: "Sources & manuscripts", exact: false })
     .waitFor();
-  await desktop.close();
-  page = await launch();
+  await app.close();
+  ({ app, page } = await launchApp());
   importedResearch = await page.evaluate(
     async () => (await window.research.load()).projects,
   );
@@ -661,27 +533,5 @@ This manuscript exists only in the automated test workspace.
     importedResearch.filter((p) => p.catalogId === "flowwise").length,
     1,
   );
-  assert.deepEqual(failures, []);
-  console.log(
-    "PASS: create project, task, milestone, stage change, PTY shell, PDF compilation/preview, compile failure, Ctrl+S/Command+S file save, local folder trees, pane dragging/keyboard/reset/minimum widths/layout persistence, Git connect/commit/push/pull and editor refresh, current research in sidebar and board, area filtering, provenance, and restart persistence.",
-  );
-  console.log(
-    "Screenshots: output/playwright/overview.png and output/playwright/workbench.png",
-  );
-} catch (error) {
-  console.error(error.stack || error);
-  console.error(
-    "UI ERROR:",
-    await currentPage
-      ?.locator("body")
-      .innerText()
-      .catch(() => ""),
-  );
-  await currentPage
-    ?.screenshot({ path: "output/playwright/failure.png" })
-    .catch(() => {});
-  throw error;
-} finally {
-  await desktop?.close().catch(() => {});
-  await fs.rm(root, { recursive: true, force: true });
-}
+  return "PASS: create project, task, milestone, stage change, PTY shell, PDF compilation/preview, compile failure, Ctrl+S/Command+S file save, compile on save, local folder trees with rename and trash, pane dragging/keyboard/reset/minimum widths/layout persistence, current research in sidebar and board, area filtering, provenance, and restart persistence. Screenshots are in output/playwright.";
+});

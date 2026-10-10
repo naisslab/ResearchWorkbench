@@ -1,14 +1,9 @@
-import { _electron as electron } from "playwright";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { PDFDocument, PDFName, degrees } from "pdf-lib";
-const root = await fs.mkdtemp(path.join(os.tmpdir(), "research-pdf-ui-"));
-const folder = path.join(root, "manuscript"),
-  source = path.join(folder, "paper.pdf");
-let desktop, currentPage;
-const failures = [];
+import { launchApp, smoke, stubDialogs, useProject } from "./smoke-harness.mjs";
+let projectId;
 async function makePdf(revised = false) {
   const pdf = await PDFDocument.create();
   pdf
@@ -21,38 +16,6 @@ async function makePdf(revised = false) {
   second.drawText("Second page evaluation", { x: 50, y: 680, size: 18 });
   second.setRotation(degrees(90));
   return Buffer.from(await pdf.save());
-}
-async function launch() {
-  desktop = await electron.launch({
-    executablePath: process.env.RESEARCH_APP_PATH || undefined,
-    args: process.env.RESEARCH_APP_PATH ? [] : ["."],
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      RESEARCH_TEST_DATA: path.join(root, "user-data"),
-      RESEARCH_DEV_URL: "",
-    },
-  });
-  const page = await desktop.firstWindow();
-  currentPage = page;
-  page.on("pageerror", (error) => failures.push(error.message));
-  await page
-    .getByRole("heading", { name: "Research Overview", exact: true })
-    .waitFor();
-  await desktop.evaluate(
-    ({ dialog }, paths) => {
-      dialog.showOpenDialog = async () => ({
-        canceled: false,
-        filePaths: [paths.source],
-      });
-      dialog.showSaveDialog = async () => ({
-        canceled: false,
-        filePath: paths.exported,
-      });
-    },
-    { source, exported: path.join(root, "annotated.pdf") },
-  );
-  return page;
 }
 async function fitReady(page) {
   await page.waitForFunction(() => {
@@ -72,14 +35,19 @@ async function fitReady(page) {
       ),
   );
 }
+// Opens the stubbed PDF from the empty pane, or from the versions menu once a
+// PDF is showing.
+async function openPdf(page) {
+  await page.locator(".pdf-reader, .pdf-empty .button").first().waitFor();
+  if (await page.locator(".pdf-reader").count())
+    await page.getByTitle("Annotated PDF versions").click();
+  await page.getByRole("button", { name: "Open PDF", exact: true }).click();
+}
 async function open(page) {
   await page
     .getByRole("button", { name: "PDF Annotation Review", exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "Open PDF", exact: true })
-    .first()
-    .click();
+  await openPdf(page);
   await page
     .locator('.pdf-page[data-page-number="1"][data-rendered="true"]')
     .waitFor();
@@ -89,18 +57,29 @@ async function open(page) {
     .locator('.pdf-page[data-page-number="1"][data-rendered="true"]')
     .waitFor();
 }
-async function waitSaved(page, count) {
-  await page.waitForFunction(
-    async ({ id, count }) => {
-      const entries = await window.research.pdfAnnotationLibrary(id);
-      return entries.some((entry) => entry.count === count);
-    },
-    { id: projectId, count },
-  );
-  await page.getByText("Annotations saved", { exact: true }).waitFor();
+// The notes drawer stays open across PDFs of a project, so open it only when closed.
+async function showNotes(page) {
+  const toggle = page.getByTitle("Show PDF annotations");
+  if ((await toggle.getAttribute("aria-pressed")) !== "true")
+    await toggle.click();
 }
-let projectId;
-try {
+// Polls from Node: waitForFunction treats a pending promise as a truthy result.
+async function waitSaved(page, count) {
+  for (let tries = 0; ; tries++) {
+    const entries = await page.evaluate(
+      (id) => window.research.pdfAnnotationLibrary(id),
+      projectId,
+    );
+    if (entries.some((entry) => entry.count === count)) break;
+    assert.ok(tries < 100, `Annotations never reached ${count}`);
+    await page.waitForTimeout(100);
+  }
+  await page.getByTitle("Annotations saved", { exact: true }).waitFor();
+}
+await smoke("pdf-annotations", async (root) => {
+  const folder = path.join(root, "manuscript"),
+    source = path.join(folder, "paper.pdf"),
+    dialogs = { open: source, save: path.join(root, "annotated.pdf") };
   await fs.mkdir(folder);
   const original = await makePdf();
   await fs.writeFile(source, original);
@@ -108,21 +87,9 @@ try {
     path.join(folder, "main.tex"),
     "\\documentclass{article}\n\\begin{document}Research evidence\\end{document}",
   );
-  let page = await launch();
-  projectId = await page.evaluate(async (folder) => {
-    const workspace = await window.research.load();
-    const project = workspace.projects[0];
-    Object.assign(project, {
-      name: "PDF Annotation Review",
-      folder,
-      localFolders: [],
-      mainFile: "main.tex",
-    });
-    workspace.appearance = "light";
-    await window.research.save(workspace);
-    return project.id;
-  }, folder);
-  await page.reload();
+  let { app, page } = await launchApp();
+  await stubDialogs(app, dialogs);
+  projectId = await useProject(page, "PDF Annotation Review", folder);
   await open(page);
   await page
     .getByRole("button", { name: "Highlight text", exact: true })
@@ -171,6 +138,13 @@ try {
     .fill("检查实验结果，补充消融实验。");
   await page.keyboard.press("Control+s");
   await waitSaved(page, 2);
+  const savedNote = await page.evaluate(async (id) => {
+    const url = document.querySelector(".pdf-reader").dataset.pdfUrl;
+    return (await window.research.readPdfAnnotations(id, url)).annotations.find(
+      (item) => item.kind === "note",
+    );
+  }, projectId);
+  assert.equal(savedNote.comment, "检查实验结果，补充消融实验。");
   await page.getByTitle("Close PDF annotations").click();
   await page.getByRole("button", { name: "Draw on PDF", exact: true }).click();
   await page
@@ -191,20 +165,20 @@ try {
   await page.mouse.move(box.x + 240, box.y + 305, { steps: 15 });
   await page.mouse.up();
   await waitSaved(page, 3);
-  await page.getByTitle("Show PDF annotations").click();
+  await showNotes(page);
   await page.getByLabel("Search PDF annotations").fill("消融");
+  await page.locator(".pdf-note-row").filter({ hasText: "消融" }).waitFor();
   assert.equal(await page.locator(".pdf-note-row").count(), 1);
   await page.getByLabel("Search PDF annotations").fill("");
   await page
     .locator(".pdf-note-row")
     .filter({ hasText: "检查实验结果" })
     .click();
-  await fs.mkdir("output/playwright", { recursive: true });
   await page.screenshot({
     path: "output/playwright/pdf-annotations-light.png",
   });
   await page.getByTitle("Export annotated PDF").click();
-  await page.getByText("Annotated PDF exported", { exact: true }).waitFor();
+  await page.getByTitle("Annotated PDF exported", { exact: true }).waitFor();
   const exported = await fs.readFile(path.join(root, "annotated.pdf"));
   const exportPdf = await PDFDocument.load(exported);
   const annotations = exportPdf.getPage(0).node.Annots();
@@ -222,10 +196,7 @@ try {
   // A changed build at the same path starts a separate annotation version.
   const oldUrl = await page.locator(".pdf-reader").getAttribute("data-pdf-url");
   await fs.writeFile(source, await makePdf(true));
-  await page
-    .getByRole("button", { name: "Open PDF", exact: true })
-    .first()
-    .click();
+  await openPdf(page);
   await page.waitForFunction(
     (url) => document.querySelector(".pdf-reader")?.dataset.pdfUrl !== url,
     oldUrl,
@@ -249,9 +220,7 @@ try {
   await page
     .locator('.pdf-page[data-page-number="1"][data-rendered="true"]')
     .waitFor();
-  await desktop.evaluate(({ dialog }, source) => {
-    dialog.showSaveDialog = async () => ({ canceled: false, filePath: source });
-  }, source);
+  await stubDialogs(app, { save: source });
   const revisedBytes = await fs.readFile(source);
   await page.getByTitle("Export annotated PDF").click();
   await page
@@ -259,7 +228,7 @@ try {
     .filter({ hasText: "preserve the original PDF" })
     .waitFor();
   assert.deepEqual(await fs.readFile(source), revisedBytes);
-  await page.getByTitle("Show PDF annotations").click();
+  await showNotes(page);
   assert.equal(await page.locator(".pdf-note-row").count(), 3);
   assert.equal(
     await page.getByLabel("Annotation comment", { exact: true }).count(),
@@ -291,8 +260,9 @@ try {
   assert.equal(library[0].name, "paper.pdf");
   await page.getByTitle("Switch to dark mode").click();
   await page.screenshot({ path: "output/playwright/pdf-annotations-dark.png" });
-  await desktop.close();
-  page = await launch();
+  await app.close();
+  ({ app, page } = await launchApp());
+  await stubDialogs(app, dialogs);
   await open(page);
   await page.getByTitle("Annotated PDF versions").click();
   await page
@@ -302,30 +272,11 @@ try {
   await page
     .locator('.pdf-page[data-page-number="1"][data-rendered="true"]')
     .waitFor();
-  await page.getByTitle("Show PDF annotations").click();
+  await showNotes(page);
   await page
     .locator(".pdf-note-row")
     .filter({ hasText: "检查实验结果" })
     .waitFor();
   assert.equal(await page.locator(".pdf-reader-error").count(), 0);
-  assert.deepEqual(failures, []);
-  console.log(
-    "PDF annotation UI passed: text highlights, notes, ink, zoom, undo, search, Unicode export, rotated pages, version archives and restart persistence.",
-  );
-} catch (error) {
-  if (currentPage && !currentPage.isClosed()) {
-    await currentPage.screenshot({
-      path: "output/playwright/pdf-annotations-failure.png",
-    });
-    console.error(
-      await currentPage
-        .locator(".pdf-reader")
-        .innerText()
-        .catch(() => "No reader"),
-    );
-  }
-  throw error;
-} finally {
-  if (desktop) await desktop.close().catch(() => {});
-  await fs.rm(root, { recursive: true, force: true });
-}
+  return "PDF annotation UI passed: text highlights, notes, ink, zoom, undo, search, Unicode export, rotated pages, version archives and restart persistence.";
+});

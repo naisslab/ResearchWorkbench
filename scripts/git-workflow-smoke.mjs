@@ -1,17 +1,17 @@
-import { _electron as electron } from "playwright";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { launchApp, smoke, useProject } from "./smoke-harness.mjs";
 const exec = promisify(execFile);
-const root = await fs.mkdtemp(path.join(os.tmpdir(), "research-git-workflow-"));
-const folder = path.join(root, "manuscript"),
-  remote = path.join(root, "paper.git");
 const git = (cwd, ...args) => exec("/usr/bin/git", ["-C", cwd, ...args]);
-let desktop;
-try {
+const gitDialog = (page) =>
+  page.getByRole("dialog", { name: "Source control" });
+await smoke("git-workflow", async (root) => {
+  const folder = path.join(root, "manuscript"),
+    remote = path.join(root, "paper.git"),
+    peer = path.join(root, "peer");
   await fs.mkdir(folder);
   await fs.mkdir(remote);
   await git(remote, "init", "--bare", "--initial-branch=main");
@@ -36,34 +36,8 @@ try {
     path.join(folder, "references.bib"),
     "@article{baseline,\n title={Updated study},\n year={2026}\n}\n",
   );
-  desktop = await electron.launch({
-    executablePath: process.env.RESEARCH_APP_PATH || undefined,
-    args: process.env.RESEARCH_APP_PATH ? [] : ["."],
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      RESEARCH_TEST_DATA: path.join(root, "user-data"),
-      RESEARCH_DEV_URL: "",
-    },
-  });
-  const page = await desktop.firstWindow();
-  const failures = [];
-  page.on("pageerror", (error) => failures.push(error.message));
-  await page
-    .getByRole("heading", { name: "Research Overview", exact: true })
-    .waitFor();
-  const id = await page.evaluate(async (folder) => {
-    const workspace = await window.research.load();
-    const project = workspace.projects[0];
-    project.name = "Git Workflow Review";
-    project.folder = folder;
-    project.localFolders = [];
-    project.mainFile = "main.tex";
-    workspace.appearance = "light";
-    await window.research.save(workspace);
-    return project.id;
-  }, folder);
-  await page.reload();
+  const { page } = await launchApp();
+  const id = await useProject(page, "Git Workflow Review", folder);
   await page
     .getByRole("button", { name: "Git Workflow Review", exact: true })
     .click();
@@ -78,7 +52,6 @@ try {
   await page
     .getByLabel("Commit message")
     .fill("Revise the manuscript evaluation");
-  await fs.mkdir("output/playwright", { recursive: true });
   await page.screenshot({ path: "output/playwright/git-workflow-light.png" });
   await page
     .getByRole("button", { name: "Commit changes", exact: true })
@@ -124,7 +97,25 @@ try {
     (await git(remote, "log", "--format=%s")).stdout,
     /Update related work citations/,
   );
-  await page.getByTitle("Close Git").click();
+  // Pull and Sync each bring in a peer commit and refresh the open editor.
+  await git(root, "clone", remote, peer);
+  await git(peer, "config", "user.name", "Peer");
+  await git(peer, "config", "user.email", "peer@example.com");
+  for (const [button, notice] of [
+    ["Pull", "Remote changes pulled."],
+    ["Sync", "Repository synchronized."],
+  ]) {
+    const line = `% ${button} from a peer`;
+    await fs.appendFile(path.join(peer, "main.tex"), `${line}\n`);
+    await git(peer, "commit", "-am", line);
+    await git(peer, "push");
+    await page.getByRole("button", { name: button, exact: true }).click();
+    await page.getByText(notice, { exact: true }).waitFor();
+    assert.ok((await page.locator(".cm-content").innerText()).includes(line));
+  }
+  await gitDialog(page)
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
   // A failed commit must retain both its error and the user's commit message.
   await fs.writeFile(
     path.join(folder, "main.tex"),
@@ -144,7 +135,9 @@ try {
     await page.getByLabel("Commit message").inputValue(),
     "Save updated results",
   );
-  await page.getByTitle("Close Git").click();
+  await gitDialog(page)
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
   await page.getByTitle("Switch to dark mode").click();
   await page.locator(".git-toggle").click();
   await page
@@ -154,10 +147,7 @@ try {
   await page.getByLabel("Commit message").fill("Save updated results");
   await page.screenshot({ path: "output/playwright/git-workflow-dark.png" });
   await page.keyboard.press("Escape");
-  assert.equal(
-    await page.getByRole("dialog", { name: "Git repository" }).count(),
-    0,
-  );
+  assert.equal(await gitDialog(page).count(), 0);
   assert.equal(
     await page
       .locator(".git-toggle")
@@ -169,11 +159,5 @@ try {
       .changes.length,
     1,
   );
-  assert.deepEqual(failures, []);
-  console.log(
-    "Git workflow verified: diff review, selected commits, dirty fetch, push, retained errors, light/dark themes, and keyboard dismissal.",
-  );
-} finally {
-  await desktop?.close();
-  await fs.rm(root, { recursive: true, force: true });
-}
+  return "Git workflow verified: diff review, selected commits, dirty fetch, push, pull and sync with editor refresh, retained errors, light/dark themes, and keyboard dismissal.";
+});

@@ -74,3 +74,79 @@ test("shared conference associations also prioritize the sidebar without mutatin
   );
   assert.ok(projects.every((p) => p.deadlines.length === 0));
 });
+
+test("dated items share one time order and one countdown wording", () => {
+  const {
+    upcomingItems,
+    countdown,
+    dueSoon,
+    timeLabel,
+  } = require("../src/dates.ts");
+  const now = Date.parse("2026-10-09T12:00:00");
+  const items = upcomingItems(
+    {
+      projects: [
+        {
+          id: "p",
+          deadlines: [
+            {
+              id: "m",
+              label: "Camera-ready",
+              date: "2026-10-10",
+              kind: "other",
+            },
+            { id: "old", label: "Draft", date: "2026-10-01", kind: "other" },
+          ],
+        },
+      ],
+      trackedDeadlines: [
+        {
+          id: "t",
+          label: "Paper",
+          time: new Date(now + 22 * 3600000).toISOString(),
+          kind: "submission",
+          status: "notStarted",
+          source: "manual",
+          projectIds: ["p", "deleted"],
+        },
+        {
+          id: "done",
+          label: "Grant",
+          time: new Date(now + 3 * 86400000).toISOString(),
+          kind: "other",
+          status: "finished",
+          source: "manual",
+        },
+      ],
+    },
+    now,
+  );
+  assert.deepEqual(
+    items.map((d) => [d.key, d.upcoming]),
+    [
+      ["p:old", false],
+      ["t", true],
+      ["p:m", true],
+      ["done", false],
+    ],
+  );
+  assert.deepEqual(items[1].projectIds, ["p"]);
+  assert.deepEqual(
+    dueSoon(items, 1, now).map((d) => d.key),
+    ["t"],
+  );
+  assert.deepEqual(
+    items.map((d) => countdown(d.time, now)),
+    ["Past", "In 22h", "Tomorrow", "In 3d"],
+  );
+  assert.deepEqual(
+    ["2026-11-19", "2027-01-19", "2029-01-09"].map((date) =>
+      countdown(date, now),
+    ),
+    ["In 41d", "In 3mo", "In 2y"],
+  );
+  assert.match(
+    timeLabel(items[1].time),
+    /^\w{3} \w{3} \d{1,2}(, \d{4})? · \d\d:\d\d$/,
+  );
+});

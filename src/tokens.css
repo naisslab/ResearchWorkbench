@@ -1,0 +1,212 @@
+/* Design tokens. Light is the default; theme blocks change colours only.
+   An ink-blue accent and low-chroma tones keep colour for meaning. Light syntax
+   is a calmer Snazzy Light; dark keeps the VS Code Dark Modern neutrals and syntax. */
+:root {
+  color-scheme: light;
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "SFMono-Regular", Menlo, monospace;
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+  --text-num: 24px;
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+
+  --canvas: #f6f7f9;
+  --sidebar: #f0f3f6;
+  --pane: #fafbfc;
+  --surface: #ffffff;
+  --surface-subtle: #f3f4f5;
+  --surface-raised: #e9eaeb;
+  --input: #fafbfc;
+  --border: #d9dee5;
+  --input-border: #cdd4dd;
+  --text: #414454;
+  --text-secondary: #565869;
+  --muted: #666874;
+  --accent: #2f5d8a;
+  --accent-dark: #264d73;
+  --accent-hover: #264d73;
+  --selection: #e6ecf2;
+  --hover: #e9eaeb;
+  --link: #2f5d8a;
+  --tone-indigo: #564e8d;
+  --tone-coral: #924d3f;
+  --tone-violet: #725786;
+  --tone-amber: #785d2f;
+  --tone-rose: #8a4f6c;
+  --tone-blue: #3b648e;
+  --tone-cyan: #37696f;
+  --tone-positive: #486a49;
+  --danger: var(--tone-coral);
+  --warning: var(--tone-amber);
+  --success: var(--tone-positive);
+  /* Area colours are user data, drawn mixed toward a neutral so any choice stays calm. */
+  --area-mix: 65%;
+  --area-neutral: var(--text);
+  --diff-tint: 14%;
+  --backdrop: rgb(94 110 129 / 14%);
+  --backdrop-blur: blur(4px);
+  --shadow-popover: 0 6px 24px rgb(42 57 76 / 12%);
+  --shadow-modal: 0 16px 52px rgb(42 57 76 / 13%), 0 1px 4px rgb(42 57 76 / 7%);
+
+  --stage-exploration: #426d71;
+  --stage-experiments: #7d6528;
+  --stage-writing: #375f8d;
+  --stage-submitted: #7a5577;
+  --stage-revision: #8f5638;
+  --stage-accepted: #44704e;
+  --stage-published: #63636a;
+
+  --editor-bg: #fafbfc;
+  --editor-fg: #565869;
+  --editor-caret: #565869;
+  --editor-selection: #dceef8;
+  --editor-gutter-fg: #9194a2;
+  --editor-active-line: var(--surface-subtle);
+  --editor-bracket: #e3eff7;
+  --syn-comment: #6c6e78;
+  --syn-keyword: #a45280;
+  --syn-function: #3174a1;
+  --syn-string: #866a2a;
+  --syn-reference: #8a6833;
+  --syn-variable: #306483;
+  --syn-number: #b2504b;
+  --syn-constant: #b2504b;
+  --syn-heading: #3a7b4b;
+  --syn-type: #297a76;
+  --syn-math: #297a76;
+  --syn-operator: #a45280;
+  --syn-delimiter: #74568c;
+  --syn-punctuation: #61636b;
+  --syn-invalid: #b2504b;
+}
+
+/* Light chrome is a translucent material over a soft gradient. Overlays blur
+   what is behind them; source and PDF surfaces stay opaque. Dark leaves these
+   unset, so each surface falls back to its plain token. */
+:root[data-theme="light"] {
+  --shell-bg:
+    radial-gradient(ellipse at 0% 0%, #dfe7ef 0%, transparent 54%),
+    radial-gradient(ellipse at 100% 100%, #e8ebf0 0%, transparent 52%), #f6f7f9;
+  --glass-chrome: rgb(255 255 255 / 56%);
+  --glass-panel: rgb(255 255 255 / 76%);
+  --glass-bar: rgb(249 250 252 / 88%);
+  --glass-field: rgb(255 255 255 / 40%);
+  --glass-field-border: rgb(151 166 183 / 24%);
+  --glass-edge: rgb(255 255 255 / 85%);
+  --glass-overlay: rgb(255 255 255 / 88%);
+  --glass-overlay-border: rgb(255 255 255 / 90%);
+  --overlay-blur: blur(24px);
+  --backdrop-blur: blur(12px) saturate(85%);
+  --shadow-modal:
+    0 16px 52px rgb(42 57 76 / 13%), 0 1px 4px rgb(42 57 76 / 7%),
+    inset 0 1px var(--glass-edge);
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-theme="light"] {
+    --shell-bg: var(--canvas);
+    --glass-chrome: #f0f3f6;
+    --glass-panel: #ffffff;
+    --glass-overlay: #ffffff;
+    --overlay-blur: none;
+    --backdrop-blur: none;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #1f1f1f;
+  --sidebar: #181818;
+  --pane: #181818;
+  --surface: #222222;
+  --surface-subtle: #252526;
+  --surface-raised: #2b2b2b;
+  --input: #313131;
+  --border: #333333;
+  --input-border: #3c3c3c;
+  --text: #d7d7d7;
+  --text-secondary: #b4b4b4;
+  --muted: #999999;
+  --accent: #4377ae;
+  --accent-dark: #8fb3d9;
+  --accent-hover: #3a6ea5;
+  --selection: #264f783d;
+  --hover: #2b2b2b;
+  --link: #8fb3d9;
+  --tone-indigo: #9f99d6;
+  --tone-coral: #d79f92;
+  --tone-violet: #b0a0bc;
+  --tone-amber: #d1ba94;
+  --tone-rose: #b98ea1;
+  --tone-blue: #8fb2d7;
+  --tone-cyan: #7fb2b8;
+  --tone-positive: #91b091;
+  --area-mix: 60%;
+  --area-neutral: #cccccc;
+  --diff-tint: 24%;
+  --icon-filter: brightness(1.1);
+  --mark-ring: rgb(255 255 255 / 8%);
+  --backdrop: rgb(0 0 0 / 60%);
+  --shadow-popover:
+    0 6px 24px rgb(0 0 0 / 40%), 0 0 0 1px rgb(255 255 255 / 5%);
+  --shadow-modal: 0 16px 48px rgb(0 0 0 / 55%), 0 0 0 1px rgb(255 255 255 / 7%);
+
+  --stage-exploration: #6eb2b8;
+  --stage-experiments: #cfb983;
+  --stage-writing: #90bae4;
+  --stage-submitted: #c898bc;
+  --stage-revision: #d7a186;
+  --stage-accepted: #9bbfa1;
+  --stage-published: #a0a1a7;
+
+  --editor-bg: #1f1f1f;
+  --editor-fg: #cccccc;
+  --editor-caret: #cccccc;
+  --editor-selection: #264f78;
+  --editor-gutter-fg: #6e7681;
+  --editor-bracket: #313131;
+  --syn-comment: #6a9955;
+  --syn-keyword: #c586c0;
+  --syn-function: #dcdcaa;
+  --syn-string: #ce9178;
+  --syn-reference: #d7ba7d;
+  --syn-variable: #9cdcfe;
+  --syn-number: #b5cea8;
+  --syn-constant: #569cd6;
+  --syn-heading: #4ec9b0;
+  --syn-type: #4ec9b0;
+  --syn-math: #9cdcfe;
+  --syn-operator: #d4d4d4;
+  --syn-delimiter: #e2c08d;
+  --syn-punctuation: #b4b4b4;
+  --syn-invalid: #f85149;
+}
+
+[data-stage="exploration"] {
+  --stage: var(--stage-exploration);
+}
+[data-stage="experiments"] {
+  --stage: var(--stage-experiments);
+}
+[data-stage="writing"] {
+  --stage: var(--stage-writing);
+}
+[data-stage="submitted"] {
+  --stage: var(--stage-submitted);
+}
+[data-stage="revision"] {
+  --stage: var(--stage-revision);
+}
+[data-stage="accepted"] {
+  --stage: var(--stage-accepted);
+}
+[data-stage="published"] {
+  --stage: var(--stage-published);
+}
