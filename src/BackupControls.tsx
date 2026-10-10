@@ -55,6 +55,8 @@ export default function BackupControls({
     try {
       const result = await window.research!.restoreBackup(bind);
       if (!result) return;
+      // Do not let a pending session save or pagehide overwrite the restored preferences.
+      window.dispatchEvent(new Event("research-workbench:restore"));
       try {
         const keys = Object.keys(localStorage).filter((key) =>
           key.startsWith("research-workbench."),

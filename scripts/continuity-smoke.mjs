@@ -123,6 +123,27 @@ await smoke("continuity", async (root) => {
     manifest.files.some((file) => file.path.startsWith("app/pdf-annotations/")),
   );
   await page.screenshot({ path: "output/playwright/continuity-backup.png" });
+  const backedUpUi = JSON.parse(
+    await fs.readFile(path.join(destination, backup, "ui.json"), "utf8"),
+  );
+  const backedUpSessions = backedUpUi["research-workbench.sessions"];
+  await page
+    .locator(".area-projects")
+    .getByRole("button", { name: "Continuity review", exact: true })
+    .click();
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+Home");
+  await page.waitForTimeout(350);
+  assert.notEqual(
+    await page.evaluate(() =>
+      localStorage.getItem("research-workbench.sessions"),
+    ),
+    backedUpSessions,
+  );
+  await page
+    .getByRole("button", { name: "Workspace settings", exact: true })
+    .click();
+
   const restoreFolder = path.join(root, "restored");
   await fs.mkdir(restoreFolder);
   await app.evaluate(
@@ -144,6 +165,12 @@ await smoke("continuity", async (root) => {
   await closed;
   await closeApp();
   ({ app, page } = await launchApp());
+  assert.equal(
+    await page.evaluate(() =>
+      localStorage.getItem("research-workbench.sessions"),
+    ),
+    backedUpSessions,
+  );
   const restoredState = await page.evaluate(() => window.research.load());
   assert.notEqual(restoredState.projects[0].folder, folder);
   assert.equal(

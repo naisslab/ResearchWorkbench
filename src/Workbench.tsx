@@ -62,6 +62,7 @@ import { usePanelSize } from "./usePanelLayout";
 import type { PdfTarget, PdfView } from "./pdf-types";
 import BuildLog from "./BuildLog";
 import Modal from "./Modal";
+import { readSessions } from "./workbench-state";
 // Colours live in CSS: Lezer tags map onto the syn-* classes that the TextMate
 // highlighter uses, and the editor chrome reads CSS variables.
 const highlighting = syntaxHighlighting(
@@ -135,35 +136,26 @@ const editorTheme = (dark: boolean) =>
 const lightEditor = editorTheme(false);
 const darkEditor = editorTheme(true);
 /** Persist reading and editing positions without storing manuscript contents. */
-const sessions = new Map<
-  string,
-  {
-    rootId?: string;
-    file?: string;
-    anchor?: number;
-    head?: number;
-    pdfs: Record<string, PdfView>;
-    pdfKey?: string;
-    pdfArchived?: boolean;
-    recent?: { rootId: string; file: string }[];
+const sessions = (() => {
+  try {
+    return readSessions(localStorage.getItem("research-workbench.sessions"));
+  } catch {
+    return readSessions(null);
   }
->();
-try {
-  const stored = JSON.parse(
-    localStorage.getItem("research-workbench.sessions") || "[]",
-  );
-  for (const [id, value] of stored)
-    if (typeof id === "string" && value && typeof value.pdfs === "object")
-      sessions.set(id, value);
-} catch {
-  /* A damaged preference does not prevent opening projects. */
-}
+})();
+let restoringPreferences = false;
+window.addEventListener("research-workbench:restore", () => {
+  restoringPreferences = true;
+  clearTimeout(sessionTimer);
+});
 let sessionTimer = 0;
 function persistSessions() {
+  if (restoringPreferences) return;
   clearTimeout(sessionTimer);
   sessionTimer = window.setTimeout(flushSessions, 250);
 }
 function flushSessions() {
+  if (restoringPreferences) return;
   clearTimeout(sessionTimer);
   try {
     localStorage.setItem(

@@ -36,6 +36,7 @@ export default function AIChats({
     action: "new" | "select" | "rename" | "archive" | "unarchive",
     id?: string,
   ) {
+    if (busy || disabled) return;
     setBusy(true);
     try {
       changed(
@@ -51,6 +52,11 @@ export default function AIChats({
       setBusy(false);
     }
   }
+  const visibleChats = chats.filter(
+    (c) =>
+      c.archived === archived &&
+      c.title.toLowerCase().includes(query.toLowerCase()),
+  );
   return (
     <>
       <button
@@ -103,54 +109,49 @@ export default function AIChats({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
             />
-            <button className="button" disabled={busy || !title.trim()}>
+            <button
+              className="button"
+              disabled={disabled || busy || !title.trim()}
+            >
               Rename current
             </button>
           </form>
           <div className="chat-list">
-            {chats
-              .filter(
-                (c) =>
-                  c.archived === archived &&
-                  c.title.toLowerCase().includes(query.toLowerCase()),
-              )
-              .map((c) => (
-                <div className="chat-row" key={c.id}>
-                  <button
-                    disabled={busy}
-                    onClick={() => void act("select", c.id)}
-                  >
-                    <strong>{c.title}</strong>
-                    <small>
-                      {c.active ? "Current · " : ""}
-                      {c.updatedAt && new Date(c.updatedAt).toLocaleString()}
-                    </small>
-                  </button>
-                  <button
-                    className="icon-button"
-                    disabled={busy}
-                    title={
-                      c.archived
-                        ? "Unarchive conversation"
-                        : "Archive conversation"
-                    }
-                    onClick={() =>
-                      void act(c.archived ? "unarchive" : "archive", c.id)
-                    }
-                  >
-                    {c.archived ? (
-                      <ArchiveRestore size={15} />
-                    ) : (
-                      <Archive size={15} />
-                    )}
-                  </button>
-                </div>
-              ))}
-            {!chats.some(
-              (c) =>
-                c.archived === archived &&
-                c.title.toLowerCase().includes(query.toLowerCase()),
-            ) && <p className="muted">No conversations match.</p>}
+            {visibleChats.map((c) => (
+              <div className="chat-row" key={c.id}>
+                <button
+                  disabled={disabled || busy}
+                  onClick={() => void act("select", c.id)}
+                >
+                  <strong>{c.title}</strong>
+                  <small>
+                    {c.active ? "Current · " : ""}
+                    {c.updatedAt && new Date(c.updatedAt).toLocaleString()}
+                  </small>
+                </button>
+                <button
+                  className="icon-button"
+                  disabled={disabled || busy}
+                  title={
+                    c.archived
+                      ? "Unarchive conversation"
+                      : "Archive conversation"
+                  }
+                  onClick={() =>
+                    void act(c.archived ? "unarchive" : "archive", c.id)
+                  }
+                >
+                  {c.archived ? (
+                    <ArchiveRestore size={15} />
+                  ) : (
+                    <Archive size={15} />
+                  )}
+                </button>
+              </div>
+            ))}
+            {!visibleChats.length && (
+              <p className="muted">No conversations match.</p>
+            )}
           </div>
         </Modal>
       )}

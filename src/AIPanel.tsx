@@ -1,3 +1,4 @@
+import { readChatDraft } from "./workbench-state";
 import AIChats from "./AIChats";
 import {
   memo,
@@ -640,13 +641,15 @@ export default memo(function AIPanel({
   }, [project.id, state?.activeProfileId]);
   useEffect(() => {
     try {
-      const legacy =
-        conversation.chatId === "legacy"
-          ? localStorage.getItem(
-              `research-workbench.ai-draft.${state?.activeProfileId}.${project.id}`,
-            )
-          : null;
-      setDraft(localStorage.getItem(draftKey) || legacy || "");
+      setDraft(
+        readChatDraft(
+          localStorage,
+          draftKey,
+          conversation.chatId === "legacy"
+            ? `research-workbench.ai-draft.${state?.activeProfileId}.${project.id}`
+            : undefined,
+        ),
+      );
     } catch {
       setDraft("");
     }
