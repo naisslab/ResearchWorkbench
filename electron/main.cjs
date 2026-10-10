@@ -16,6 +16,7 @@ const fsSync = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const core = require("./core.cjs");
+const backup = require("./backup.cjs");
 const { resolveProjectReference } = require("./project-references.cjs");
 const catalog = require("./catalog.cjs");
 const git = require("./git.cjs");
@@ -224,6 +225,7 @@ app
       // Chromium networking follows the desktop's proxy, as sign-in does.
       { fetch: (url, options) => net.fetch(url, options) },
     );
+    await backup.recoverRestore(app.getPath("userData"));
     let saved;
     try {
       saved = core.validateState(JSON.parse(await fs.readFile(store, "utf8")));
@@ -555,7 +557,6 @@ app
         limit,
       ]).finally(() => app.exit());
     });
-    const backup = require("./backup.cjs");
     const backupStatus = path.join(
       app.getPath("userData"),
       "backup-status.json",

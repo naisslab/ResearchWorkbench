@@ -1,9 +1,10 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const { createReadStream } = require("node:fs");
-async function hashFile(file) {
+async function hashFile(file, signal) {
   const digest = crypto.createHash("sha256");
-  for await (const chunk of createReadStream(file)) digest.update(chunk);
+  for await (const chunk of createReadStream(file, { signal }))
+    digest.update(chunk);
   return digest.digest("hex");
 }
 const crypto = require("node:crypto");
@@ -19,7 +20,11 @@ const hash = (data) => crypto.createHash("sha256").update(data).digest("hex");
 const within = (parent, child) =>
   child === parent || child.startsWith(parent + path.sep);
 const isAllowed = (relative) =>
-  allowed.some((item) => relative === item || relative.startsWith(item + "/"));
+  allowed.some(
+    (item) =>
+      relative === item ||
+      (item !== "workspace.json" && relative.startsWith(item + "/")),
+  );
 const safeRelative = (relative) =>
   typeof relative === "string" &&
   relative.length > 0 &&
@@ -29,12 +34,13 @@ const safeRelative = (relative) =>
     .every(
       (part) => part && part !== "." && part !== ".." && !part.includes("\\"),
     );
-async function walk(folder, callback, prefix = "") {
+async function walk(folder, callback, prefix = "", signal) {
+  signal?.throwIfAborted();
   for (const entry of await fs.readdir(folder, { withFileTypes: true })) {
     const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    await callback(path.join(folder, entry.name), relative, entry);
     if (entry.isDirectory())
-      await walk(path.join(folder, entry.name), callback, relative);
-    else await callback(path.join(folder, entry.name), relative, entry);
+      await walk(path.join(folder, entry.name), callback, relative, signal);
   }
 }
 async function createBackup({
@@ -60,6 +66,7 @@ async function createBackup({
     version: 1,
     createdAt: new Date().toISOString(),
     files: [],
+    directories: [],
     folders: [],
     skipped: [],
     includeProjects,
@@ -68,6 +75,18 @@ async function createBackup({
   let bytes = 0;
   async function copy(source, relative, entry) {
     signal?.throwIfAborted();
+    if (manifest.directories.length + manifest.files.length >= 100000)
+      throw new Error(
+        "Backup exceeds 100,000 entries. Select a smaller workspace.",
+      );
+    if (entry?.isDirectory()) {
+      await fs.mkdir(path.join(bundle, relative), {
+        recursive: true,
+        mode: 0o700,
+      });
+      manifest.directories.push(relative);
+      return;
+    }
     if (entry && !entry.isFile()) {
       manifest.skipped.push(`${source}: symbolic link or special file`);
       return;
@@ -93,7 +112,7 @@ async function createBackup({
         `File changed during backup: ${source}. Try again when its writer has finished.`,
       );
     await fs.chmod(target, before.mode & 0o777);
-    const checksum = await hashFile(target);
+    const checksum = await hashFile(target, signal);
     bytes += after.size;
     manifest.files.push({
       path: relative,
@@ -122,8 +141,11 @@ async function createBackup({
     for (const item of allowed.slice(1)) {
       const source = path.join(directory, item);
       if (!(await fs.stat(source).catch(() => null))) continue;
-      await walk(source, (file, relative, entry) =>
-        copy(file, `app/${item}/${relative}`, entry),
+      await walk(
+        source,
+        (file, relative, entry) => copy(file, `app/${item}/${relative}`, entry),
+        "",
+        signal,
       );
     }
     if (includeProjects) {
@@ -142,19 +164,35 @@ async function createBackup({
             throw new Error(
               "Choose a backup location outside every attached project folder.",
             );
-          if (!roots.has(canonical))
-            roots.set(canonical, `projects/${roots.size + 1}`);
+
           manifest.folders.push({
             original: folder,
             canonical,
-            path: roots.get(canonical),
           });
+        }
+      }
+      // Attachments may overlap. Copy each outer root once and retain its subfolder identity.
+      for (const folder of [...manifest.folders].sort(
+        (a, b) => a.canonical.length - b.canonical.length,
+      )) {
+        const parent = [...roots.keys()].find((root) =>
+          within(root, folder.canonical),
+        );
+        if (parent)
+          folder.path =
+            roots.get(parent) + folder.canonical.slice(parent.length);
+        else {
+          folder.path = `projects/${roots.size + 1}`;
+          roots.set(folder.canonical, folder.path);
         }
       }
       for (const [source, relative] of roots) {
         await fs.mkdir(path.join(bundle, relative), { recursive: true });
-        await walk(source, (file, name, entry) =>
-          copy(file, `${relative}/${name}`, entry),
+        await walk(
+          source,
+          (file, name, entry) => copy(file, `${relative}/${name}`, entry),
+          "",
+          signal,
         );
       }
     }
@@ -177,6 +215,7 @@ async function inspectBackup(bundle) {
     await fs.readFile(path.join(base, "manifest.json"), "utf8"),
   );
   if (
+    !manifest ||
     manifest.format !== "research-workbench-backup" ||
     manifest.version !== 1 ||
     !Array.isArray(manifest.files) ||
@@ -187,7 +226,11 @@ async function inspectBackup(bundle) {
   const seen = new Set();
   for (const item of manifest.files) {
     if (
+      !item ||
       !safeRelative(item.path) ||
+      !Number.isInteger(item.mode) ||
+      item.mode < 0 ||
+      item.mode > 0o777 ||
       seen.has(item.path) ||
       !(
         item.path === "ui.json" ||
@@ -213,9 +256,29 @@ async function inspectBackup(bundle) {
   }
   if (!seen.has("app/workspace.json"))
     throw new Error("Backup is missing its workspace.");
+  if (
+    manifest.directories !== undefined &&
+    (!Array.isArray(manifest.directories) ||
+      manifest.directories.length > 100000)
+  )
+    throw new Error("Invalid backup directories.");
+  for (const relative of manifest.directories || [])
+    if (
+      !safeRelative(relative) ||
+      !(
+        (relative.startsWith("app/") &&
+          relative !== "app/workspace.json" &&
+          isAllowed(relative.slice(4))) ||
+        /^projects\/\d+\//.test(relative)
+      ) ||
+      seen.has(relative)
+    )
+      throw new Error("Invalid backup directory path.");
   for (const folder of manifest.folders)
     if (
-      !/^projects\/\d+$/.test(folder.path) ||
+      !folder ||
+      !safeRelative(folder.path) ||
+      !/^projects\/\d+(?:\/|$)/.test(folder.path) ||
       typeof folder.original !== "string" ||
       !path.isAbsolute(folder.original) ||
       typeof folder.canonical !== "string" ||
@@ -230,6 +293,10 @@ async function inspectBackup(bundle) {
   const ui = seen.has("ui.json")
     ? JSON.parse(await fs.readFile(path.join(base, "ui.json"), "utf8"))
     : {};
+  validateUi(ui);
+  return { manifest, workspace, ui, base };
+}
+function validateUi(ui) {
   if (
     !ui ||
     typeof ui !== "object" ||
@@ -242,7 +309,43 @@ async function inspectBackup(bundle) {
     )
   )
     throw new Error("Invalid saved interface state.");
-  return { manifest, workspace, ui, base };
+}
+
+const journalName = ".restore-journal.json";
+async function recoverRestore(directory) {
+  const journalPath = path.join(directory, journalName);
+  const source = await fs.readFile(journalPath, "utf8").catch((error) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (source === null) return false;
+  const journal = JSON.parse(source);
+  if (
+    !journal ||
+    !/^\.before-restore-[a-zA-Z0-9]+$/.test(journal.rollback) ||
+    !/^\.restore-stage-[a-zA-Z0-9]+$/.test(journal.stage) ||
+    !Array.isArray(journal.existing) ||
+    journal.existing.some((item) => !allowed.includes(item))
+  )
+    throw new Error(
+      "Invalid restore recovery journal. Application data has been preserved.",
+    );
+  for (const item of allowed) {
+    const current = path.join(directory, item);
+    const previous = path.join(directory, journal.rollback, item);
+    if (await fs.lstat(previous).catch(() => null)) {
+      await fs.rm(current, { recursive: true, force: true });
+      await fs.mkdir(path.dirname(current), { recursive: true });
+      await fs.rename(previous, current);
+    } else if (!journal.existing.includes(item))
+      await fs.rm(current, { recursive: true, force: true });
+  }
+  await fs.unlink(journalPath);
+  await fs.rm(path.join(directory, journal.stage), {
+    recursive: true,
+    force: true,
+  });
+  return true;
 }
 async function restoreBackup({
   bundle,
@@ -250,7 +353,8 @@ async function restoreBackup({
   destination,
   bindProfileId,
 }) {
-  const { manifest, workspace, ui, base } = await inspectBackup(bundle);
+  await recoverRestore(directory);
+  const { manifest, base } = await inspectBackup(bundle);
   const root = await fs.realpath(destination);
   if (within(base, root) || within(await fs.realpath(directory), root))
     throw new Error(
@@ -290,25 +394,39 @@ async function restoreBackup({
       return remapPath(value);
     return value;
   }
-  const moved = [],
-    installed = [];
+  let journalWritten = false;
+  let preserveStage = false;
   try {
     await fs.mkdir(restored, { recursive: false });
     for (const folder of manifest.folders)
       await fs.mkdir(path.join(restored, folder.path), { recursive: true });
+    for (const relative of manifest.directories || [])
+      await fs.mkdir(
+        path.join(
+          relative.startsWith("app/") ? stage : restored,
+          relative.startsWith("app/") ? relative.slice(4) : relative,
+        ),
+        { recursive: true, mode: 0o700 },
+      );
     for (const item of manifest.files) {
       const target = item.path.startsWith("app/")
         ? path.join(stage, item.path.slice(4))
         : item.path.startsWith("projects/")
           ? path.join(restored, item.path)
-          : null;
-      if (!target) continue;
+          : path.join(stage, "ui.json");
       await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
       await fs.copyFile(path.join(base, item.path), target);
       if ((await hashFile(target)) !== item.sha256)
         throw new Error(`Backup changed during restoration: ${item.path}`);
       await fs.chmod(target, item.mode & 0o777);
     }
+    const workspace = validateState(
+      JSON.parse(await fs.readFile(path.join(stage, "workspace.json"), "utf8")),
+    );
+    const ui = manifest.files.some((item) => item.path === "ui.json")
+      ? JSON.parse(await fs.readFile(path.join(stage, "ui.json"), "utf8"))
+      : {};
+    validateUi(ui);
     const next = remap(workspace);
     next.researchSetupVersion = 1;
     await atomicWrite(
@@ -327,14 +445,15 @@ async function restoreBackup({
     ]) {
       const location = path.join(stage, folder);
       if (!(await fs.stat(location).catch(() => null))) continue;
-      await walk(location, async (file, relative) => {
-        if (!file.endsWith(".json")) return;
+      await walk(location, async (file, relative, entry) => {
+        if (!entry.isFile() || !file.endsWith(".json")) return;
         let value = remap(JSON.parse(await fs.readFile(file, "utf8")));
         if (folder === "ai/conversations" || folder === "ai/chats") {
           if (
             !Array.isArray(value.messages) ||
             typeof value.profileId !== "string" ||
-            !next.projects.some((p) => p.id === value.projectId)
+            typeof value.projectId !== "string" ||
+            !value.projectId
           )
             throw new Error("Backup contains invalid conversation history.");
           delete value.threadId;
@@ -395,6 +514,20 @@ async function restoreBackup({
         );
       }
     }
+    const existing = [];
+    for (const item of allowed)
+      if (await fs.lstat(path.join(directory, item)).catch(() => null))
+        existing.push(item);
+    await atomicWrite(
+      path.join(directory, journalName),
+      JSON.stringify({
+        rollback: path.basename(rollback),
+        stage: path.basename(stage),
+        existing,
+      }),
+      { mode: 0o600 },
+    );
+    journalWritten = true;
     for (const item of allowed) {
       const current = path.join(directory, item),
         previous = path.join(rollback, item),
@@ -402,14 +535,14 @@ async function restoreBackup({
       await fs.mkdir(path.dirname(previous), { recursive: true });
       if (await fs.lstat(current).catch(() => null)) {
         await fs.rename(current, previous);
-        moved.push(item);
       }
       if (await fs.lstat(incoming).catch(() => null)) {
         await fs.mkdir(path.dirname(current), { recursive: true });
         await fs.rename(incoming, current);
-        installed.push(item);
       }
     }
+    await fs.unlink(path.join(directory, journalName));
+    journalWritten = false;
     return {
       workspace: next,
       ui,
@@ -418,14 +551,22 @@ async function restoreBackup({
       warnings: manifest.skipped || [],
     };
   } catch (error) {
-    for (const item of installed.reverse())
-      await fs.rm(path.join(directory, item), { recursive: true, force: true });
-    for (const item of moved.reverse())
-      await fs.rename(path.join(rollback, item), path.join(directory, item));
+    if (journalWritten) {
+      try {
+        await recoverRestore(directory);
+      } catch (recoveryError) {
+        preserveStage = true;
+        throw new AggregateError(
+          [error, recoveryError],
+          "Restore interrupted. Recovery will retry at next startup.",
+        );
+      }
+    }
     await fs.rm(restored, { recursive: true, force: true });
     throw error;
   } finally {
-    await fs.rm(stage, { recursive: true, force: true });
+    if (!preserveStage)
+      await fs.rm(stage, { recursive: true, force: true }).catch(() => {});
   }
 }
-module.exports = { createBackup, inspectBackup, restoreBackup };
+module.exports = { createBackup, inspectBackup, restoreBackup, recoverRestore };

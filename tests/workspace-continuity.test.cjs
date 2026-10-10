@@ -289,3 +289,152 @@ test("cancelled backups remove partial bundles and keep the source intact", asyn
     "An editable solar sail manuscript",
   );
 });
+
+test("backup preserves empty directories and orphaned conversation history", async (t) => {
+  const f = await fixture(t);
+  await fs.mkdir(path.join(f.folder, "empty/nested"), { recursive: true });
+  const chat = { profileId: "old", projectId: "deleted-project", messages: [] };
+  await core.atomicWrite(
+    path.join(f.directory, "ai/conversations/orphan.json"),
+    JSON.stringify(chat),
+  );
+  const made = await createBackup(f);
+  const restored = await restoreBackup({
+    bundle: made.path,
+    directory: f.directory,
+    destination: f.restore,
+  });
+  assert.equal(
+    (
+      await fs.stat(
+        path.join(restored.workspace.projects[0].folder, "empty/nested"),
+      )
+    ).isDirectory(),
+    true,
+  );
+  const saved = JSON.parse(
+    await fs.readFile(
+      path.join(f.directory, "ai/conversations/orphan.json"),
+      "utf8",
+    ),
+  );
+  assert.equal(saved.projectId, "deleted-project");
+});
+
+test("interrupted restore rolls back each swap boundary and recovery can repeat", async (t) => {
+  const { recoverRestore } = require("../electron/backup.cjs");
+  for (const phase of ["prepared", "moved", "installed", "recovered"]) {
+    await t.test(phase, async (t) => {
+      const f = await fixture(t);
+      const original = await fs.readFile(
+        path.join(f.directory, "workspace.json"),
+        "utf8",
+      );
+      const rollback = await fs.mkdtemp(
+        path.join(f.directory, ".before-restore-"),
+      );
+      const stage = await fs.mkdtemp(path.join(f.directory, ".restore-stage-"));
+      await fs.writeFile(
+        path.join(f.directory, ".restore-journal.json"),
+        JSON.stringify({
+          rollback: path.basename(rollback),
+          stage: path.basename(stage),
+          existing: ["workspace.json"],
+        }),
+      );
+      if (phase === "moved" || phase === "installed")
+        await fs.rename(
+          path.join(f.directory, "workspace.json"),
+          path.join(rollback, "workspace.json"),
+        );
+      if (phase === "installed") {
+        await fs.writeFile(
+          path.join(f.directory, "workspace.json"),
+          "partially installed workspace",
+        );
+        await fs.mkdir(path.join(f.directory, "ai/chats"), { recursive: true });
+        await fs.writeFile(
+          path.join(f.directory, "ai/chats/incoming.json"),
+          "{}",
+        );
+      }
+      assert.equal(await recoverRestore(f.directory), true);
+      assert.equal(
+        await fs.readFile(path.join(f.directory, "workspace.json"), "utf8"),
+        original,
+      );
+      assert.equal(
+        await fs.stat(path.join(f.directory, "ai/chats")).catch(() => null),
+        null,
+      );
+      assert.equal(await recoverRestore(f.directory), false);
+    });
+  }
+});
+
+test("restore failure after moving original workspace restores original bytes", async (t) => {
+  const f = await fixture(t);
+  const made = await createBackup(f);
+  const original = await fs.readFile(path.join(f.directory, "workspace.json"));
+  const rename = fs.rename;
+  let injected = false;
+  fs.rename = async (from, to) => {
+    if (
+      !injected &&
+      from.includes(".restore-stage-") &&
+      to === path.join(f.directory, "workspace.json")
+    ) {
+      injected = true;
+      throw new Error("Injected disk failure");
+    }
+    return rename(from, to);
+  };
+  try {
+    await assert.rejects(
+      restoreBackup({
+        bundle: made.path,
+        directory: f.directory,
+        destination: f.restore,
+      }),
+      /Injected disk failure/,
+    );
+  } finally {
+    fs.rename = rename;
+  }
+  assert.equal(injected, true);
+  assert.deepEqual(
+    await fs.readFile(path.join(f.directory, "workspace.json")),
+    original,
+  );
+  assert.equal(
+    await fs
+      .stat(path.join(f.directory, ".restore-journal.json"))
+      .catch(() => null),
+    null,
+  );
+});
+
+test("overlapping project roots retain the same files after restoration", async (t) => {
+  const f = await fixture(t);
+  const nested = path.join(f.folder, "figures");
+  await fs.mkdir(nested);
+  await fs.writeFile(path.join(nested, "figure.txt"), "same file");
+  f.workspace.projects[0].localFolders = [
+    { id: "figures", folder: nested, label: "Figures" },
+  ];
+  const made = await createBackup(f);
+  assert.equal(
+    made.files.filter((item) => item.path.endsWith("figure.txt")).length,
+    1,
+  );
+  const restored = await restoreBackup({
+    bundle: made.path,
+    directory: f.directory,
+    destination: f.restore,
+  });
+  const project = restored.workspace.projects[0];
+  assert.equal(
+    project.localFolders[0].folder,
+    path.join(project.folder, "figures"),
+  );
+});
