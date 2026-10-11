@@ -9,8 +9,7 @@ func emit(_ value: [String: Any]) {
     }
 }
 
-let locale = CommandLine.arguments.dropFirst().first ?? "en-US"
-let recognizer = SFSpeechRecognizer(locale: Locale(identifier: locale))
+let recognizer = SFSpeechRecognizer()
 if CommandLine.arguments.contains("--status") {
     emit(["available": recognizer?.isAvailable ?? false,
           "onDevice": recognizer?.supportsOnDeviceRecognition ?? false,
@@ -50,7 +49,7 @@ func stop() {
 func start() {
     guard !finished && !stopping else { return }
     guard let recognizer = recognizer, recognizer.isAvailable else {
-        finish("Speech recognition is unavailable for this language. Choose another language or check macOS Dictation settings."); return
+        finish("Speech recognition is unavailable. Check macOS Dictation settings and try again."); return
     }
     let input = engine.inputNode
     let format = input.outputFormat(forBus: 0)
@@ -73,7 +72,7 @@ func start() {
             }
             if error != nil {
                 if stopping && !text.isEmpty { finish() }
-                else { finish("Speech recognition stopped. Your captured text is kept below. Check the selected language and microphone, then try again.") }
+                else { finish("Speech recognition stopped. Your captured text is kept below. Check your microphone, then try again.") }
             }
         }
     }

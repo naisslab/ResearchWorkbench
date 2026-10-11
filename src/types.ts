@@ -253,7 +253,7 @@ export interface ResearchAPI {
     id: string,
     result: { saved: boolean },
   ): Promise<boolean>;
-  startDictation(id: string, language: string): Promise<{ id: string }>;
+  startDictation(id: string): Promise<{ id: string }>;
   stopDictation(id: string): Promise<void>;
   cancelDictation(id: string): Promise<void>;
   onDictation(callback: (event: DictationEvent) => void): () => void;

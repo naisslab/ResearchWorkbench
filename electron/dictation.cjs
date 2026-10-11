@@ -1,6 +1,5 @@
 const { spawn } = require("node:child_process");
 const { StringDecoder } = require("node:string_decoder");
-const languages = new Set(["en-US", "zh-CN", "zh-TW", "zh-HK"]);
 
 function createDictation({
   executable,
@@ -17,17 +16,13 @@ function createDictation({
     session.proc.kill();
     emit({ id: session.id, type: "cancelled", text: "" });
   }
-  function start(id, language) {
+  function start(id) {
     if (platform !== "darwin")
       throw new Error("Dictation is available on macOS.");
-    if (
-      typeof id !== "string" ||
-      !/^[a-zA-Z0-9-]{1,80}$/.test(id) ||
-      !languages.has(language)
-    )
-      throw new Error("Choose a supported dictation language.");
+    if (typeof id !== "string" || !/^[a-zA-Z0-9-]{1,80}$/.test(id))
+      throw new Error("Invalid dictation session.");
     if (active) throw new Error("Finish the current dictation first.");
-    const proc = spawnProcess(executable, [language], {
+    const proc = spawnProcess(executable, [], {
       stdio: ["pipe", "pipe", "pipe"],
     });
     const session = { id, proc, text: "", timeout: null };

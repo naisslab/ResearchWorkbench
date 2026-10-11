@@ -72,7 +72,7 @@ function apiError(body, status, requestId) {
     subscription_sharing_invalid_user:
       "ChatGPT could not validate this connection. Reconnect your account.",
     subscription_sharing_user_unavailable:
-      "Your ChatGPT account is temporarily unavailable. Try again later.",
+      "ChatGPT could not retrieve your account or workspace information (HTTP 503). Try again shortly.",
     chatpass_v2_scope_not_authorized:
       "ChatGPT did not authorize plan usage for this connection. Enable it in your account controls.",
     chatpass_v2_invalid_authorization_context:

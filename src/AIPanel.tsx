@@ -1572,29 +1572,6 @@ export default memo(function AIPanel({
               ))}
             </div>
           )}
-          <Dictation
-            key={`${project.id}.${state?.activeProfileId}.${conversation.chatId || "legacy"}`}
-            disabled={operation === "send" || !visible}
-            onActive={(active) => {
-              setDictating(active);
-              if (active)
-                dictationRange.current = {
-                  start: input.current?.selectionStart ?? draft.length,
-                  end: input.current?.selectionEnd ?? draft.length,
-                };
-            }}
-            insert={(text) => {
-              const { start, end } = dictationRange.current;
-              updateDraft(draft.slice(0, start) + text + draft.slice(end));
-              requestAnimationFrame(() => {
-                input.current?.focus();
-                input.current?.setSelectionRange(
-                  start + text.length,
-                  start + text.length,
-                );
-              });
-            }}
-          />
           <div className="ai-input-row">
             {skillCommand && (
               <AISkills
@@ -1749,6 +1726,29 @@ export default memo(function AIPanel({
                   <Square size={13} fill="currentColor" />
                 </button>
               )}
+              <Dictation
+                key={`${project.id}.${state?.activeProfileId}.${conversation.chatId || "legacy"}`}
+                disabled={operation === "send" || !visible}
+                onActive={(active) => {
+                  setDictating(active);
+                  if (active)
+                    dictationRange.current = {
+                      start: input.current?.selectionStart ?? draft.length,
+                      end: input.current?.selectionEnd ?? draft.length,
+                    };
+                }}
+                insert={(text) => {
+                  const { start, end } = dictationRange.current;
+                  updateDraft(draft.slice(0, start) + text + draft.slice(end));
+                  requestAnimationFrame(() => {
+                    input.current?.focus();
+                    input.current?.setSelectionRange(
+                      start + text.length,
+                      start + text.length,
+                    );
+                  });
+                }}
+              />
               <button
                 className="ai-send"
                 type="submit"
@@ -1774,7 +1774,7 @@ export default memo(function AIPanel({
                 {busy || queued.length ? (
                   <ListPlus size={16} />
                 ) : (
-                  <ArrowUp size={16} />
+                  <ArrowUp size={20} />
                 )}
               </button>
             </div>

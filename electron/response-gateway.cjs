@@ -7,10 +7,26 @@ const {
   AIError,
   publicError,
   networkError,
+  apiError,
   RESOURCE,
 } = require("./chatgpt.cjs");
 
 const routes = new Set(["/v1/responses", "/v1/responses/compact"]);
+const reconnectDelays = [500, 1500];
+function retryDelay(response, attempt) {
+  const fallback = reconnectDelays[attempt];
+  const value = response.headers.get("retry-after");
+  if (!value) return fallback;
+  const milliseconds = /^\d+(\.\d+)?$/.test(value)
+    ? Number(value) * 1000
+    : Date.parse(value) - Date.now();
+  // Do not retry earlier than requested. Long server delays are left to the
+  // user rather than keeping a turn waiting indefinitely.
+  if (milliseconds > 10000) return undefined;
+  return Number.isFinite(milliseconds)
+    ? Math.max(fallback, milliseconds)
+    : fallback;
+}
 const hopHeaders = new Set([
   "connection",
   "keep-alive",
@@ -35,8 +51,8 @@ async function readBody(stream, limit) {
 
 // Codex's custom provider reads ACCESS_TOKEN once from its environment. Keep
 // that process (and its active turn) alive by renewing OAuth at the HTTP boundary.
-// Renew rejected expired tokens, and retry a transient transport failure at most
-// twice before headers arrive. Never replay a response after streaming starts.
+// Renew rejected expired tokens. Transport failures and admission 503s share
+// two retries. Never replay a response after a successful stream starts.
 async function createResponseGateway({ accessToken, fetcher = fetch }) {
   const token = crypto.randomBytes(32).toString("hex");
   const authorization = Buffer.from(`Bearer ${token}`);
@@ -102,8 +118,9 @@ async function createResponseGateway({ accessToken, fetcher = fetch }) {
         for (;;) {
           controller.signal.throwIfAborted();
           headers.set("authorization", `Bearer ${credential}`);
+          let upstream;
           try {
-            return await fetcher(`${RESOURCE}${request.url.slice(3)}`, {
+            upstream = await fetcher(`${RESOURCE}${request.url.slice(3)}`, {
               method: "POST",
               headers,
               body,
@@ -115,10 +132,18 @@ async function createResponseGateway({ accessToken, fetcher = fetch }) {
             controller.signal.throwIfAborted();
             const failure = networkError(error);
             if (!failure.retryable || retries >= 2) throw failure;
-            await delay([500, 1500][retries++], undefined, {
+            await delay(reconnectDelays[retries++], undefined, {
               signal: controller.signal,
             });
+            continue;
           }
+          if (upstream.status !== 503 || retries >= reconnectDelays.length)
+            return upstream;
+          const wait = retryDelay(upstream, retries);
+          if (wait === undefined) return upstream;
+          await upstream.body?.cancel();
+          retries++;
+          await delay(wait, undefined, { signal: controller.signal });
         }
       };
       let upstream = await forward();
@@ -142,6 +167,27 @@ async function createResponseGateway({ accessToken, fetcher = fetch }) {
         }
       }
       controller.signal.throwIfAborted();
+      if (upstream.status === 503) {
+        rejectedBody = await readBody(upstream.body || [], 1024 * 1024);
+        let detail;
+        try {
+          detail = JSON.parse(rejectedBody.toString());
+        } catch {
+          // Preserve the original body for the native client, but expose only
+          // known diagnostics to the UI, never raw proxy HTML or request data.
+        }
+        lastError = apiError(
+          detail,
+          upstream.status,
+          upstream.headers.get("x-request-id"),
+        );
+        if (detail === undefined)
+          lastError.responseShape = upstream.headers
+            .get("content-type")
+            ?.startsWith("text/html")
+            ? "html"
+            : "non_json";
+      }
       const responseHeaders = {};
       for (const [name, value] of upstream.headers)
         if (

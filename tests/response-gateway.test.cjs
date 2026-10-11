@@ -307,7 +307,7 @@ test("persistent proxy failures stop after two retries and expose only a safe di
   assert.equal(gateway.takeError(), undefined);
 });
 
-test("certificate and unknown errors do not retry, and HTTP failures remain upstream responses", async (t) => {
+test("certificate and unknown errors do not retry, and exhausted HTTP failures retain their response", async (t) => {
   for (const failure of [
     new Error("net::ERR_CERT_AUTHORITY_INVALID"),
     new Error("net::ERR_INVALID_ARGUMENT"),
@@ -337,8 +337,8 @@ test("certificate and unknown errors do not retry, and HTTP failures remain upst
   const response = await request(gateway);
   assert.equal(response.status, 503);
   assert.equal(await response.text(), "Unavailable");
-  assert.equal(calls, 1);
-  assert.equal(gateway.takeError(), undefined);
+  assert.equal(calls, 3);
+  assert.equal(gateway.takeError().status, 503);
 });
 
 test("cancelling during reconnect backoff prevents another upstream request", async (t) => {
@@ -389,6 +389,169 @@ test("a transport failure after streaming starts never replays the model request
   assert.equal((await reader.read()).done, false);
   stream.error(new Error("net::ERR_CONNECTION_RESET"));
   await assert.rejects(reader.read());
+  await gateway.close();
+  assert.equal(calls, 1);
+});
+
+test("admission 503 retries preserve request bytes and credentials, then stream successfully", async (t) => {
+  const attempts = [];
+  let credentials = 0,
+    cancelled = 0;
+  const gateway = await fixture(t, {
+    accessToken: async () => {
+      credentials++;
+      return "fixture-credential";
+    },
+    fetcher: async (_url, options) => {
+      attempts.push({
+        body: Buffer.from(options.body),
+        authorization: options.headers.get("authorization"),
+      });
+      if (attempts.length < 3)
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                Buffer.from('{"detail":"temporarily unavailable"}'),
+              );
+            },
+            cancel() {
+              cancelled++;
+            },
+          }),
+          { status: 503, headers: { "retry-after": "0" } },
+        );
+      return new Response("event: response.completed\ndata: {}\n\n", {
+        headers: { "content-type": "text/event-stream" },
+      });
+    },
+  });
+  const response = await request(gateway);
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /response.completed/);
+  assert.equal(credentials, 1);
+  assert.equal(cancelled, 2);
+  assert.equal(attempts.length, 3);
+  for (const attempt of attempts) assert.deepEqual(attempt, attempts[0]);
+  assert.equal(gateway.takeError(), undefined);
+});
+
+test("persistent structured 503 retains upstream status, code and request ID without publishing private details", async (t) => {
+  let calls = 0;
+  const body = {
+    error: {
+      code: "subscription_sharing_user_unavailable",
+      message: "private account details",
+    },
+  };
+  const gateway = await fixture(t, {
+    accessToken: async () => "fixture",
+    fetcher: async () => {
+      calls++;
+      return Response.json(body, {
+        status: 503,
+        headers: { "x-request-id": `req-${calls}`, "cf-ray": "fixture-LAX" },
+      });
+    },
+  });
+  const response = await request(gateway);
+  assert.equal(calls, 3);
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get("cf-ray"), "fixture-LAX");
+  assert.deepEqual(await response.json(), body);
+  const error = gateway.takeError();
+  assert.equal(error.code, body.error.code);
+  assert.equal(error.status, 503);
+  assert.equal(error.requestId, "req-3");
+  assert.equal(error.responseShape, "error");
+  assert.doesNotMatch(error.message, /127\.0\.0\.1|private account|Reconnect/);
+});
+
+test("long Retry-After stops automatic retries for detail and HTML admission failures", async (t) => {
+  for (const retryAfter of [
+    "120",
+    new Date(Date.now() + 120000).toUTCString(),
+  ]) {
+    for (const [body, contentType, shape] of [
+      [
+        '{"detail":"private routing information"}',
+        "application/json",
+        "detail",
+      ],
+      ["<html>private routing information</html>", "text/html", "html"],
+    ]) {
+      let calls = 0;
+      const gateway = await fixture(t, {
+        accessToken: async () => "fixture",
+        fetcher: async () => {
+          calls++;
+          return new Response(body, {
+            status: 503,
+            headers: {
+              "retry-after": retryAfter,
+              "content-type": contentType,
+              "x-request-id": "req-admission",
+            },
+          });
+        },
+      });
+      const response = await request(gateway);
+      assert.equal(calls, 1);
+      assert.equal(await response.text(), body);
+      assert.equal(response.headers.get("retry-after"), retryAfter);
+      const error = gateway.takeError();
+      assert.equal(error.code, "http_503");
+      assert.equal(error.requestId, "req-admission");
+      assert.equal(error.responseShape, shape);
+      assert.doesNotMatch(error.message, /private routing/);
+    }
+  }
+});
+
+test("transport failures and HTTP 503s share a bounded retry budget", async (t) => {
+  let calls = 0;
+  const gateway = await fixture(t, {
+    accessToken: async () => "fixture",
+    fetcher: async () => {
+      if (++calls === 1) throw new Error("net::ERR_CONNECTION_RESET");
+      return Response.json(
+        { error: { code: "subscription_sharing_usage_unavailable" } },
+        { status: 503 },
+      );
+    },
+  });
+  const response = await request(gateway);
+  assert.equal(response.status, 503);
+  await response.text();
+  assert.equal(calls, 3);
+  assert.equal(
+    gateway.takeError().code,
+    "subscription_sharing_usage_unavailable",
+  );
+});
+
+test("cancelling an HTTP 503 backoff prevents replay", async (t) => {
+  let calls = 0,
+    signal;
+  const gateway = await fixture(t, {
+    accessToken: async () => "fixture",
+    fetcher: async (_url, options) => {
+      calls++;
+      signal = options.signal;
+      return new Response("Unavailable", {
+        status: 503,
+        headers: { "retry-after": "5" },
+      });
+    },
+  });
+  const controller = new AbortController();
+  const pending = request(gateway, "responses", {
+    signal: controller.signal,
+  }).catch(() => null);
+  await waitFor(() => calls === 1);
+  controller.abort();
+  await pending;
+  await waitFor(() => signal.aborted);
   await gateway.close();
   assert.equal(calls, 1);
 });

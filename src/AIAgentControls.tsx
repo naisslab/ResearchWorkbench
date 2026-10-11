@@ -251,21 +251,20 @@ export default function AIAgentControls({
         <ChevronDown size={11} />
       </button>
       <div className="ai-model-controls">
-        {!!model?.serviceTiers?.length && (
+        {!!tier && (
           <button
             type="button"
             className="ai-setting-trigger ai-speed-trigger"
             aria-label="Fast mode"
-            aria-pressed={!!tier}
+            aria-pressed="true"
             disabled={disabled}
-            title={tier ? "Turn off fast mode" : "Turn on fast mode"}
-            onClick={() =>
-              update({
-                serviceTier: tier ? "default" : model.serviceTiers[0].id,
-              })
-            }
+            title="Turn off fast mode"
+            onClick={() => {
+              update({ serviceTier: "default" });
+              modelButton.current?.focus();
+            }}
           >
-            <Zap size={14} fill={tier ? "currentColor" : "none"} />
+            <Zap size={14} fill="currentColor" />
           </button>
         )}
         <button

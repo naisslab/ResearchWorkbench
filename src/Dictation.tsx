@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Mic, Square, X } from "lucide-react";
+import { Check, Mic, X } from "lucide-react";
 import type { DictationEvent } from "./types";
 
 export default function Dictation({
@@ -11,10 +11,6 @@ export default function Dictation({
   disabled?: boolean;
   onActive?(active: boolean): void;
 }) {
-  const [language, setLanguage] = useState(
-    () =>
-      localStorage.getItem("research-workbench.dictation-language") || "zh-CN",
-  );
   const [phase, setPhase] = useState("");
   const [preview, setPreview] = useState("");
   const [error, setError] = useState("");
@@ -62,7 +58,7 @@ export default function Dictation({
     setPhase("Starting microphone…");
     onActive?.(true);
     try {
-      await window.research!.startDictation(id, language);
+      await window.research!.startDictation(id);
     } catch (error) {
       if (session.current === id) {
         session.current = "";
@@ -76,10 +72,10 @@ export default function Dictation({
     <div className="dictation-control">
       <button
         type="button"
-        className={`button text small ${phase ? "active" : ""}`}
-        disabled={disabled && !phase}
+        className={`dictation-button ${phase ? "active" : ""}`}
+        disabled={(disabled && !phase) || phase === "Finishing…"}
         aria-label={phase ? "Finish dictation" : "Start dictation"}
-        title="Dictate editable text with macOS speech recognition"
+        title={phase ? "Finish dictation" : "Dictate"}
         onClick={() => {
           if (phase) {
             setPhase("Finishing…");
@@ -87,43 +83,22 @@ export default function Dictation({
           } else void start();
         }}
       >
-        {phase ? <Square size={13} /> : <Mic size={13} />}
-        {phase || "Dictate"}
+        {phase ? <Check size={19} /> : <Mic size={20} />}
       </button>
-      <select
-        aria-label="Dictation language"
-        value={language}
-        disabled={!!phase}
-        onChange={(event) => {
-          setLanguage(event.target.value);
-          localStorage.setItem(
-            "research-workbench.dictation-language",
-            event.target.value,
-          );
-        }}
-      >
-        <option value="zh-CN">普通话</option>
-        <option value="en-US">English</option>
-        <option value="zh-TW">國語</option>
-        <option value="zh-HK">廣東話</option>
-      </select>
       {phase && (
         <button
           type="button"
-          className="icon-button"
+          className="dictation-button"
           aria-label="Cancel dictation"
           onClick={() => void window.research!.cancelDictation(session.current)}
         >
-          <X size={13} />
+          <X size={18} />
         </button>
       )}
-      <small className="dictation-privacy">
-        macOS speech recognition; some languages use Apple’s service.
-      </small>
       {phase && (
         <span className="dictation-preview" role="status">
-          {preview ||
-            "Speak, then click Finish. Text is not sent automatically."}
+          <span className="dictation-phase">{phase}</span>
+          {preview}
         </span>
       )}
       {error && (

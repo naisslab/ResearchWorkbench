@@ -377,7 +377,7 @@ app
     handle("writing:complete", (id, result) =>
       writingCapture.complete(id, result),
     );
-    handle("dictation:start", (id, language) => dictation.start(id, language));
+    handle("dictation:start", (id) => dictation.start(id));
     handle("dictation:stop", (id) => dictation.stop(id));
     handle("dictation:cancel", (id) => dictation.cancel(id));
     handle("workspace:load", () => state);

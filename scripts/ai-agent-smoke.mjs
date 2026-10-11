@@ -808,9 +808,12 @@ await smoke("ai", async (root) => {
     /^Code Model\s*Extra High/,
   );
   await fastToggle.click();
-  assert.equal(await fastToggle.getAttribute("aria-pressed"), "false");
-  await fastToggle.focus();
-  await fastToggle.press("Space");
+  assert.equal(await fastToggle.count(), 0);
+  await page
+    .getByRole("button", { name: "AI model", exact: true })
+    .press("Space");
+  await page.getByRole("radio", { name: "Fast", exact: true }).click();
+  await page.keyboard.press("Escape");
   assert.equal(await fastToggle.getAttribute("aria-pressed"), "true");
   await page
     .getByRole("button", { name: "Agent permissions", exact: true })

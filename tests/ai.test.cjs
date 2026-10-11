@@ -1170,3 +1170,51 @@ test("exhausted connection retries preserve completed work and show the upstream
   );
   assert.equal((await f.client.getState()).status, "connected");
 });
+
+test("persistent user-unavailable 503 preserves completed edits and login while exposing a structured diagnostic", async (t) => {
+  let attempts = 0;
+  const f = await clientFixture(t, async () => {
+    attempts++;
+    return Response.json(
+      {
+        error: {
+          code: "subscription_sharing_user_unavailable",
+          message: "private detail",
+        },
+      },
+      {
+        status: 503,
+        headers: { "x-request-id": "req-user-unavailable" },
+      },
+    );
+  });
+  await f.client.send({
+    projectId: "one",
+    message: "fixture-auth-expiry",
+    model: "fixture-model",
+    rootId: "primary",
+  });
+  const finished = await waitFor(async () => {
+    const value = await f.client.conversation("one");
+    return value.messages.at(-1)?.status === "failed" &&
+      !f.client.isRunning("one")
+      ? value
+      : false;
+  });
+  const message = finished.messages.at(-1);
+  assert.equal(attempts, 3);
+  assert.equal(f.control.refreshes, 0);
+  assert.equal(message.error.code, "subscription_sharing_user_unavailable");
+  assert.equal(message.error.status, 503);
+  assert.equal(message.error.requestId, "req-user-unavailable");
+  assert.doesNotMatch(
+    message.error.message,
+    /127\.0\.0\.1|private detail|Reconnect/,
+  );
+  assert.equal(message.review.files, 4);
+  assert.equal(
+    await fs.readFile(path.join(f.projectFolder, "draft.tex"), "utf8"),
+    "Revised manuscript\n",
+  );
+  assert.equal((await f.client.getState()).status, "connected");
+});

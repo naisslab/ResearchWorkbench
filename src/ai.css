@@ -763,6 +763,7 @@
 }
 .ai-send-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
 }
 .ai-send:not(:disabled):active {
@@ -1150,6 +1151,7 @@
   padding: 0;
 }
 .ai-input-row {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
@@ -1187,11 +1189,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  width: 30px;
-  height: 30px;
-  background: var(--accent-fill);
-  color: #fff;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  background: var(--text);
+  color: var(--input);
   flex-shrink: 0;
 }
 .ai-stop {
@@ -1621,25 +1623,47 @@
 .dictation-control {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding: 4px 0;
-  font-size: 12px;
+  gap: 4px;
 }
-.dictation-control select {
-  width: auto;
-  padding: 3px 5px;
-  font-size: 11px;
+.dictation-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--text);
+  flex-shrink: 0;
+}
+.dictation-button:hover,
+.dictation-button.active {
+  background: var(--hover);
 }
 .dictation-preview,
 .dictation-error {
-  flex-basis: 100%;
-  max-height: 90px;
+  position: absolute;
+  bottom: 50px;
+  left: 8px;
+  right: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--input);
+  box-shadow: 0 4px 16px #00000012;
+  max-height: 100px;
   overflow: auto;
   white-space: pre-wrap;
+  font-size: 12px;
+  z-index: 2;
 }
 .dictation-preview {
+  color: var(--text);
+}
+.dictation-phase {
+  display: block;
   color: var(--muted);
+  font-size: 11px;
 }
 .dictation-error {
   color: var(--danger);
@@ -1658,8 +1682,4 @@
 .ai-review-file-choice > button {
   min-width: 0;
   flex: 1;
-}
-.dictation-privacy {
-  color: var(--muted);
-  font-size: 10px;
 }
