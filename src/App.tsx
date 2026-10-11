@@ -26,7 +26,6 @@ import type {
   Commit,
   Navigate,
   Project,
-  ProjectChanges,
   UpdateProject,
   View,
   Workspace,
@@ -35,7 +34,11 @@ import { VIEWS } from "./types";
 import { dueSoon, monthDay, upcomingItems, type DatedItem } from "./dates";
 import PanelDivider from "./PanelDivider";
 import { clamp, defaultPanelLayout } from "./panel-layout";
-import { usePanelLayout, usePanelSize } from "./usePanelLayout";
+import {
+  useSidebarLayout,
+  useProjectPanelLayout,
+  usePanelSize,
+} from "./usePanelLayout";
 import ResearchCollection from "./ResearchCollection";
 import DeadlineHub, { DateEditor } from "./DeadlineHub";
 import { MilestoneEditor } from "./ProjectMilestones";
@@ -56,9 +59,19 @@ import ProjectDetailsView from "./views/ProjectDetailsView";
 import SettingsView from "./views/SettingsView";
 import { useTopDialog } from "./Modal";
 import { runCommand, useCommands } from "./commands";
+import { WorkbenchVisibility } from "./WorkbenchVisibility";
 
 const loadWorkbench = () => import("./Workbench");
 const Workbench = lazy(loadWorkbench);
+function ProjectWorkbench(
+  props: Omit<
+    React.ComponentProps<typeof Workbench>,
+    "layout" | "changeLayout"
+  >,
+) {
+  const { layout, change } = useProjectPanelLayout(props.project.id);
+  return <Workbench {...props} layout={layout} changeLayout={change} />;
+}
 const RAIL = 52;
 const MIN_SIDEBAR = 180;
 // A drag that leaves the sidebar narrower than this snaps it to the rail.
@@ -81,12 +94,19 @@ type Toast = {
 let toastId = 0;
 
 export default function App() {
-  const { layout, change: changeLayout } = usePanelLayout();
+  const { layout, change: changeLayout } = useSidebarLayout();
   const [shellRef, shell] = usePanelSize();
   const [state, setState] = useState<Workspace | null>(null);
   const [loadingError, setLoadingError] = useState("");
   const [view, setView] = useState<View>("overview");
   const [selected, setSelected] = useState("");
+  const [openedProjects, setOpenedProjects] = useState<string[]>([]);
+  useEffect(() => {
+    if (view === "workbench" && selected)
+      setOpenedProjects((ids) =>
+        ids.includes(selected) ? ids : [...ids, selected],
+      );
+  }, [view, selected]);
   const [areaFilter, setAreaFilter] = useState("all");
   // "" opens the form on the default area.
   const [newProjectArea, setNewProjectArea] = useState<string | null>(null);
@@ -273,12 +293,6 @@ export default function App() {
     [navigate],
   );
   const newProject = useCallback(() => setNewProjectArea(""), []);
-  const updateSelected = useCallback(
-    async (changes: ProjectChanges) => {
-      await updateProject(selected, changes);
-    },
-    [selected, updateProject],
-  );
 
   const rail = layout.sidebarCollapsed;
   useEffect(() => {
@@ -539,25 +553,45 @@ export default function App() {
           </button>
           <span className="header-date">{monthDay(now)}</span>
         </header>
-        {view === "workbench" && project ? (
-          <DarkContext.Provider value={dark}>
-            <Suspense
-              fallback={<div className="pane-empty">Opening workbench…</div>}
-            >
-              <Workbench
-                key={project.id}
-                project={project}
-                searchTarget={searchTarget}
-                update={updateSelected}
-                report={report}
-                clearError={clearError}
-                onStatus={setManuscriptStatus}
-                layout={layout}
-                changeLayout={changeLayout}
-              />
-            </Suspense>
-          </DarkContext.Provider>
-        ) : (
+        <DarkContext.Provider value={dark}>
+          {[
+            ...new Set([
+              ...openedProjects,
+              ...(view === "workbench" && project ? [project.id] : []),
+            ]),
+          ].map((id) => {
+            const cached = state.projects.find((p) => p.id === id);
+            if (!cached) return null;
+            const visible = view === "workbench" && selected === id;
+            return (
+              <WorkbenchVisibility.Provider key={id} value={visible}>
+                <div
+                  className="project-workbench"
+                  hidden={!visible}
+                  data-project-id={id}
+                >
+                  <Suspense
+                    fallback={
+                      <div className="pane-empty">Opening workbench…</div>
+                    }
+                  >
+                    <ProjectWorkbench
+                      project={cached}
+                      searchTarget={visible ? searchTarget : undefined}
+                      update={async (changes) => {
+                        await updateProject(id, changes);
+                      }}
+                      report={report}
+                      clearError={clearError}
+                      onStatus={setManuscriptStatus}
+                    />
+                  </Suspense>
+                </div>
+              </WorkbenchVisibility.Provider>
+            );
+          })}
+        </DarkContext.Provider>
+        {!(view === "workbench" && project) && (
           <div className="page-scroll" key={`${view}:${selected}`}>
             <div
               className={`page-content ${view === "settings" ? "settings-page" : ""}`}

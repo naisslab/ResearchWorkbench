@@ -17,6 +17,8 @@ const listen = (channel) => (callback) => {
   return () => ipcRenderer.removeListener(channel, listener);
 };
 contextBridge.exposeInMainWorld("research", {
+  readDraft: invoke("file:draft-read"),
+  writeDraft: invoke("file:draft-write"),
   onMenuCommand: listen("menu:command"),
   lookupReference: invoke("references:lookup"),
   pdfReport: invoke("latex:pdf-report"),
@@ -100,6 +102,8 @@ contextBridge.exposeInMainWorld("research", {
   aiManageChat: invoke("ai:manage-chat"),
   aiConversation: invoke("ai:conversation"),
   aiReview: invoke("ai:review"),
+  aiPaper: invoke("ai:paper"),
+  aiPaperBuild: invoke("ai:paper-build"),
   aiReviewFile: invoke("ai:review-file"),
   aiRevert: invoke("ai:revert"),
   aiSend: invoke("ai:send"),

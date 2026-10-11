@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { X } from "lucide-react";
+import { useWorkbenchVisible } from "./WorkbenchVisibility";
 
 // Open dialogs, newest last. While one is open everything outside it is inert,
 // so a toast renders inside the newest dialog.
@@ -35,6 +36,7 @@ export default function Modal({
   className?: string;
   children: ReactNode;
 }) {
+  const visible = useWorkbenchVisible();
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   // A dialog that replaces another in one update finds its opener detached;
@@ -46,6 +48,7 @@ export default function Modal({
   // showModal() focuses the first focusable child; React's autoFocus runs too
   // early to count, so a child marks itself with data-autofocus instead.
   useEffect(() => {
+    if (!visible) return;
     const node = dialog.current!;
     const entry = { dialog: node, openers };
     open.push(entry);
@@ -53,11 +56,16 @@ export default function Modal({
     if (!node.open) node.showModal();
     node.querySelector<HTMLElement>("[data-autofocus]")?.focus();
     return () => {
+      node.close();
       open.splice(open.indexOf(entry), 1);
       changed();
-      openers.find((element) => element?.isConnected)?.focus();
+      openers
+        .find(
+          (element) => element?.isConnected && element.getClientRects().length,
+        )
+        ?.focus();
     };
-  }, [openers]);
+  }, [openers, visible]);
   const dismiss = () => {
     if (!locked) onClose();
   };
@@ -73,7 +81,8 @@ export default function Modal({
       // Chromium closes the dialog on a repeated Esc that it will not let the
       // page cancel; reopen it while it is still rendered.
       onClose={(event) => {
-        if (event.currentTarget.isConnected) event.currentTarget.showModal();
+        if (visible && event.currentTarget.isConnected)
+          event.currentTarget.showModal();
       }}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) dismiss();

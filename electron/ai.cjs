@@ -924,7 +924,10 @@ function createAI({
     try {
       signal.throwIfAborted();
       try {
-        await changes.begin(snapshotId, projectScope.writableRoots);
+        await changes.begin(snapshotId, projectScope.writableRoots, {
+          folder: project(value.projectId).folder,
+          mainFile: project(value.projectId).mainFile,
+        });
       } catch {
         throw new AIError(
           "snapshot_storage_error",
@@ -1353,6 +1356,33 @@ function createAI({
     }
     return result;
   }
+  async function paperReview(projectId, messageId) {
+    const target = await reviewTarget(projectId, messageId);
+    if (!target.message.review || target.message.review.unavailable) return {};
+    return changes.paper(target.id);
+  }
+  async function paperBuild(projectId, messageId, compile) {
+    const target = await reviewTarget(projectId, messageId);
+    if (isRunning(projectId))
+      throw new AIError(
+        "project_busy",
+        "Wait for the agent and pause its queue before compiling.",
+      );
+    await changes.validatePaperBuild(
+      target.id,
+      target.roots,
+      project(projectId),
+    );
+    const result = await compile();
+    // An external editor may have changed a file while the compiler ran.
+    await changes.validatePaperBuild(
+      target.id,
+      target.roots,
+      project(projectId),
+    );
+    await changes.recordPaperBuild(target.id, result);
+    return changes.paper(target.id);
+  }
   async function reviewFile(projectId, messageId, fileId) {
     const target = await reviewTarget(projectId, messageId);
     if (!target.message.review || target.message.review.unavailable) {
@@ -1429,6 +1459,8 @@ function createAI({
     isRunning,
     review,
     reviewFile,
+    paperReview,
+    paperBuild,
     revert,
     refreshModels,
     skills: async (projectId, rootId, forceReload) =>

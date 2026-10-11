@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useWorkbenchVisible } from "./WorkbenchVisibility";
 
 /** An action offered in ⌘K and the application menu. */
 export interface Command {
@@ -16,8 +17,9 @@ const providers = new Set<{ current: () => Command[] }>();
  * when ⌘K opens or a menu item is chosen, so it can depend on current state.
  */
 export function useCommands(list: () => Command[]) {
+  const visible = useWorkbenchVisible();
   const latest = useRef(list);
-  latest.current = list;
+  latest.current = () => (visible ? list() : []);
   useEffect(() => {
     providers.add(latest);
     return () => {

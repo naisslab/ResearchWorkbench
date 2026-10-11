@@ -1,3 +1,18 @@
+.project-workbench {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.project-workbench[hidden] {
+  display: none;
+}
+.draft-recovery {
+  padding: 8px 14px;
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  background: var(--surface);
+}
 /* Workbench: toolbar, panes, file tree, editor, PDF pane and bottom panel. */
 .workbench {
   display: flex;

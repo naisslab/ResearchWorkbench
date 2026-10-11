@@ -25,7 +25,7 @@ npm run package
 
 1. 在 Overview 点击 **New project**，选择研究方向和当前阶段。工作区预设 ML Systems、Security and Privacy 和 Cyber-Physical Systems，也支持自定义方向。
 2. 在项目详情中添加下一步任务、研究笔记和目标会议。在 **Workbench setup** 选择本地项目目录、LaTeX 入口文件和编译引擎。
-3. 点击 **Open workbench**。左侧选择 `.tex`、`.bib` 或笔记文件，中间编辑，右侧查看 PDF。`⌘S` 保存文件，**Compile**（`⌘↵`）保存当前编辑文件并执行 `latexmk`，编译中可点 **Stop** 停止。Build log 把 `file:line` 错误和未定义的引用列为 Problems，点击跳到对应行。`⇧⌘J` 或 **Show in PDF** 在 PDF 中定位光标所在行；双击 PDF，或启用 **Jump to source** 后单击，跳回源码对应行。`.tex` 文件显示字数和 Outline，`\cite{`、`\ref{`、`\begin{` 提供补全。文件在外部被修改时，未编辑的内容自动重新载入，有未保存编辑时提示 **Reload** 或 **Keep mine**；切换文件或离开工作台前会询问是否保存。
+3. 点击 **Open workbench**。左侧选择 `.tex`、`.bib` 或笔记文件，中间编辑，右侧查看 PDF。`⌘S` 保存文件，**Compile**（`⌘↵`）保存当前编辑文件并执行 `latexmk`，编译中可点 **Stop** 停止。Build log 把 `file:line` 错误和未定义的引用列为 Problems，点击跳到对应行。`⇧⌘J` 或 **Show in PDF** 在 PDF 中定位光标所在行；双击 PDF，或启用 **Jump to source** 后单击，跳回源码对应行。`.tex` 文件显示字数和 Outline，`\cite{`、`\ref{`、`\begin{` 提供补全。文件在外部被修改时，未编辑的内容自动重新载入，有未保存编辑时提示 **Reload** 或 **Keep mine**；切换文件前会询问是否保存；切换项目或离开工作台会保留编辑状态。
 4. 底部终端支持本机交互式 shell。设置 `user@hostname` 或 SSH config alias 后，切换 **SSH**。端口、密钥和代理配置使用 `~/.ssh/config`；密码和主机密钥确认在终端完成。
 5. 在 **Project board** 拖动卡片，或用卡片菜单切换阶段：Idea Exploration、Experiments、Paper Writing、Submitted、Revision、Published。
 6. **Dates & deadlines** 的 My dates 汇总独立会议日期和个人事项；首次启动会从本机 `mac-ddl-count` 导入已保存的日期、状态和来源（`RESEARCH_MAC_DDL_DIR` 可指定其他目录）。CCF conferences 可搜索会议并添加 Abstract、Paper 等日期；Project milestones 保留每个项目的里程碑。左侧角标、Overview 和此页的计数来自同一份日期列表，角标表示 7 天内到期的数量。项目详情中关联的会议日期可直接点开编辑。删除日期、里程碑、任务或项目后，提示条提供 **Undo**。
@@ -175,7 +175,7 @@ Project Files 以可展开的目录树显示项目的 Manuscript、Code 和其�
 
 搜索读取 PDF 的文字层，尚不包含 OCR；无文字层的扫描件会在 coverage notes 中注明。单份 PDF 上限 64 MB、前 1,000 页，文本文件上限 2 MB；每个关联目录最多搜索 2,000 个文件、20,000 个目录条目和八层子目录，每类最多显示 150 个匹配。依赖目录和隐藏目录跳过，`.research-build` 例外。触及限制、缺少目录或文档读取失败会显示说明。全文提取在后台线程完成，PDF 缓存有内存上限，文件修改后重新提取。
 
-重启会恢复上次页面和项目、已保存文件、光标、PDF 文档与阅读位置，以及活动对话。**Recent files** 可切换最近打开的文件；未保存源码仍需按原有提示保存。Overview 的 **Today** 提供继续上次工作和手动置顶的任务，项目详情可填写阻塞原因。
+重启会恢复上次页面和项目、已保存文件、光标、PDF 文档与阅读位置，以及活动对话。**Recent files** 可切换最近打开的文件；未保存源码自动写入独立恢复副本，重启后恢复草稿；磁盘文件同时被修改时，需要选择 Reload 或 Keep mine 后才能保存。Overview 的 **Today** 提供继续上次工作和手动置顶的任务，项目详情可填写阻塞原因。
 
 ## 完整备份与恢复
 
@@ -190,3 +190,17 @@ Settings 的 **Create complete backup** 生成带校验清单的独立目录，�
 ## 写作交互验证
 
 `npm run test:writing-agent-ui` 使用隔离项目和模拟识别事件，验证听写选区替换、取消、不自动发送、Agent 保存待办和笔记以及重启保留。该测试不启动真实麦克风。`test:review-ui` 同时验证按文件回退与后续编辑保护，`test:pdf-ui` 验证反馈状态筛选和重启保留。原生 Codex runtime 的动态工具调用使用本地模型响应 fixture 验证，不消耗真实模型用量。麦克风录音和实际识别质量需在用户授权后人工验证。
+
+## 项目切换与恢复草稿
+
+切换项目或打开 Overview、Settings 时，打开过的工作台会留在内存中。每个项目分别保留编辑器内容、光标、撤销历史、PDF 阅读位置、面板布局和 Agent 对话状态；侧边栏布局由整个窗口共享。Agent 可以在项目隐藏时继续运行并接收回复；再次打开项目后继续查看。模型设置、选中的 Skills、附件和输入草稿也保留。只有当前项目响应保存、编译等快捷键。关闭窗口仍会停止 Agent 并暂停队列；重新启动不会自动重放任务。
+
+源码编辑时，应用约每 250 ms 把未保存的内容及其磁盘基线写入 Application Support 的 `Research Workbench/editor-drafts/`。切换项目时也会立即请求保存恢复副本，不会写入稿件原文件。重启后会显示 **Recovered unsaved draft**；如果磁盘内容同时发生变化，必须先选择 **Reload** 或 **Keep mine**。**Reload** 放弃恢复草稿，**Keep mine** 允许下次保存覆盖磁盘内容。成功保存或明确选择 **Don't save** 会清理已保存或放弃的恢复副本，保存期间新输入的内容继续保留。更换项目目录时，同名文件的草稿按实际目录隔离，切回原目录仍可恢复。恢复副本写入失败时显示重试入口；强制退出前最后约 250 ms 的输入可能尚未保存。完整备份包含恢复副本，恢复到新目录时会更新其中的项目路径。
+
+## 每次 Agent 请求的论文结果审阅
+
+**Review changes → Paper result** 显示该请求开始和结束时保存的 PDF。旧请求没有这些快照时会明确显示不可用。**Compile and verify this run** 会先保存编辑器，并核对项目文件是否仍与该请求结束时一致；存在后续编辑、还原或项目目录变更时，不会把当前编译结果归到旧请求上。构建结果、日志和新增警告保存在请求的审阅记录中。失败的构建会明确提示 PDF 可能来自此前的编译。
+
+左右 PDF 按页码配对，工具栏支持翻页。应用比较前 100 页的缩略图，并提供有视觉差异的页码入口；分页变化可能导致后续页都不同，细小变化仍需查看正文。请求开始时已有的 PDF 可能早于当时源码，因此界面会显示说明。快照随完整备份保留；恢复到新路径后，未修改的文件仍可通过编译验证。删除对话后，未被引用的快照在下次启动时清理。源码审阅、按文件回退以及 Git 提交版本的 latexdiff 继续可用。
+
+`npm run test:project-continuity-ui` 使用两个隔离项目和模拟 Agent，检查切换后的编辑内容、撤销历史、输入草稿、后台回复、快捷键隔离以及退出后的草稿恢复和磁盘冲突保护。`test:review-ui` 增加每轮 PDF 对照和构建结果的界面验证。

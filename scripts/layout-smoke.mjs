@@ -170,7 +170,13 @@ Review the source, ask the agent, and read the manuscript side by side.
   );
   await checkColumns();
   const savedWidths = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("research-workbench.panels.v1")),
+    JSON.parse(
+      localStorage.getItem(
+        "research-workbench.project-panels." +
+          document.querySelector(".project-workbench:not([hidden])").dataset
+            .projectId,
+      ),
+    ),
   );
   for (const name of [
     "Source + PDF",

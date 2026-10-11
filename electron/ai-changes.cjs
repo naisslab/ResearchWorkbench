@@ -5,6 +5,10 @@ const crypto = require("node:crypto");
 const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { atomicWrite, exists } = require("./core.cjs");
+const {
+  paperSnapshot,
+  warnings: paperWarnings,
+} = require("./paper-snapshot.cjs");
 const { protectedWrite, AIError } = require("./chatgpt.cjs");
 const execute = promisify(execFile);
 const hash = (bytes) => crypto.createHash("sha256").update(bytes).digest("hex");
@@ -252,7 +256,28 @@ function createChangeStore(
     );
     return { entries, directories };
   }
-  async function begin(id, folders) {
+  const fingerprint = (snapshot, roots, legacyRoots) =>
+    hash(
+      JSON.stringify(
+        Object.values(snapshot.entries)
+          .map((e) => {
+            const rootIndex = roots.indexOf(e.root);
+            const identity = legacyRoots
+              ? hash(legacyRoots[rootIndex] + "\0" + e.relative)
+              : JSON.stringify([rootIndex, e.relative]);
+            return [identity, e.hash, e.mode, e.type, e.unavailable];
+          })
+          .sort(([a], [b]) => a.localeCompare(b)),
+      ),
+    );
+  async function capturePaper(project) {
+    const { bytes, ...metadata } = await paperSnapshot(project);
+    if (!bytes) return metadata;
+    const digest = hash(bytes);
+    await protectedWrite(blobFile(digest), bytes);
+    return { ...metadata, hash: digest, size: bytes.length };
+  }
+  async function begin(id, folders, manuscript) {
     const canonical = [
       ...new Set(
         await Promise.all(folders.map((folder) => fs.realpath(folder))),
@@ -270,6 +295,9 @@ function createChangeStore(
       version: 1,
       roots,
       before,
+      ...(manuscript
+        ? { manuscript, paper: { before: await capturePaper(manuscript) } }
+        : {}),
       createdAt: new Date().toISOString(),
     });
   }
@@ -297,6 +325,13 @@ function createChangeStore(
       }));
     // Review and revert need only the changed files, not the full listings.
     value.createdDirectories = createdDirectories({ before, after });
+    value.fingerprintVersion = 2;
+    value.afterFingerprint = fingerprint(after, value.roots);
+    if (value.manuscript)
+      value.paper = {
+        ...value.paper,
+        after: await capturePaper(value.manuscript),
+      };
     await save(id, value);
     return { files: value.changes.length };
   }
@@ -340,6 +375,7 @@ function createChangeStore(
             () => value,
           );
         if (!value.changes) {
+          if (value.paper?.before?.hash) needed.add(value.paper.before.hash);
           const { mtimeMs } = await fs.stat(manifestFile(id));
           if (Date.now() - mtimeMs > 60 * 60 * 1000) {
             await fs.rm(manifestFile(id), { force: true });
@@ -349,6 +385,8 @@ function createChangeStore(
             needed.add(entry.hash);
           continue;
         }
+        for (const version of [value.paper?.before, value.paper?.after])
+          if (version?.hash) needed.add(version.hash);
         for (const change of value.changes)
           for (const entry of [change.before, change.after])
             if (entry?.type === "file") needed.add(entry.hash);
@@ -472,6 +510,92 @@ function createChangeStore(
         "Generated folders, dependencies, and Git history are excluded.",
       ],
     };
+  }
+  async function validatePaperBuild(id, allowedRoots, manuscript) {
+    await collected();
+    const value = await load(id);
+    if (
+      !value.manuscript ||
+      value.manuscript.folder !== manuscript.folder ||
+      value.manuscript.mainFile !== manuscript.mainFile
+    )
+      throw new AIError(
+        "paper_verification_blocked",
+        "This run used a different manuscript. Review its saved PDFs instead.",
+      );
+    if (
+      value.interrupted ||
+      value.revertedAt ||
+      value.changes?.some((item) => item.revertedAt)
+    )
+      throw new AIError(
+        "paper_verification_blocked",
+        "This run was interrupted or reverted. Review its saved PDFs instead.",
+      );
+    const allowed = await Promise.all(
+      allowedRoots.map((root) => fs.realpath(root)),
+    );
+    if (value.roots.some((root) => !allowed.includes(root)))
+      throw new AIError(
+        "paper_verification_blocked",
+        "The project folders have changed.",
+      );
+    const current = await capture(value.roots);
+    if (
+      !value.afterFingerprint ||
+      Object.values(current.entries).some((entry) => entry.unavailable) ||
+      fingerprint(
+        current,
+        value.roots,
+        value.fingerprintVersion === 2
+          ? undefined
+          : value.fingerprintRoots || value.roots,
+      ) !== value.afterFingerprint
+    )
+      throw new AIError(
+        "paper_verification_blocked",
+        "Project files changed after this run. Compile from the workbench; this run's saved review stays unchanged.",
+      );
+  }
+  async function recordPaperBuild(id, result) {
+    const value = await load(id);
+    value.paper = {
+      ...value.paper,
+      after: await capturePaper(value.manuscript),
+      build: {
+        ok: result.ok,
+        log: String(result.log || "").slice(-100000),
+        warnings: paperWarnings(result.log),
+        at: new Date().toISOString(),
+      },
+    };
+    await save(id, value);
+  }
+  async function paper(id) {
+    await collected();
+    const value = await load(id);
+    const result = {
+      ...value.paper,
+      interrupted: !!value.interrupted,
+      canVerify:
+        !!value.manuscript?.folder &&
+        !!value.manuscript?.mainFile &&
+        !!value.afterFingerprint &&
+        !value.interrupted &&
+        !value.revertedAt &&
+        !value.changes?.some((item) => item.revertedAt),
+      note: !value.paper
+        ? "This older run has no saved PDF snapshots."
+        : undefined,
+    };
+    for (const side of ["before", "after"]) {
+      const version = value.paper?.[side];
+      if (version?.hash) {
+        const bytes = await readBlob({ ...version, type: "file" });
+        result[side] = { ...version, data: bytes };
+      }
+    }
+    return result;
   }
   async function file(id, fileId) {
     await collected();
@@ -697,7 +821,19 @@ function createChangeStore(
       locks.delete(id);
     }
   }
-  return { begin, finish, summary, discard, collect, review, file, revert };
+  return {
+    begin,
+    finish,
+    summary,
+    discard,
+    collect,
+    review,
+    file,
+    revert,
+    paper,
+    validatePaperBuild,
+    recordPaperBuild,
+  };
 }
 // Older conversations saved patches but no original bytes. Keep them reviewable
 // without implying that their changes can be restored.

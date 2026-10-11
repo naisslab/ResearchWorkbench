@@ -17,6 +17,7 @@ const fsSync = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const core = require("./core.cjs");
+const { createDraftStore } = require("./editor-drafts.cjs");
 const backup = require("./backup.cjs");
 const { createReferences } = require("./references.cjs");
 const { pdfReportInWorker } = require("./pdf-report.cjs");
@@ -239,11 +240,12 @@ function createWindow() {
   win.webContents.on("will-prevent-unload", (event) => {
     const response = dialog.showMessageBoxSync(win, {
       type: "question",
-      buttons: ["Keep editing", "Discard changes"],
+      buttons: ["Keep editing", "Close window"],
       defaultId: 0,
       cancelId: 0,
       message: "Close with unsaved manuscript changes?",
-      detail: "Use ⌘S to save your manuscript before closing.",
+      detail:
+        "Use ⌘S to save your manuscript. Recovery drafts are kept separately; very recent edits may not have reached the recovery copy yet.",
     });
     if (response === 1) event.preventDefault();
   });
@@ -491,6 +493,33 @@ app
       if (!core.isTextFile(target)) throw new Error("Unsupported text file.");
       return target;
     }
+    const drafts = createDraftStore(
+      path.join(app.getPath("userData"), "editor-drafts"),
+    );
+    const draftRequests = createTaskQueue();
+    handle("file:draft-read", (id, relative, rootId) =>
+      draftRequests(async () => {
+        await textTarget(id, relative, rootId);
+        return drafts.read(
+          id,
+          rootId,
+          relative,
+          core.fileRoot(project(id), rootId),
+        );
+      }),
+    );
+    handle("file:draft-write", (id, relative, rootId, draft) =>
+      draftRequests(async () => {
+        await textTarget(id, relative, rootId);
+        return drafts.write(
+          id,
+          rootId,
+          relative,
+          core.fileRoot(project(id), rootId),
+          draft,
+        );
+      }),
+    );
     handle("file:read", async (id, relative, rootId) => {
       const target = await textTarget(id, relative, rootId);
       if ((await fs.stat(target)).size > 2 * 1024 * 1024)
@@ -628,6 +657,7 @@ app
         Promise.allSettled([
           queue.settled(),
           annotationStore.flush(),
+          draftRequests.settled().then(() => drafts.flush()),
           ai?.dispose(),
         ]),
         limit,
@@ -669,6 +699,8 @@ app
       try {
         await queue.settled();
         await annotationStore.idle();
+        await draftRequests.settled();
+        await drafts.flush();
         await ai.flush();
         checkIdle();
         const result = await backup.createBackup({
@@ -732,6 +764,8 @@ app
       try {
         await queue.settled();
         await annotationStore.idle();
+        await draftRequests.settled();
+        await drafts.flush();
         await ai.flush();
         checkIdle();
         stopTerminals();
@@ -1196,6 +1230,13 @@ app
       "ai:manage-chat": (id, action, chatId, title) =>
         ai.manageChat(id, action, chatId, title),
       "ai:review": (id, messageId) => ai.review(id, messageId),
+      "ai:paper": (id, messageId) => ai.paperReview(id, messageId),
+      "ai:paper-build": (id, messageId) =>
+        build(id, (output, signal, confirm) =>
+          ai.paperBuild(id, messageId, () =>
+            core.compile(project(id), output, environment, signal, confirm),
+          ),
+        ),
       "ai:review-file": (id, messageId, fileId) =>
         ai.reviewFile(id, messageId, fileId),
       "ai:revert": (id, messageId, fileIds) =>

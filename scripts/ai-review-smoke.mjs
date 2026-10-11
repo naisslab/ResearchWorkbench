@@ -34,13 +34,28 @@ await smoke("ai-review", async (root) => {
       const fs = process.getBuiltinModule("node:fs/promises");
       const store = createChangeStore(root + "/snapshots");
       const id = reviewKey("review-profile", projectId, "review-run");
-      await store.begin(id, [folder]);
+      const { PDFDocument } = requireApp("pdf-lib");
+      const createPdf = async (text) => {
+        const doc = await PDFDocument.create();
+        doc.addPage().drawText(text, { x: 45, y: 700, size: 18 });
+        return doc.save();
+      };
+      await fs.mkdir(folder + "/.research-build", { recursive: true });
+      await fs.writeFile(
+        folder + "/.research-build/main.pdf",
+        await createPdf("Original paper result"),
+      );
+      await store.begin(id, [folder], { folder, mainFile: "main.tex" });
       await fs.writeFile(
         folder + "/main.tex",
         "Revised manuscript\nUpdated second line\n",
       );
       await fs.unlink(folder + "/removed.tex");
       await fs.writeFile(folder + "/check.cjs", "console.log('new check')\n");
+      await fs.writeFile(
+        folder + "/.research-build/main.pdf",
+        await createPdf("Revised paper result"),
+      );
       const summary = await store.finish(id);
       const state = {
         status: "connected",
@@ -108,6 +123,18 @@ await smoke("ai-review", async (root) => {
         "ai:models": () => state,
         "ai:conversation": () => conversation,
         "ai:skills": () => ({ skills: [], warnings: 0 }),
+        "ai:paper": () => store.paper(id),
+        "ai:paper-build": async () => {
+          await store.validatePaperBuild(id, [folder], {
+            folder,
+            mainFile: "main.tex",
+          });
+          await store.recordPaperBuild(id, {
+            ok: true,
+            log: "Build completed\nLaTeX Warning: Review warning",
+          });
+          return store.paper(id);
+        },
         "ai:review": (_project, message) =>
           message === "legacy-run"
             ? legacyReview(conversation.messages[0]).review
@@ -172,6 +199,23 @@ await smoke("ai-review", async (root) => {
     await dialog.locator(".ai-file-diff .addition").first().waitFor();
   };
   await openReview();
+  await dialog
+    .getByRole("button", { name: "Paper result", exact: true })
+    .click();
+  await dialog.getByText(/Compared 1 of 1 pages/).waitFor();
+  assert.equal(await dialog.locator(".ai-paper-columns canvas").count(), 2);
+  await dialog
+    .getByRole("button", { name: "Compile and verify this run", exact: true })
+    .click();
+  await dialog.getByText("Verified build succeeded", { exact: true }).waitFor();
+  await dialog
+    .getByText("LaTeX Warning: Review warning", { exact: true })
+    .waitFor();
+  await dialog.getByText(/Compared 1 of 1 pages/).waitFor();
+  await page.screenshot({ path: "output/playwright/ai-paper-review.png" });
+  await dialog
+    .getByRole("button", { name: "Source changes", exact: true })
+    .click();
   assert.equal(await files.getByRole("button").count(), 3);
   assert.match(
     await dialog.locator(".ai-file-diff .deletion").first().innerText(),

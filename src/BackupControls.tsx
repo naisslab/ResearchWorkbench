@@ -26,6 +26,11 @@ export default function BackupControls({
     setProgress(undefined);
     setBusy("Creating backup…");
     try {
+      const pending: Promise<void>[] = [];
+      window.dispatchEvent(
+        new CustomEvent("research:flush-drafts", { detail: pending }),
+      );
+      await Promise.all(pending);
       const ui: Record<string, string> = {};
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i)!;

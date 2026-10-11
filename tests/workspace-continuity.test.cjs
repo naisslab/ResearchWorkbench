@@ -42,6 +42,17 @@ async function fixture(t) {
 test("complete backup restores exact files, annotations and chat reviews to new paths without credentials", async (t) => {
   const f = await fixture(t);
   const projectId = f.workspace.projects[0].id;
+  const { createDraftStore } = require("../electron/editor-drafts.cjs");
+  await createDraftStore(path.join(f.directory, "editor-drafts")).write(
+    projectId,
+    "primary",
+    "main.tex",
+    f.folder,
+    {
+      text: "Unsaved recovery text",
+      base: "An editable solar sail manuscript",
+    },
+  );
   const profile = "old-profile",
     messageId = "message-one",
     key = hash(JSON.stringify([profile, projectId]));
@@ -101,6 +112,10 @@ test("complete backup restores exact files, annotations and chat reviews to new 
     bindProfileId: "new-profile",
   });
   const newFolder = restored.workspace.projects[0].folder;
+  const recoveredDraft = await createDraftStore(
+    path.join(f.directory, "editor-drafts"),
+  ).read(projectId, "primary", "main.tex", newFolder);
+  assert.equal(recoveredDraft.text, "Unsaved recovery text");
   assert.notEqual(newFolder, f.folder);
   assert.equal(
     await fs.readFile(path.join(newFolder, "main.tex"), "utf8"),
@@ -524,3 +539,54 @@ test("an old worker exit cannot cancel its replacement", async (t) => {
   });
   assert.equal((await replacement).id, "two");
 });
+
+for (const legacy of [false, true])
+  test(`paper verification survives backup restoration (${legacy ? "legacy" : "relative"} fingerprint)`, async (t) => {
+    const f = await fixture(t);
+    const {
+      createChangeStore,
+      reviewKey,
+    } = require("../electron/ai-changes.cjs");
+    const changesDirectory = path.join(f.directory, "ai/changes");
+    const store = createChangeStore(changesDirectory);
+    const project = f.workspace.projects[0];
+    const id = reviewKey("profile", project.id, "run");
+    await store.begin(id, [f.folder], project);
+    await fs.writeFile(path.join(f.folder, "main.tex"), "Revised manuscript");
+    await store.finish(id);
+    if (legacy) {
+      const file = path.join(changesDirectory, "runs", id + ".json");
+      const record = JSON.parse(await fs.readFile(file, "utf8"));
+      record.afterFingerprint = hash(
+        JSON.stringify(
+          record.changes
+            .map(({ id, after: e }) => [
+              id,
+              e.hash,
+              e.mode,
+              e.type,
+              e.unavailable,
+            ])
+            .sort(([a], [b]) => a.localeCompare(b)),
+        ),
+      );
+      delete record.fingerprintVersion;
+      await fs.writeFile(file, JSON.stringify(record));
+    }
+    await store.validatePaperBuild(id, [f.folder], project);
+    const made = await createBackup({ ...f, ui: {} });
+    const restored = await restoreBackup({
+      bundle: made.path,
+      directory: f.directory,
+      destination: f.restore,
+    });
+    const next = restored.workspace.projects[0];
+    assert.notEqual(next.folder, f.folder);
+    const restarted = createChangeStore(changesDirectory);
+    await restarted.validatePaperBuild(id, [next.folder], next);
+    await fs.writeFile(path.join(next.folder, "main.tex"), "Later user edit");
+    await assert.rejects(
+      restarted.validatePaperBuild(id, [next.folder], next),
+      /changed after this run/,
+    );
+  });

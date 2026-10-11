@@ -1,3 +1,4 @@
+import { useWorkbenchVisible } from "./WorkbenchVisibility";
 import { planAnnotationMigration } from "./pdf-migration";
 import type { AIContext } from "./types";
 import {
@@ -14,7 +15,6 @@ import {
 } from "react";
 import {
   getDocument,
-  GlobalWorkerOptions,
   TextLayer,
   type PDFDocumentProxy,
   type PDFPageProxy,
@@ -58,22 +58,7 @@ import {
 } from "../electron/pdf-text.mjs";
 import type { TextRect } from "../electron/pdf-text.mjs";
 
-// The 1 MB worker is bundled locally and loads with the first PDF. A blob
-// module also works in the packaged file:// renderer.
-let worker: Promise<void> | undefined;
-const loadWorker = () =>
-  (worker ??= import("pdfjs-dist/build/pdf.worker.min.mjs?raw").then(
-    ({ default: source }) => {
-      GlobalWorkerOptions.workerSrc = URL.createObjectURL(
-        new Blob([source], { type: "text/javascript" }),
-      );
-    },
-    (error) => {
-      // The next PDF tries again.
-      worker = undefined;
-      throw error;
-    },
-  ));
+import { loadPdfWorker as loadWorker } from "./pdf-worker";
 const colors: Record<AnnotationColor, string> = {
   yellow: "#eabf3d",
   green: "#4dad6e",
@@ -616,6 +601,7 @@ export default memo(function PdfReader({
   expanded: boolean;
   onExpand(): void;
 }) {
+  const visible = useWorkbenchVisible();
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
   const [items, setItems] = useState<PdfAnnotation[]>([]);
   const [tool, setTool] = useState<Tool>("select"),
@@ -852,6 +838,7 @@ export default memo(function PdfReader({
     };
   }, [projectId, pdf.url, persist]);
   const locate = (y: number): Anchor | null => {
+    if (!visible || !scroller.current?.clientHeight) return null;
     const element = scroller.current!,
       line = element.scrollTop + y;
     const pages = element.querySelectorAll<HTMLElement>(".pdf-page");
@@ -879,9 +866,10 @@ export default memo(function PdfReader({
   };
   useEffect(() => {
     const element = scroller.current!;
-    const observer = new ResizeObserver(([entry]) =>
-      setAvailableWidth(Math.max(180, entry.contentRect.width - 32)),
-    );
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width > 0)
+        setAvailableWidth(Math.max(180, entry.contentRect.width - 32));
+    });
     // Trackpad pinches arrive as ctrl+wheel; both zoom around the pointer.
     const wheel = (event: WheelEvent) => {
       if (!event.ctrlKey) return;
@@ -904,9 +892,9 @@ export default memo(function PdfReader({
       page =
         at &&
         element.querySelector<HTMLElement>(`[data-page-number="${at.page}"]`);
-    if (!at || !page) return;
+    if (!visible || !at || !page) return;
     element.scrollTop = page.offsetTop + at.offset * page.offsetHeight - at.y;
-  }, [document, width]);
+  }, [document, width, visible]);
   useEffect(() => reportView(), [zoom, showNotes]);
   useEffect(() => {
     if (
@@ -949,7 +937,7 @@ export default memo(function PdfReader({
     const flush = () => void persist().catch(() => {});
     const keydown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
-      if (!target.closest(".pdf-reader")) return;
+      if (!target.closest(".pdf-reader")?.contains(scroller.current)) return;
       const command = event.metaKey || event.ctrlKey,
         key = event.key?.toLowerCase();
       if (command && key === "s") {

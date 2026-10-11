@@ -12,6 +12,7 @@ import { unwrap } from "./ai-result";
 import { diffRows } from "./diff";
 import type { AIChangeReview as Review, AIReviewedFile } from "./types";
 import "./ai-review.css";
+import AIPaperReview from "./AIPaperReview";
 
 const maxLines = 5000;
 function SourceVersion({ title, text }: { title: string; text?: string }) {
@@ -47,6 +48,8 @@ export default function AIChangeReview({
   onClose,
   onRevert,
   openReference,
+  prepare,
+  changed,
 }: {
   projectId: string;
   messageId: string;
@@ -54,7 +57,11 @@ export default function AIChangeReview({
   onClose(): void;
   onRevert(messageId: string, fileIds?: string[]): Promise<void>;
   openReference(reference: string): void;
+  prepare(): Promise<void>;
+  changed(): Promise<void>;
 }) {
+  const [tab, setTab] = useState<"source" | "paper">("source");
+  const [paperBusy, setPaperBusy] = useState(false);
   const [review, setReview] = useState<Review>();
   const [selected, setSelected] = useState("");
   const [chosen, setChosen] = useState<string[]>([]);
@@ -166,7 +173,7 @@ export default function AIChangeReview({
         </>
       }
       onClose={onClose}
-      locked={restoring}
+      locked={restoring || paperBusy}
       className="ai-review-modal"
     >
       <p className="ai-review-subtitle">
@@ -178,7 +185,39 @@ export default function AIChangeReview({
           : "Loading changes…"}
         <span> · Compared to the files before this request</span>
       </p>
-      <div className="ai-review-workspace">
+      <div className="ai-paper-toolbar" role="group" aria-label="Review type">
+        <button
+          className="button small"
+          aria-pressed={tab === "source"}
+          disabled={paperBusy}
+          onClick={() => setTab("source")}
+        >
+          Source changes
+        </button>
+        <button
+          className="button small"
+          aria-pressed={tab === "paper"}
+          disabled={restoring}
+          onClick={() => setTab("paper")}
+        >
+          Paper result
+        </button>
+      </div>
+      {tab === "paper" && (
+        <AIPaperReview
+          projectId={projectId}
+          messageId={messageId}
+          disabled={agentBusy || restoring || !!review?.revertedAt}
+          prepare={prepare}
+          changed={changed}
+          compiling={paperBusy}
+          onBusy={setPaperBusy}
+        />
+      )}
+      <div
+        className="ai-review-workspace"
+        style={tab === "paper" ? { display: "none" } : undefined}
+      >
         <nav className="ai-review-files" aria-label="Changed files">
           {review?.files.map((item) => (
             <div key={item.id} className="ai-review-file-choice">
@@ -331,7 +370,10 @@ export default function AIChangeReview({
           )}
         </div>
       </div>
-      <footer className="ai-review-footer">
+      <footer
+        className="ai-review-footer"
+        style={tab === "paper" ? { display: "none" } : undefined}
+      >
         <div>
           {error && (
             <p role="alert" className="ai-review-error">

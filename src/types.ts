@@ -223,6 +223,25 @@ export interface DictationEvent {
   message?: string;
 }
 export interface ResearchAPI {
+  aiPaper(
+    projectId: string,
+    messageId: string,
+  ): Promise<AIResult<AIPaperReview>>;
+  aiPaperBuild(
+    projectId: string,
+    messageId: string,
+  ): Promise<AIResult<AIPaperReview>>;
+  readDraft(
+    id: string,
+    file: string,
+    rootId: string,
+  ): Promise<{ text: string; base: string; updatedAt: string } | null>;
+  writeDraft(
+    id: string,
+    file: string,
+    rootId: string,
+    draft: { text: string; base: string } | null,
+  ): Promise<void>;
   onWritingCapture(
     callback: (request: {
       id: string;
@@ -615,6 +634,26 @@ export interface AIChangeReview {
   /** Final versions were saved at the next launch, after the app closed. */
   interrupted?: boolean;
   warnings: string[];
+}
+export interface AIPaperReview {
+  canVerify?: boolean;
+  note?: string;
+  before?: {
+    data?: Uint8Array;
+    hash?: string;
+    note?: string;
+    warnings?: string[];
+    capturedAt?: string;
+  };
+  after?: {
+    data?: Uint8Array;
+    hash?: string;
+    note?: string;
+    warnings?: string[];
+    capturedAt?: string;
+  };
+  build?: { ok: boolean; log: string; warnings: string[]; at: string };
+  interrupted?: boolean;
 }
 export interface AIReviewedFile extends AIChangedFile {
   before?: string;

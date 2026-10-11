@@ -84,13 +84,15 @@ import {
   fitBottomPanel,
   fitAgentColumns,
   fitThreeColumns,
-  type PanelLayout,
+  type WorkbenchLayout,
 } from "./panel-layout";
 import { usePanelSize } from "./usePanelLayout";
 import type { PdfTarget, PdfView } from "./pdf-types";
 import BuildLog from "./BuildLog";
 import Modal from "./Modal";
 import { readSessions } from "./workbench-state";
+import { useWorkbenchVisible } from "./WorkbenchVisibility";
+import { useEditorDraft } from "./useEditorDraft";
 // Colours live in CSS: Lezer tags map onto the syn-* classes that the TextMate
 // highlighter uses, and the editor chrome reads CSS variables.
 const highlighting = syntaxHighlighting(
@@ -257,14 +259,16 @@ function Workbench({
   report(message: string, source?: string): void;
   clearError(source: string): void;
   onStatus(status: { file: string; dirty: boolean }): void;
-  layout: PanelLayout;
-  changeLayout(changes: Partial<PanelLayout>): void;
+  layout: WorkbenchLayout;
+  changeLayout(changes: Partial<WorkbenchLayout>): void;
 }) {
+  const visible = useWorkbenchVisible();
   useEffect(() => {
+    if (!visible) return;
     try {
       localStorage.setItem("research-workbench.last-project", project.id);
     } catch {}
-  }, [project.id]);
+  }, [project.id, visible]);
   const [panesRef, panesSize] = usePanelSize();
   const [workbenchRef, workbenchSize] = usePanelSize();
   const dark = useDark();
@@ -290,6 +294,15 @@ function Workbench({
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const draft = useEditorDraft({
+    project,
+    file: active,
+    rootId: activeRoot,
+    text,
+    base: savedText,
+    loading,
+    visible,
+  });
   // undefined until the last PDF has been looked up.
   const [pdf, setPdf] = useState<{ url: string; name: string } | null>();
   const [reveal, setReveal] = useState<
@@ -337,7 +350,7 @@ function Workbench({
   const [expandedPdf, setExpandedPdf] = useState(false);
   const [expandedAI, setExpandedAI] = useState(false);
   const aiFocused = expandedAI && bottomTab === "ai" && showTerminal;
-  function switchMode(workMode: PanelLayout["workMode"]) {
+  function switchMode(workMode: WorkbenchLayout["workMode"]) {
     changeLayout({
       workMode,
       bottomOpen: workMode !== "edit",
@@ -482,6 +495,12 @@ function Workbench({
       ]);
       mtime.current = time;
       showFile(rootId, file, content, extension);
+      const recovered = await draft.read(rootId, file, content);
+      if (recovered && recovered.text !== content) {
+        setText(recovered.text);
+        setSavedText(recovered.base);
+        setDiskConflict(content !== recovered.base);
+      }
     } finally {
       setLoading(false);
     }
@@ -546,10 +565,18 @@ function Workbench({
     });
     return () => cancelIdleCallback(id);
   }, []);
-  useEffect(() => onStatus({ file: active, dirty }), [active, dirty]);
+  useEffect(() => {
+    if (visible) onStatus({ file: active, dirty });
+  }, [active, dirty, visible]);
   // The agent's edits on disk win while it works; callers stop here too.
   async function save(manual = false) {
     if (!active) return;
+    if (diskConflict) {
+      const message =
+        "Resolve the disk conflict with Reload or Keep mine before saving.";
+      report(message);
+      throw new Error(message);
+    }
     if (agentRunning) {
       const message = "Wait for the agent to finish before saving.";
       report(message);
@@ -565,6 +592,7 @@ function Workbench({
         mtime.current || undefined,
       );
       setSavedText(text);
+      await draft.saved(text);
       setDiskConflict(false);
       setFileRevision((revision) => revision + 1);
       if (active.endsWith(".bib")) setBibRevision((revision) => revision + 1);
@@ -614,7 +642,7 @@ function Workbench({
   // After "Keep mine" (mtime 0) the next save overwrites without a check.
   const checkDisk = useStableCallback(async () => {
     if (!active || !mtime.current || loading || saving || diskConflict) return;
-    if (document.hidden) return;
+    if (document.hidden || !visible) return;
     const time = await window
       .research!.fileMtime(project.id, active, activeRoot)
       .catch(() => 0);
@@ -661,6 +689,7 @@ function Workbench({
     }
   }, [filesChanged, project.id, report]);
   const onWindowEvent = useStableCallback((event: Event) => {
+    if (!visible && event.type !== "beforeunload") return;
     if (event.type === "focus") {
       void checkDisk();
       // The file list first, so files created meanwhile (a Zotero export, a
@@ -691,13 +720,14 @@ function Workbench({
         void showInPdf();
       }
     } else if (dirty) {
-      // beforeunload, or research:navigate, which continues through detail.proceed().
       event.preventDefault();
-      if (event instanceof CustomEvent) setPrompt(() => event.detail.proceed);
     }
   });
   useEffect(() => {
-    const types = ["keydown", "focus", "beforeunload", "research:navigate"];
+    if (visible) void checkDisk();
+  }, [visible, checkDisk]);
+  useEffect(() => {
+    const types = ["keydown", "focus", "beforeunload"];
     for (const type of types) window.addEventListener(type, onWindowEvent);
     const timer = setInterval(checkDisk, 2000);
     return () => {
@@ -1332,10 +1362,9 @@ function Workbench({
             title="Reset panel layout"
             onClick={() => {
               // Sizes only; the work mode and open tab stay as chosen.
-              const { sidebar, files, editorFraction, terminal, ai } =
+              const { files, editorFraction, terminal, ai } =
                 defaultPanelLayout;
               changeLayout({
-                sidebar,
                 files,
                 editorFraction,
                 terminal,
@@ -1535,6 +1564,31 @@ function Workbench({
               </button>
             )}
           </div>
+          {draft.recovered && dirty && (
+            <div className="draft-recovery" role="status">
+              Recovered unsaved draft. Review it, then save with ⌘S.
+            </div>
+          )}
+          {draft.error && (
+            <div className="disk-conflict" role="alert">
+              Draft backup failed: {draft.error}
+              <button
+                disabled={draft.loadFailed && dirty}
+                title={
+                  draft.loadFailed && dirty
+                    ? "Save your current edits before retrying recovery."
+                    : undefined
+                }
+                onClick={() =>
+                  void (
+                    draft.loadFailed ? load(activeRoot, active) : draft.flush()
+                  ).catch(() => {})
+                }
+              >
+                {draft.loadFailed ? "Retry recovery" : "Retry draft backup"}
+              </button>
+            </div>
+          )}
           {diskConflict && (
             <div className="disk-conflict" role="alert">
               <span>{active} changed on disk</span>
@@ -1818,6 +1872,7 @@ function Workbench({
             onFilesChanged={refreshAfterAgent}
             onOpenReference={openReference}
             visible={
+              visible &&
               showTerminal &&
               bottomTab === "ai" &&
               !(sideTools && expandedPdf && showPdf)
@@ -2026,9 +2081,12 @@ function Workbench({
           <div className="modal-actions">
             <button
               className="button"
-              onClick={() => {
-                setPrompt(null);
-                prompt();
+              onClick={async () => {
+                try {
+                  await draft.flush(true);
+                  setPrompt(null);
+                  prompt();
+                } catch {}
               }}
             >
               Don't save

@@ -29,7 +29,8 @@
     "test:writing-ui": "node scripts/writing-smoke.mjs",
     "test:writing-agent-ui": "node scripts/writing-agent-smoke.mjs",
     "test:finder-ui": "node scripts/finder-smoke.mjs",
-    "test:connection-ui": "node scripts/connection-smoke.mjs"
+    "test:connection-ui": "node scripts/connection-smoke.mjs",
+    "test:project-continuity-ui": "node scripts/project-continuity-smoke.mjs"
   },
   "dependencies": {
     "@openai/codex": "0.160.0",

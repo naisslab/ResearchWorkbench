@@ -449,6 +449,7 @@ export default memo(function AIPanel({
   const [dictating, setDictating] = useState(false);
   const dictationRange = useRef({ start: 0, end: 0 });
   const transcript = useRef<HTMLDivElement>(null);
+  const transcriptPosition = useRef(0);
   const transcriptContent = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const skillButton = useRef<HTMLButtonElement>(null);
@@ -752,6 +753,10 @@ export default memo(function AIPanel({
       node.scrollTop = node.scrollHeight;
   }, [conversation, visible]);
   useLayoutEffect(() => {
+    if (visible && transcript.current && !stickToBottom.current)
+      transcript.current.scrollTop = transcriptPosition.current;
+  }, [visible]);
+  useLayoutEffect(() => {
     if (!input.current || !visible) return;
     input.current.style.height = "0px";
     input.current.style.height = `${Math.min(112, Math.max(24, input.current.scrollHeight))}px`;
@@ -785,7 +790,7 @@ export default memo(function AIPanel({
   }, [busy, onFilesChanged, onRunning]);
   // Escape closes only an open menu and returns focus to its button.
   useEffect(() => {
-    if (!popover && !skillsOpen) return;
+    if (!visible || (!popover && !skillsOpen)) return;
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (popover) {
@@ -796,7 +801,7 @@ export default memo(function AIPanel({
     };
     window.addEventListener("keydown", escape);
     return () => window.removeEventListener("keydown", escape);
-  }, [popover, skillsOpen]);
+  }, [popover, skillsOpen, visible]);
   useEffect(() => {
     if (popover)
       popoverPanel.current
@@ -1242,6 +1247,8 @@ export default memo(function AIPanel({
           }}
           onScroll={() => {
             const node = transcript.current!;
+            if (!visible || !node.clientHeight) return;
+            transcriptPosition.current = node.scrollTop;
             const away =
               node.scrollHeight - node.scrollTop - node.clientHeight > 48;
             stickToBottom.current = !away;
@@ -1789,6 +1796,8 @@ export default memo(function AIPanel({
           agentBusy={running || (!!queued.length && !conversation.queuePaused)}
           onClose={() => setReviewMessage(undefined)}
           onRevert={revert}
+          prepare={prepare}
+          changed={onFilesChanged}
           openReference={(reference) => {
             setReviewMessage(undefined);
             openReference(reference);

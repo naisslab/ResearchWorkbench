@@ -12,6 +12,9 @@ export interface PanelLayout {
   bottomOpen: boolean;
   bottomTab: string;
 }
+export type SidebarLayout = Pick<PanelLayout, "sidebar" | "sidebarCollapsed">;
+export type WorkbenchLayout = Omit<PanelLayout, keyof SidebarLayout>;
+
 export const defaultPanelLayout: PanelLayout = {
   sidebar: 248,
   files: 220,
@@ -68,7 +71,7 @@ export function parsePanelLayout(value: string | null): PanelLayout {
 // retaining all three panels and the user's preferred sizes for a larger screen.
 export function fitThreeColumns(
   width: number,
-  layout: PanelLayout,
+  layout: WorkbenchLayout,
   showPdf: boolean,
   showTools: boolean,
 ) {
@@ -116,7 +119,7 @@ export function fitAgentColumns(width: number, preferred: number) {
 }
 // A conversation needs room for both its transcript and composer. Zero means
 // an automatic starting size, including layouts saved before AI had its own size.
-export function fitBottomPanel(height: number, layout: PanelLayout) {
+export function fitBottomPanel(height: number, layout: WorkbenchLayout) {
   if (layout.bottomTab !== "ai") {
     const max = Math.max(120, Math.min(600, height - 300));
     return { height: clamp(layout.terminal, 120, max), min: 120, max };
@@ -129,7 +132,7 @@ export function fitBottomPanel(height: number, layout: PanelLayout) {
 }
 export function fitWorkbench(
   width: number,
-  layout: PanelLayout,
+  layout: WorkbenchLayout,
   showPdf: boolean,
 ) {
   const separatorSpace = showPdf ? 8 : 4;

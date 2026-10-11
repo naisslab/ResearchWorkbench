@@ -3,35 +3,49 @@ import {
   defaultPanelLayout,
   parsePanelLayout,
   panelLayoutKey,
-  type PanelLayout,
 } from "./panel-layout";
-export function usePanelLayout() {
-  const [layout, setLayout] = useState(() => {
-    let stored = null;
-    try {
-      stored = localStorage.getItem(panelLayoutKey);
-    } catch {
-      /* Storage may be unavailable. */
-    }
-    // Until the user picks, small windows start with the icon rail.
-    return stored
-      ? parsePanelLayout(stored)
-      : { ...defaultPanelLayout, sidebarCollapsed: window.innerWidth < 1280 };
-  });
+// The legacy combined layout is read only for migration/defaults.
+function readLayout(key: string) {
+  try {
+    return localStorage.getItem(key) ?? localStorage.getItem(panelLayoutKey);
+  } catch {
+    return null;
+  }
+}
+function useStoredLayout<T>(key: string, initial: () => T) {
+  const [layout, setLayout] = useState(initial);
   useEffect(() => {
-    // Keep layout independent of project data and Git changes.
     try {
-      localStorage.setItem(panelLayoutKey, JSON.stringify(layout));
-    } catch {
-      /* Storage may be unavailable. */
-    }
-  }, [layout]);
+      localStorage.setItem(key, JSON.stringify(layout));
+    } catch {}
+  }, [layout, key]);
   const change = useCallback(
-    (changes: Partial<PanelLayout>) =>
+    (changes: Partial<T>) =>
       setLayout((previous) => ({ ...previous, ...changes })),
     [],
   );
   return { layout, change };
+}
+export function useSidebarLayout() {
+  const key = "research-workbench.sidebar";
+  return useStoredLayout(key, () => {
+    const stored = readLayout(key);
+    const { sidebar, sidebarCollapsed } = stored
+      ? parsePanelLayout(stored)
+      : { ...defaultPanelLayout, sidebarCollapsed: window.innerWidth < 1280 };
+    return { sidebar, sidebarCollapsed };
+  });
+}
+export function useProjectPanelLayout(projectId: string) {
+  const key = `research-workbench.project-panels.${projectId}`;
+  return useStoredLayout(key, () => {
+    const {
+      sidebar: _sidebar,
+      sidebarCollapsed: _collapsed,
+      ...layout
+    } = parsePanelLayout(readLayout(key));
+    return layout;
+  });
 }
 export function usePanelSize() {
   const [element, setElement] = useState<HTMLDivElement | null>(null);
@@ -43,6 +57,7 @@ export function usePanelSize() {
     if (!element) return;
     const measure = () => {
       const { width, height } = element.getBoundingClientRect();
+      if (!width || !height) return;
       setSize((previous) =>
         previous.width === width && previous.height === height
           ? previous

@@ -13,6 +13,62 @@ const {
 } = require("../electron/ai-changes.cjs");
 const run = promisify(execFile);
 
+test("paper reviews retain run PDFs through collection and reject builds after later edits", async (t) => {
+  const f = await fixture(t);
+  const { PDFDocument } = require("pdf-lib");
+  async function pdf(text) {
+    const doc = await PDFDocument.create();
+    doc.addPage().drawText(text);
+    return Buffer.from(await doc.save());
+  }
+  const before = await pdf("Original result"),
+    after = await pdf("Revised result");
+  await f.write("main.tex", "before");
+  await f.write(".research-build/main.pdf", before);
+  await f.write(".research-build/main.log", "LaTeX Warning: old warning\n");
+  const manuscript = { folder: f.folder, mainFile: "main.tex" };
+  await f.store.begin(f.id, [f.folder], manuscript);
+  const alias = path.join(path.dirname(f.folder), "project-alias");
+  await fs.symlink(f.folder, alias);
+  assert.deepEqual(
+    (
+      await require("../electron/paper-snapshot.cjs").paperSnapshot({
+        folder: alias,
+        mainFile: "main.tex",
+      })
+    ).bytes,
+    before,
+  );
+  await f.write("main.tex", "after");
+  await f.write(".research-build/main.pdf", after);
+  await f.store.finish(f.id);
+  await f.store.validatePaperBuild(f.id, [f.folder], manuscript);
+  await f.store.recordPaperBuild(f.id, {
+    ok: false,
+    log: "! Build failed\nLaTeX Warning: new warning",
+  });
+  const restarted = createChangeStore(f.storage);
+  await restarted.collect();
+  const review = await restarted.paper(f.id);
+  assert.deepEqual(review.before.data, before);
+  assert.deepEqual(review.after.data, after);
+  assert.equal(review.build.ok, false);
+  assert.ok(review.build.warnings.includes("LaTeX Warning: new warning"));
+  await f.write("main.tex", "later user change");
+  await assert.rejects(
+    restarted.validatePaperBuild(f.id, [f.folder], manuscript),
+    /changed after this run/,
+  );
+  await assert.rejects(
+    restarted.validatePaperBuild(f.id, [f.folder], {
+      ...manuscript,
+      mainFile: "other.tex",
+    }),
+    /different manuscript/,
+  );
+  assert.deepEqual((await restarted.paper(f.id)).after.data, after);
+});
+
 async function fixture(t, options) {
   const directory = await fs.mkdtemp(
     path.join(os.tmpdir(), "research-changes-"),

@@ -12,6 +12,7 @@ const { atomicWrite, validateState } = require("./core.cjs");
 const allowed = [
   "workspace.json",
   "pdf-annotations",
+  "editor-drafts",
   "ai/conversations",
   "ai/chats",
   "ai/changes",
@@ -442,12 +443,22 @@ async function restoreBackup({
       "ai/chats",
       "ai/changes/runs",
       "pdf-annotations",
+      "editor-drafts",
     ]) {
       const location = path.join(stage, folder);
       if (!(await fs.stat(location).catch(() => null))) continue;
       await walk(location, async (file, relative, entry) => {
         if (!entry.isFile() || !file.endsWith(".json")) return;
-        let value = remap(JSON.parse(await fs.readFile(file, "utf8")));
+        let value = JSON.parse(await fs.readFile(file, "utf8"));
+        // Older verification digests used absolute paths. Keep their original
+        // identities across restores; new digests use root-relative paths.
+        if (
+          folder === "ai/changes/runs" &&
+          value.afterFingerprint &&
+          value.fingerprintVersion !== 2
+        )
+          value.fingerprintRoots ??= value.roots;
+        value = remap(value);
         if (folder === "ai/conversations" || folder === "ai/chats") {
           if (
             !Array.isArray(value.messages) ||
