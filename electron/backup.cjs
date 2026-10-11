@@ -16,6 +16,7 @@ const allowed = [
   "ai/conversations",
   "ai/chats",
   "ai/changes",
+  "ai/attachments",
 ];
 const hash = (data) => crypto.createHash("sha256").update(data).digest("hex");
 const within = (parent, child) =>

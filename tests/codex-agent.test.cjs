@@ -365,6 +365,12 @@ test(
           bytes = zlib.gunzipSync(bytes);
         const body = JSON.parse(bytes.toString());
         requests++;
+        // The dropped image reaches the model as image input.
+        if (requests === 1)
+          assert.match(
+            JSON.stringify(body.input),
+            /data:image\/png;base64,iVBORw0KGgo/,
+          );
         // The runtime accepted every schema and offers each tool to the model.
         for (const { name } of TOOLS)
           assert.ok(
@@ -429,6 +435,16 @@ test(
       server.once("error", reject);
       server.listen(0, "127.0.0.1", resolve);
     });
+    const image = path.join(root, "figure.png");
+    await fs.writeFile(
+      image,
+      Buffer.from(
+        "89504e470d0a1a0a0000000d4948445200000008000000080806000000" +
+          "c40fbe8b0000001249444154789c63504838f01f1f6618190a00c4af8f" +
+          "c19d70eb660000000049454e44ae426082",
+        "hex",
+      ),
+    );
     agent = createCodexAgent({
       accessToken: "unused-fixture-token",
       baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
@@ -440,6 +456,7 @@ test(
       writableRoots: [root],
       text: "Record a writing to-do and note.",
       dynamicTools: TOOLS.map(toolSpec),
+      images: [image],
       signal: AbortSignal.timeout(20000),
       onThread: async () => {},
       onEvent: () => {},

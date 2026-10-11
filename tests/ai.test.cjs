@@ -1399,6 +1399,77 @@ test("each request reports when its project's agent starts and finishes, and whe
   assert.deepEqual((await f.client.getState()).runningProjects, []);
 });
 
+test("images are stored once, reach the agent as local images, keep the chat out of Full access, and are refused by text-only models", async (t) => {
+  const f = await clientFixture(t);
+  // An 8×8 PNG.
+  const png = Buffer.from(
+    "89504e470d0a1a0a0000000d4948445200000008000000080806000000" +
+      "c40fbe8b0000001249444154789c63504838f01f1f6618190a00c4af8f" +
+      "c19d70eb660000000049454e44ae426082",
+    "hex",
+  );
+  const send = (model, images, permissionMode = "default") =>
+    f.client.send({
+      projectId: "one",
+      message: "Describe this figure",
+      model,
+      permissionMode,
+      images,
+    });
+  await assert.rejects(
+    send("fixture-model", [
+      { name: "notes.png", type: "image/png", data: Buffer.from("not a png") },
+    ]),
+    /PNG, JPEG, GIF or WebP/,
+  );
+  await assert.rejects(
+    send("fixture-model-2", [
+      { name: "fig.png", type: "image/png", data: png },
+    ]),
+    /does not accept images/,
+  );
+  await send(
+    "fixture-model",
+    [
+      { name: "fig.png", type: "image/png", data: png },
+      { name: "copy.png", type: "image/png", data: png },
+    ],
+    "full-access",
+  );
+  await waitFor(
+    async () =>
+      (await f.client.conversation("one")).messages.at(-1)?.status ===
+      "completed",
+  );
+  const [user, assistant] = (await f.client.conversation("one")).messages;
+  assert.deepEqual(
+    user.images.map((image) => image.name),
+    ["fig.png", "copy.png"],
+  );
+  assert.match(user.images[0].file, /^[a-f0-9]{64}\.png$/);
+  assert.equal(user.images[0].file, user.images[1].file);
+  assert.deepEqual(await fs.readdir(path.join(f.directory, "attachments")), [
+    user.images[0].file,
+  ]);
+  assert.deepEqual(await f.client.readImage(user.images[0].file), png);
+  await assert.rejects(f.client.readImage("../ai-usage.json"), /image/);
+  const received = JSON.parse(
+    await fs.readFile(
+      path.join(f.projectFolder, "received-agent-settings.json"),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(
+    received.turn.input.filter((item) => item.type === "localImage"),
+    user.images.map(({ file }) => ({
+      type: "localImage",
+      path: path.join(f.directory, "attachments", file),
+    })),
+  );
+  assert.equal(assistant.permissionMode, "default");
+  assert.match(assistant.permissionNote, /images/);
+});
+
 test("exhausted connection retries preserve completed work and show the upstream diagnostic without a loopback URL", async (t) => {
   let attempts = 0;
   const f = await clientFixture(t, async () => {

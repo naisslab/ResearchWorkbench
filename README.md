@@ -51,7 +51,7 @@ Project board 按研究时间线排列阶段：Idea Exploration → Experiments 
 
 工作台默认进入 **Agent**：左侧使用完整高度的 Agent，右侧阅读 PDF。顶部可切换 **Source** 手动编辑，或 **Both** 从左到右以完整高度并排显示源码、Agent 和 PDF，文件树保留在源码旁。三栏宽度在重启后保留；拖动竖直分隔线调整，双击恢复默认。窗口较窄时可水平滚动查看各栏。**Source** 模式下，Terminal、AI 和 Build log 在源码与 PDF 下方打开，点击底部的标签切换或收起。切换保留对话草稿、编辑内容与 PDF 阅读位置；在 **Agent** 模式点击回复中的源码链接会切换到 **Both**，同时显示编辑器和 Agent。模式与分栏宽度会记住，拖动 PDF 与 Agent 之间的分隔线可调整比例。**AI** 与 **Terminal**、**Build log** 共用工具栏。点击 **Continue with ChatGPT**，在系统浏览器登录并允许应用使用 ChatGPT plan。应用使用 [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source/) 和 [Codex app-server](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server) 执行本地 Agent 任务；Codex runtime 与 Code Mode host 随应用打包。`gpt-6-astra` 等模型通过 Code Mode host 调用本地文件与执行工具。
 
-模型菜单读取该账户实时返回的可用模型。选择项目目录后，可要求 Agent 修改多个文件、运行脚本或修复 LaTeX 编译。**Current file** 和 **Selection** 附加文本快照；发送前保存当前编辑文件，运行时暂停编辑，结束后刷新文件、PDF 和 Git 状态。执行记录可展开查看命令输出及文件 diff，需要额外访问时在 AI 页审批。**Stop** 中断当前任务，已完成的文件修改会保留。
+模型菜单读取该账户实时返回的可用模型。选择项目目录后，可要求 Agent 修改多个文件、运行脚本或修复 LaTeX 编译。**Current file** 和 **Selection** 附加文本快照；把 PNG、JPEG、GIF 或 WebP 图片拖到输入框或直接粘贴，图片以缩略图显示，可单独移除，随下一条消息发送（最多 6 张，每张 10 MB 以内）。图片保存在 Application Support 的 `Research Workbench/ai/attachments/`，完整备份包含它们；对话记录中显示已发送的图片。模型目录标明不支持图片输入的模型会直接提示更换模型。图片中的文字可能含有针对 Agent 的指令，因此带图片的对话与附加 PDF 摘录一样，按 Default permissions 运行。发送前保存当前编辑文件，运行时暂停编辑，结束后刷新文件、PDF 和 Git 状态。执行记录可展开查看命令输出及文件 diff，需要额外访问时在 AI 页审批。**Stop** 中断当前任务，已完成的文件修改会保留。
 
 每次请求结束后，**Review changes** 打开逐文件审阅窗口。**Diff** 显示增删颜色和修改前后的行号，点击行号跳回 source；**Before & after** 并排显示完整文件的预览。比较基于请求开始前的文件，包含通过命令改动的文件，并保留原有未提交编辑。停止的请求也能审阅其部分修改。
 

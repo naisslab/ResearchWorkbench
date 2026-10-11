@@ -1702,3 +1702,51 @@
   min-width: 0;
   flex: 1;
 }
+
+/* Images dropped or pasted into the composer, and those sent with a request. */
+.ai-composer.dropping .ai-composer-inner {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+.ai-image-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px 0;
+}
+.ai-image-attachments figure {
+  position: relative;
+  margin: 0;
+}
+.ai-image-attachments img,
+.ai-message-images img {
+  display: block;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.ai-image-attachments button {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--text);
+  color: var(--surface);
+}
+.ai-message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 5px 0 7px;
+}
+.ai-message-images img {
+  width: 96px;
+  height: 96px;
+}

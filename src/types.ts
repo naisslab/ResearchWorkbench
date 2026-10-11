@@ -379,6 +379,8 @@ export interface ResearchAPI {
     rootId: string;
     context?: AIContext;
     skillIds?: string[];
+    /** Dropped or pasted images: PNG, JPEG, GIF or WebP, up to six. */
+    images?: { name: string; type: string; data: Uint8Array }[];
   }): Promise<AIResult<AIConversation>>;
   aiQueue(request: {
     projectId: string;
@@ -395,6 +397,7 @@ export interface ResearchAPI {
   aiStop(projectId: string): Promise<AIResult<AIConversation>>;
   aiClear(projectId: string): Promise<AIResult<AIConversation>>;
   aiOpenUsage(): Promise<AIResult<void>>;
+  aiImage(file: string): Promise<AIResult<Uint8Array>>;
   onAIState(fn: (state: AIState) => void): () => void;
   onAIConversation(fn: (conversation: AIConversation) => void): () => void;
   onAIDelta(
@@ -586,6 +589,8 @@ export interface AIModel {
   supportedReasoningEfforts: { reasoningEffort: string; description: string }[];
   defaultReasoningEffort?: string;
   serviceTiers: { id: string; name: string; description: string }[];
+  /** Whether the model accepts image input. */
+  images?: boolean;
 }
 export interface AIAgentSettings {
   permissionMode: AIPermissionMode;
@@ -638,6 +643,8 @@ export interface AIMessage {
   serviceTier?: string;
   status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
   attachments?: { name: string; kind: string }[];
+  /** Images sent with a request, stored by the main process as `file`. */
+  images?: { name: string; file: string }[];
   skills?: { name: string; displayName: string }[];
   usage?: { inputTokens: number; outputTokens: number };
   error?: AIErrorInfo;

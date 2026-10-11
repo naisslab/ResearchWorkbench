@@ -1322,6 +1322,7 @@ app
       "ai:clear": (id) => ai.clear(id),
       "ai:answer": (request) => ai.answer(request),
       "ai:open-usage": () => ai.openUsage(),
+      "ai:image": (file) => ai.readImage(file),
     }))
       handle(channel, async (...args) => {
         try {

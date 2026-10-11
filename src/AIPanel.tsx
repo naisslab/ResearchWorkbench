@@ -223,6 +223,37 @@ function Approval({
   );
 }
 
+// An image sent with a request, read back from the app's attachments.
+function SentImage({ name, file }: { name: string; file: string }) {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    let created = "",
+      cancelled = false;
+    void window.research!.aiImage(file).then((result) => {
+      if (cancelled || !result.ok) return;
+      created = URL.createObjectURL(new Blob([new Uint8Array(result.value)]));
+      setUrl(created);
+    });
+    return () => {
+      cancelled = true;
+      URL.revokeObjectURL(created);
+    };
+  }, [file]);
+  return url ? (
+    <img src={url} alt={name} title={name} />
+  ) : (
+    <small className="ai-message-attachment">{name}</small>
+  );
+}
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+interface PendingImage {
+  id: string;
+  name: string;
+  type: string;
+  data: Uint8Array;
+  url: string;
+}
+
 const Message = memo(function Message({
   message,
   modelLabel,
@@ -274,6 +305,13 @@ const Message = memo(function Message({
           </span>
         )}
       </div>
+      {!!message.images?.length && (
+        <div className="ai-message-images">
+          {message.images.map((image) => (
+            <SentImage key={image.file} {...image} />
+          ))}
+        </div>
+      )}
       {message.attachments?.map((attachment, index) => (
         <small className="ai-message-attachment" key={index}>
           <FileText size={11} /> {attachment.name}
@@ -427,6 +465,24 @@ export default memo(function AIPanel({
   const [model, setModel] = useState("");
   const [agentRoot, setAgentRoot] = useState("primary");
   const [context, setContext] = useState<AIContext>();
+  // Images dropped or pasted into the composer, sent with the next request.
+  const [images, setImages] = useState<PendingImage[]>([]);
+  const [dropping, setDropping] = useState(false);
+  const pendingImages = useRef(images);
+  pendingImages.current = images;
+  useEffect(
+    () => () =>
+      pendingImages.current.forEach((image) => URL.revokeObjectURL(image.url)),
+    [],
+  );
+  const removeImages = (remove: (image: PendingImage) => boolean) =>
+    setImages((current) =>
+      current.filter((image) => {
+        if (!remove(image)) return true;
+        URL.revokeObjectURL(image.url);
+        return false;
+      }),
+    );
   const [operation, setOperation] = useState("");
   const [reviewMessage, setReviewMessage] = useState<string>();
   const [error, setError] = useState("");
@@ -487,6 +543,31 @@ export default memo(function AIPanel({
     (!!queued.length && !conversation.queuePaused);
   const profile = state?.profiles.find((p) => p.id === state.activeProfileId);
   const selectedModel = state?.models.find((m) => m.slug === model);
+  async function addImages(files: File[]) {
+    const accepted = files.filter((file) => IMAGE_TYPES.includes(file.type));
+    const problem =
+      accepted.length < files.length
+        ? "Attach PNG, JPEG, GIF or WebP images."
+        : selectedModel?.images === false
+          ? `${selectedModel.displayName} does not accept images. Choose another model.`
+          : accepted.some((file) => file.size > 10 * 1024 * 1024)
+            ? "Each image can be up to 10 MB."
+            : pendingImages.current.length + accepted.length > 6
+              ? "Attach up to six images."
+              : "";
+    if (problem) return setError(problem);
+    const next = await Promise.all(
+      accepted.map(async (file) => ({
+        id: crypto.randomUUID(),
+        name: file.name || "Pasted image",
+        type: file.type,
+        data: new Uint8Array(await file.arrayBuffer()),
+        url: URL.createObjectURL(file),
+      })),
+    );
+    setError("");
+    setImages((current) => [...current, ...next]);
+  }
   const { settings: agentSettings, update: updateAgentSettings } =
     useAIAgentSettings(state?.activeProfileId, project.id, selectedModel);
   const roots = useMemo(
@@ -897,6 +978,7 @@ export default memo(function AIPanel({
       return;
     submitting.current = true;
     const message = draft;
+    const sentImages = images;
     stickToBottom.current = true;
     try {
       await perform("send", async () => {
@@ -910,11 +992,17 @@ export default memo(function AIPanel({
             rootId: agentRoot,
             context,
             skillIds: selectedSkills.map((skill) => skill.id),
+            images: sentImages.map(({ name, type, data }) => ({
+              name,
+              type,
+              data,
+            })),
           }),
         );
         setConversation(next);
         updateDraft("");
         setContext(undefined);
+        removeImages((image) => sentImages.includes(image));
         setSelectedSkills([]);
         setSkillsOpen(false);
         input.current?.focus();
@@ -1356,10 +1444,25 @@ export default memo(function AIPanel({
         )}
       </div>
       <form
-        className="ai-composer"
+        className={`ai-composer ${dropping ? "dropping" : ""}`}
         onSubmit={(event) => {
           event.preventDefault();
           void send();
+        }}
+        onDragOver={(event) => {
+          if (!event.dataTransfer.types.includes("Files")) return;
+          event.preventDefault();
+          setDropping(true);
+        }}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node))
+            setDropping(false);
+        }}
+        onDrop={(event) => {
+          if (!event.dataTransfer.files.length) return;
+          event.preventDefault();
+          setDropping(false);
+          void addImages([...event.dataTransfer.files]);
         }}
       >
         <div className="ai-composer-inner">
@@ -1590,6 +1693,28 @@ export default memo(function AIPanel({
                 close={closeSkillCommands}
               />
             )}
+            {!!images.length && (
+              <div
+                className="ai-image-attachments"
+                aria-label="Attached images"
+              >
+                {images.map((image) => (
+                  <figure key={image.id}>
+                    <img src={image.url} alt={image.name} title={image.name} />
+                    <button
+                      type="button"
+                      aria-label={`Remove ${image.name}`}
+                      disabled={operation === "send"}
+                      onClick={() =>
+                        removeImages((item) => item.id === image.id)
+                      }
+                    >
+                      <X size={10} />
+                    </button>
+                  </figure>
+                ))}
+              </div>
+            )}
             <textarea
               ref={input}
               aria-label="Message the AI agent"
@@ -1617,6 +1742,14 @@ export default memo(function AIPanel({
                 inspectSkillCommand(event.currentTarget);
               }}
               onSelect={(event) => inspectSkillCommand(event.currentTarget)}
+              onPaste={(event) => {
+                const files = [...event.clipboardData.files].filter((file) =>
+                  file.type.startsWith("image/"),
+                );
+                if (!files.length) return;
+                event.preventDefault();
+                void addImages(files);
+              }}
               onFocus={(event) => inspectSkillCommand(event.currentTarget)}
               onBlur={(event) => {
                 if (

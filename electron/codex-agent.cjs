@@ -428,6 +428,7 @@ function createCodexAgent({
     onThread,
     onEvent,
     skills = [],
+    images = [],
     dynamicTools = [],
     instructions = [],
     onTool,
@@ -494,6 +495,7 @@ function createCodexAgent({
         serviceTierForTurn: serviceTier,
         input: [
           { type: "text", text },
+          ...images.map((path) => ({ type: "localImage", path })),
           ...skills.map(({ name, path }) => ({ type: "skill", name, path })),
         ],
       });

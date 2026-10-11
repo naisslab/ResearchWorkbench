@@ -114,6 +114,7 @@ contextBridge.exposeInMainWorld("research", {
   aiClear: invoke("ai:clear"),
   aiAnswer: invoke("ai:answer"),
   aiOpenUsage: invoke("ai:open-usage"),
+  aiImage: invoke("ai:image"),
   onAIState: listen("ai:state"),
   onAIConversation: listen("ai:conversation"),
   onAIDelta: listen("ai:delta"),

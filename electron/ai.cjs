@@ -294,6 +294,11 @@ function createAI({
             capabilities?.supportedReasoningEfforts || [],
           defaultReasoningEffort: capabilities?.defaultReasoningEffort,
           serviceTiers: capabilities?.serviceTiers || [],
+          // A model the bundled catalog does not describe is offered images;
+          // the service reports it if they are refused.
+          images:
+            !capabilities?.inputModalities ||
+            capabilities.inputModalities.includes("image"),
         });
       }
       if ((await auth.getSession()).activeProfileId !== profileId)
@@ -407,6 +412,75 @@ function createAI({
   function publishConversation(value) {
     emit("conversation", publicConversation(value));
   }
+  // Images go to disk once, named by content, so queued requests and saved
+  // chats refer to them by file name.
+  const IMAGE_TYPES = {
+    "image/png": [
+      "png",
+      (b) => b.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])),
+    ],
+    "image/jpeg": [
+      "jpg",
+      (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+    ],
+    "image/gif": ["gif", (b) => b.subarray(0, 4).toString("latin1") === "GIF8"],
+    "image/webp": [
+      "webp",
+      (b) =>
+        b.subarray(0, 4).toString("latin1") === "RIFF" &&
+        b.subarray(8, 12).toString("latin1") === "WEBP",
+    ],
+  };
+  const imageFile = /^[a-f0-9]{64}\.(png|jpg|gif|webp)$/;
+  const imagePath = (file) => path.join(directory, "attachments", file);
+  async function storeImages(images) {
+    if (!Array.isArray(images) || images.length > 6)
+      throw new AIError("invalid_images", "Attach up to six images.");
+    const stored = [];
+    for (const image of images) {
+      const name =
+        typeof image?.name === "string" && image.name.trim()
+          ? image.name.trim().slice(0, 200)
+          : "image";
+      if (typeof image?.file === "string") {
+        // A queued request already stored its images.
+        if (!imageFile.test(image.file))
+          throw new AIError("invalid_images", "An attached image is invalid.");
+        await fs.access(imagePath(image.file)).catch(() => {
+          throw new AIError(
+            "image_missing",
+            "An attached image is no longer available. Attach it again.",
+          );
+        });
+        stored.push({ name, file: image.file });
+        continue;
+      }
+      const type = IMAGE_TYPES[image?.type];
+      const bytes =
+        image?.data instanceof Uint8Array ? Buffer.from(image.data) : null;
+      if (!type || !bytes || !type[1](bytes))
+        throw new AIError(
+          "invalid_images",
+          "Attach PNG, JPEG, GIF or WebP images.",
+        );
+      if (bytes.length > 10 * 1024 * 1024)
+        throw new AIError("invalid_images", "Each image can be up to 10 MB.");
+      const file = `${crypto.createHash("sha256").update(bytes).digest("hex")}.${type[0]}`;
+      await fs.mkdir(path.join(directory, "attachments"), { recursive: true });
+      await fs
+        .writeFile(imagePath(file), bytes, { flag: "wx" })
+        .catch((error) => {
+          if (error.code !== "EEXIST") throw error;
+        });
+      stored.push({ name, file });
+    }
+    return stored;
+  }
+  async function readImage(file) {
+    if (typeof file !== "string" || !imageFile.test(file))
+      throw new AIError("invalid_images", "Choose an attached image.");
+    return fs.readFile(imagePath(file));
+  }
   async function prepareRequest(
     {
       projectId,
@@ -418,6 +492,7 @@ function createAI({
       context,
       rootId,
       skillIds = [],
+      images = [],
     },
     expectedProfileId,
   ) {
@@ -524,18 +599,27 @@ function createAI({
         return skill;
       });
     }
+    const storedImages = await storeImages(images);
+    if (storedImages.length && selectedModel.images === false)
+      throw new AIError(
+        "model_without_images",
+        `${selectedModel.displayName} does not accept images. Choose another model or remove the images.`,
+      );
     let attachment;
     if (context) {
       await validateContext(projectId, context);
       attachment = { name: context.file, kind: context.kind };
     }
-    // PDF text, attached or read by a tool, can carry instructions from
-    // whoever wrote the PDF, and the chat keeps it in context, so such a chat
-    // never runs without approvals.
+    // PDF text, attached or read by a tool, and images can carry
+    // instructions from whoever wrote them, and the chat keeps them in
+    // context, so such a chat never runs without approvals.
     const pdfText =
       context?.kind === "pdf" ||
+      storedImages.length > 0 ||
       value.untrustedText ||
-      value.messages.some((m) => m.attachments?.some((a) => a.kind === "pdf"));
+      value.messages.some(
+        (m) => m.images?.length || m.attachments?.some((a) => a.kind === "pdf"),
+      );
     const appliedPermissions =
       permissionMode === "full-access" && pdfText ? "default" : permissionMode;
     const engine = ENGINES[p.latexEngine]?.name;
@@ -563,6 +647,7 @@ function createAI({
       text: message.trim(),
       inputText,
       attachments: attachment ? [attachment] : [],
+      images: storedImages,
       skills: skills.map(({ name, displayName, path }) => ({
         name,
         displayName,
@@ -579,7 +664,7 @@ function createAI({
       permissionMode: appliedPermissions,
       ...(appliedPermissions !== permissionMode && {
         permissionNote:
-          "Ran with Default permissions because this chat includes PDF text.",
+          "Ran with Default permissions because this chat includes PDF text or images.",
       }),
       reasoningEffort: effort,
       serviceTier,
@@ -613,6 +698,7 @@ function createAI({
         rootId: rootId || "primary",
         context: context ? structuredClone(context) : undefined,
         skillIds: [...skillIds],
+        images: storedImages,
       },
     };
   }
@@ -1074,6 +1160,9 @@ function createAI({
             args,
           ),
         skills: value.messages.at(-2).skills || [],
+        images: (value.messages.at(-2).images || []).map(({ file }) =>
+          imagePath(file),
+        ),
         signal,
         onThread: async (threadId) => {
           value.threadId = threadId;
@@ -1519,6 +1608,7 @@ function createAI({
     reviewFile,
     paperReview,
     paperBuild,
+    readImage,
     revert,
     refreshModels,
     skills: async (projectId, rootId, forceReload) =>

@@ -95,6 +95,37 @@ await smoke("writing-agent", async () => {
     .waitFor();
   assert.equal(await input.inputValue(), draft);
   assert.equal(await page.locator(".ai-user-text").count(), 0);
+  // Images dropped on the composer show as thumbnails until sent or removed;
+  // other files are refused.
+  const drop = (name, type, base64) =>
+    page.locator(".ai-composer").evaluate(
+      (form, { name, type, base64 }) => {
+        const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+        const data = new DataTransfer();
+        data.items.add(new File([bytes], name, { type }));
+        for (const kind of ["dragover", "drop"])
+          form.dispatchEvent(
+            new DragEvent(kind, {
+              dataTransfer: data,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+      },
+      { name, type, base64 },
+    );
+  await drop(
+    "figure.png",
+    "image/png",
+    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGNQSDjwHx9mGBkKAMSvj8GdcOtmAAAAAElFTkSuQmCC",
+  );
+  await page.getByRole("img", { name: "figure.png" }).waitFor();
+  await page.getByRole("button", { name: "Remove figure.png" }).click();
+  await page
+    .getByRole("img", { name: "figure.png" })
+    .waitFor({ state: "detached" });
+  await drop("notes.txt", "text/plain", btoa("not an image"));
+  await page.getByText("Attach PNG, JPEG, GIF or WebP images.").waitFor();
   // Exercise the real main/renderer bridge and wait for its receipt.
   const bridge = (tool, input) =>
     app.evaluate(

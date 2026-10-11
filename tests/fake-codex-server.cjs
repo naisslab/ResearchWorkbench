@@ -252,6 +252,7 @@ readline.createInterface({ input: process.stdin }).on("line", async (line) => {
           },
           {
             model: "fixture-model-2",
+            inputModalities: ["text"],
             defaultReasoningEffort: "low",
             supportedReasoningEfforts: [
               { reasoningEffort: "low", description: "Lighter reasoning" },
