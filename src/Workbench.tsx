@@ -322,10 +322,13 @@ function Workbench({
   const [localTerminalRequest, setLocalTerminalRequest] = useState(0);
   const [agentRunning, setAgentRunning] = useState(false);
   const [selection, setSelection] = useState("");
-  const [pdfContext, setPdfContext] = useState<{
-    context: import("./types").AIContext;
+  // A request handed to the agent's composer; the user sends it.
+  const [agentRequest, setAgentRequest] = useState<{
+    context?: import("./types").AIContext;
+    draft: string;
     nonce: number;
   }>();
+  const [agentBuilding, setAgentBuilding] = useState(false);
   const [log, setLog] = useState("");
   const [buildState, setBuildState] = useState<"idle" | "ok" | "error">("idle");
   // The root a new file goes in, while the dialog is open.
@@ -1004,6 +1007,23 @@ function Workbench({
     if (manuscript.settled) void checkSubmission();
     else checkAfterRead.current = true;
   });
+  // The agent compiles through the same build as Compile; its log, PDF and
+  // checks appear here as if the user had compiled.
+  useEffect(
+    () =>
+      window.research!.onAgentBuild((event) => {
+        if (event.projectId !== project.id) return;
+        setAgentBuilding(event.running);
+        if (event.running) return;
+        if (event.log !== undefined) {
+          setLog(event.log);
+          setBuildState(event.ok ? "ok" : "error");
+        }
+        if (event.pdf) setPdf(event.pdf);
+        checkWhenRead();
+      }),
+    [project.id],
+  );
   useEffect(() => {
     if (!checkAfterRead.current || !manuscript.settled) return;
     checkAfterRead.current = false;
@@ -1702,7 +1722,12 @@ function Workbench({
                   persistSessions();
                 }}
                 onAskAgent={(context) => {
-                  setPdfContext({ context, nonce: Date.now() });
+                  setAgentRequest({
+                    context,
+                    draft:
+                      "Please revise the manuscript using this PDF feedback, then show the changes.",
+                    nonce: Date.now(),
+                  });
                   switchMode("agent");
                   setExpandedPdf(false);
                 }}
@@ -1859,7 +1884,7 @@ function Workbench({
           <AIPanel
             key={project.id}
             project={project}
-            pdfContext={pdfContext}
+            request={agentRequest}
             searchTarget={searchTarget}
             file={active}
             rootId={activeRoot}
@@ -1882,7 +1907,19 @@ function Workbench({
         <div className="bottom-tab-content" hidden={bottomTab !== "build"}>
           <BuildLog
             projectId={project.id}
-            busy={busy}
+            busy={busy || agentBuilding}
+            onAskAgent={
+              busy || agentRunning
+                ? undefined
+                : () => {
+                    setAgentRequest({
+                      draft:
+                        "Fix the problems listed in the Build log and any failed submission checks, then compile again to confirm.",
+                      nonce: Date.now(),
+                    });
+                    switchMode("agent");
+                  }
+            }
             state={buildState}
             log={log}
             problems={problems}

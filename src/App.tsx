@@ -1,4 +1,10 @@
-import { applyWritingCapture } from "./writing-capture";
+import {
+  applyProjectUpdate,
+  applyWritingCapture,
+  manuscriptChecks,
+  type ProjectUpdate,
+  type WritingCapture,
+} from "./window-tools";
 import {
   lazy,
   Suspense,
@@ -23,6 +29,7 @@ import {
   X,
 } from "lucide-react";
 import type {
+  AgentToolRequest,
   Commit,
   Navigate,
   Project,
@@ -220,27 +227,58 @@ export default function App() {
     },
     [commit, show],
   );
+  // The agent's workspace edits go through the same saves as the user's,
+  // with an Undo, and it is told the outcome only once they are saved.
+  const runWindowTool = useCallback(
+    async ({ tool, projectId, input }: AgentToolRequest) => {
+      if (tool === "check_submission") {
+        const project = stateRef.current?.projects.find(
+          (p) => p.id === projectId,
+        );
+        if (!project) throw new Error("The project no longer exists.");
+        return manuscriptChecks(project);
+      }
+      let result = {};
+      const saved =
+        tool === "record_writing_items"
+          ? await commitWithUndo(
+              "Saved writing items in Project details",
+              (s) => applyWritingCapture(s, projectId, input as WritingCapture),
+            )
+          : await commitWithUndo("Agent updated the project plan", (s) => {
+              const next = applyProjectUpdate(
+                s,
+                projectId,
+                input as ProjectUpdate,
+              );
+              result = next.result;
+              return next.state;
+            });
+      if (!saved)
+        throw new Error(
+          "The change could not be saved. The project may have closed or a disk write failed.",
+        );
+      return { saved: true, ...result };
+    },
+    [commitWithUndo],
+  );
   useEffect(
     () =>
-      window.research?.onWritingCapture((request) => {
-        void (async () => {
-          let saved = false;
-          try {
-            saved = await commitWithUndo(
-              "Saved writing items in Project details",
-              (state) =>
-                applyWritingCapture(state, request.projectId, request.capture),
-            );
-          } catch (error) {
-            report((error as Error).message);
-          } finally {
-            await window
-              .research!.completeWritingCapture(request.id, { saved })
-              .catch(() => {});
-          }
-        })();
+      window.research?.onAgentTool((request) => {
+        void runWindowTool(request).then(
+          (result) =>
+            window.research!.completeAgentTool(request.id, {
+              ok: true,
+              result,
+            }),
+          (error: Error) =>
+            window.research!.completeAgentTool(request.id, {
+              ok: false,
+              error: error.message,
+            }),
+        );
       }),
-    [commitWithUndo, report],
+    [runWindowTool],
   );
   const updateProject = useCallback<UpdateProject>(
     (id, changes, undo) => {

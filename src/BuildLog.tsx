@@ -13,6 +13,7 @@ export default memo(function BuildLog({
   open,
   compileOnSave,
   setCompileOnSave,
+  onAskAgent,
 }: {
   projectId: string;
   busy: boolean;
@@ -23,6 +24,8 @@ export default memo(function BuildLog({
   /** The submission check of the last compiled PDF. */
   checks: SubmissionCheck[] | null;
   open(file: string, rootId: string, line: number): void;
+  /** Puts a request to fix the listed problems in the agent's composer. */
+  onAskAgent?(): void;
   compileOnSave: boolean;
   setCompileOnSave(on: boolean): void;
 }) {
@@ -76,6 +79,14 @@ export default memo(function BuildLog({
               ? "Build failed"
               : "Ready to compile"}
         <span>latexmk · shell escape disabled</span>
+        {onAskAgent &&
+          !busy &&
+          (problems.length > 0 ||
+            checks?.some((check) => check.status !== "ok")) && (
+            <button className="button text small" onClick={onAskAgent}>
+              Ask Agent to fix
+            </button>
+          )}
         <label title="Compile after ⌘S saves a .tex or .bib file in the manuscript folder">
           <input
             type="checkbox"

@@ -43,6 +43,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import type {
+  AgentReplies,
   AnnotationColor,
   PdfAnnotation,
   PdfPoint,
@@ -660,6 +661,17 @@ export default memo(function PdfReader({
   const [versions, setVersions] = useState<PdfVersion[]>([]),
     [showVersions, setShowVersions] = useState(false),
     [documentKey, setDocumentKey] = useState("");
+  // What the agent says it changed for each annotation; only the user
+  // resolves feedback.
+  const [agentReplies, setAgentReplies] = useState<AgentReplies>({});
+  useEffect(
+    () =>
+      window.research!.onAgentReplies((event) => {
+        if (event.projectId === projectId && event.key === documentKey)
+          setAgentReplies(event.replies);
+      }),
+    [projectId, documentKey],
+  );
   const [pageNumber, setPageNumber] = useState(1);
   const [selectedText, setSelectedText] = useState<{
     text: string;
@@ -798,6 +810,7 @@ export default memo(function PdfReader({
         await loadWorker();
         if (cancelled) return;
         setDocumentKey(data.key);
+        setAgentReplies(data.agentReplies || {});
         setItems(data.annotations);
         current.current = data.annotations;
         setSavedAt(data.updatedAt);
@@ -1448,7 +1461,11 @@ export default memo(function PdfReader({
                     <small>p. {item.page}</small>
                   </span>
                   <small className="pdf-feedback-state">
-                    {item.resolved ? "Resolved" : "Open"}
+                    {item.resolved
+                      ? "Resolved"
+                      : agentReplies[item.id]
+                        ? "Open · Agent replied"
+                        : "Open"}
                   </small>
                   {item.quote && <q>{item.quote}</q>}
                   {item.comment && <p>{item.comment}</p>}
@@ -1463,6 +1480,11 @@ export default memo(function PdfReader({
             )}
             {active && (
               <div className="pdf-note-editor">
+                {agentReplies[active.id] && (
+                  <p className="pdf-agent-reply">
+                    <strong>Agent</strong> {agentReplies[active.id].note}
+                  </p>
+                )}
                 <button
                   type="button"
                   className="button small"

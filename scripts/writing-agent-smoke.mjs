@@ -95,35 +95,39 @@ await smoke("writing-agent", async () => {
     .waitFor();
   assert.equal(await input.inputValue(), draft);
   assert.equal(await page.locator(".ai-user-text").count(), 0);
-  // Exercise the real main/renderer save bridge and wait for its receipt.
-  const receipt = await app.evaluate(
-    async ({ app, BrowserWindow }, projectId) => {
-      const requireApp = process
-        .getBuiltinModule("node:module")
-        .createRequire(app.getAppPath() + "/package.json");
-      const { createWritingCapture } = requireApp("./electron/writing.cjs");
-      const { ipcMain } = requireApp("electron");
-      const broker = createWritingCapture((request) =>
-        BrowserWindow.getAllWindows()[0].webContents.send(
-          "writing:capture",
-          request,
-        ),
-      );
-      ipcMain.removeHandler("writing:complete");
-      ipcMain.handle("writing:complete", (_event, id, result) =>
-        broker.complete(id, result),
-      );
-      return broker.request(
-        projectId,
-        {
-          tasks: ["修改摘要", "检查引用"],
-          note: "保留当前技术结论，先修改表达。",
-        },
-        new AbortController().signal,
-      );
-    },
-    id,
-  );
+  // Exercise the real main/renderer bridge and wait for its receipt.
+  const bridge = (tool, input) =>
+    app.evaluate(
+      async ({ app, BrowserWindow }, { projectId, tool, input }) => {
+        const requireApp = process
+          .getBuiltinModule("node:module")
+          .createRequire(app.getAppPath() + "/package.json");
+        const { createWindowTools } = requireApp("./electron/window-tools.cjs");
+        const { TOOLS } = requireApp("./electron/agent-tools.cjs");
+        const { ipcMain } = requireApp("electron");
+        const windowTools = createWindowTools((request) =>
+          BrowserWindow.getAllWindows()[0].webContents.send(
+            "agent:tool",
+            request,
+          ),
+        );
+        ipcMain.removeHandler("agent:tool-complete");
+        ipcMain.handle("agent:tool-complete", (_event, id, response) =>
+          windowTools.complete(id, response),
+        );
+        return windowTools.request(
+          projectId,
+          tool,
+          TOOLS.find((t) => t.name === tool).parse(input),
+          new AbortController().signal,
+        );
+      },
+      { projectId: id, tool, input },
+    );
+  const receipt = await bridge("record_writing_items", {
+    tasks: ["修改摘要", "检查引用"],
+    note: "保留当前技术结论，先修改表达。",
+  });
   assert.equal(receipt.saved, true);
   const read = () =>
     page.evaluate(
@@ -136,6 +140,30 @@ await smoke("writing-agent", async () => {
     ["修改摘要", "检查引用"],
   );
   assert.match((await read()).notes, /Previous note\n\n保留当前技术结论/);
+  const [abstract] = (await read()).tasks;
+  const update = await bridge("update_project", {
+    tasks: [{ id: abstract.id, status: "done", reason: "" }],
+    stage: "submitted",
+    milestones: [{ label: "Rebuttal", date: "2027-01-10", kind: "revision" }],
+  });
+  assert.deepEqual(update, {
+    saved: true,
+    tasks: 1,
+    stage: "submitted",
+    milestones: 1,
+  });
+  await page.getByText("Agent updated the project plan").waitFor();
+  assert.equal((await read()).tasks[0].done, true);
+  assert.equal((await read()).stage, "submitted");
+  // The window refuses an id that is not one of the project's to-dos.
+  await assert.rejects(
+    bridge("update_project", {
+      tasks: [{ id: "missing", status: "done", reason: "" }],
+      stage: "",
+      milestones: [],
+    }),
+    /No to-do has id missing/,
+  );
   await page.screenshot({ path: "output/playwright/writing-dictation.png" });
   await closeApp();
   ({ app, page } = await launchApp());

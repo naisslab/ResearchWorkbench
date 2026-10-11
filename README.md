@@ -69,7 +69,19 @@ Agent 回复支持 Markdown、列表、表格和带复制按钮的代码块。�
 
 听写使用 macOS 的 [SpeechAnalyzer](https://developer.apple.com/documentation/speech/speechanalyzer) 设备端识别，录音不离开本机，应用也不保存录音。ChatGPT 订阅登录不包含转写接口，所以听写不使用 OpenAI 的语音服务，也没有复用 Codex 桌面应用的听写服务。识别失败时保留已识别的文字，并显示权限或麦克风提示。`npm run test:dictation-native` 用合成的英语和普通话录音检查语言选择。开发构建通过 Swift 编译原生辅助程序，需要 Xcode Command Line Tools；发布的 Mac 应用已包含该程序。
 
-可以口述或输入“帮我加两个待办：改写摘要、检查引用”，或“把这段想法记到研究笔记”。Agent 通过 `record_writing_items` 保存到当前项目详情的 **Next steps** 与 **Research notes**，收到保存结果后才报告完成。新增内容与已有内容合并，相同待办与笔记不重复添加，提示条提供 **Undo**。没有关联文件夹的项目同样可以记待办和笔记；Read only 模式下此写入操作不可用。每次请求附带项目当前笔记与待办，便于延续写作。旧对话首次使用新工具时会开启新的运行会话，携带最近的对话文本，完整历史与修改审阅仍保留。
+可以口述或输入“帮我加两个待办：改写摘要、检查引用”，或“把这段想法记到研究笔记”。Agent 通过 `record_writing_items` 保存到当前项目详情的 **Next steps** 与 **Research notes**，收到保存结果后才报告完成。新增内容与已有内容合并，相同待办与笔记不重复添加，提示条提供 **Undo**。没有关联文件夹的项目同样可以记待办和笔记；Read only 模式下此写入操作不可用。每次请求附带项目当前笔记与待办，便于延续写作。
+
+Agent 还可以直接使用工作台的功能，设计说明见 [Agent native 工作台](docs/agent-native.md)：
+
+- `update_project` 把待办标为完成、重新打开或阻塞，修改项目阶段，添加里程碑；提示条提供 **Undo**。
+- `get_project` 按需读取阶段、目标会议、页数限制、匿名评审、里程碑和关联的会议日期；这些信息不再每轮注入。
+- `compile_manuscript` 使用与 **Compile** 相同的构建，Build log、问题列表、PDF 预览和投稿检查随之更新，并把带文件和行号的问题返回给 Agent。它在 Agent 沙箱之外运行，因此不弹出 latexmkrc 确认：已信任的配置照常使用，未信任的跳过并告知 Agent。
+- `check_submission` 从磁盘读取稿件、参考文献和编译后的 PDF，返回与 Build log 相同的投稿检查和参考文献检查。
+- `lookup_reference` 通过 doi.org、arXiv 和 Crossref 查询 BibTeX，Agent 不再凭记忆写引用。
+- `search_workspace` 在当前项目中搜索文件、PDF 正文、批注和历史对话。
+- `list_feedback` 列出 PDF 批注及状态，当前编译 PDF 上的批注附带 SyncTeX 源码行；`reply_to_feedback` 在批注上记录 Agent 的修改说明，列表显示 **Open · Agent replied**，只有用户能标为 Resolved。
+
+写入类工具在 Read only 下不可用。`search_workspace` 和 `list_feedback` 会返回 PDF 中的文字，因此在 Full access 下不可用；对话用过它们之后，之后的请求与附加过 PDF 摘录一样按 Default permissions 运行。每次工具调用都在 Work log 中记一行。Build log 有问题或投稿检查未通过时，**Ask Agent to fix** 把修复请求填入输入框，由用户发送。工具在对话创建时注册：新对话拥有全部工具，旧对话保留原生运行会话和创建时的工具，没有编译工具的对话仍按 latexmk 命令编译。
 
 **Usage** 显示本机记录的 Agent 次数及 token 用量，并通过 **Open ChatGPT Usage** 打开订阅额度页面。本机统计不代表剩余订阅额度。账户菜单支持重新授权、添加账户和退出；对话按账户与项目保存，**New AI chat** 新建对话并保留当前对话。
 

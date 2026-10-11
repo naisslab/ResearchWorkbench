@@ -378,6 +378,16 @@ This manuscript exists only in the automated test workspace.
       "Undefined control sequence",
     ),
   );
+  // The Build log hands a fix request to the agent; the user sends it.
+  await page
+    .getByRole("button", { name: "Ask Agent to fix", exact: true })
+    .click();
+  assert.match(
+    await page.getByLabel("Message the AI agent", { exact: true }).inputValue(),
+    /^Fix the problems listed in the Build log/,
+  );
+  await page.getByRole("button", { name: "All panels", exact: true }).click();
+  await page.getByRole("tab", { name: "Build log" }).click();
   await page.getByLabel("Compile on save").check();
   await page.locator(".cm-content").fill(original);
   await page.getByRole("button", { name: /^Save/ }).click();

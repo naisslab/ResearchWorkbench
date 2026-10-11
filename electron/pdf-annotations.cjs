@@ -142,6 +142,7 @@ function createAnnotationStore(directory) {
         : [],
       updatedAt: stored?.updatedAt || "",
       pageCount: stored?.pageCount || 0,
+      agentReplies: stored?.agentReplies || {},
     };
   }
   // Damaged or foreign records are preserved on disk and left out.
@@ -174,15 +175,20 @@ function createAnnotationStore(directory) {
         snapshots.add(key);
       }
       const updatedAt = new Date().toISOString();
+      const previous = await readRecord(key);
       // The first save of a version fixes when it was created.
       if (!createdAt.has(key))
         createdAt.set(
           key,
-          await readRecord(key).then(
-            (previous) =>
-              previous?.createdAt || previous?.updatedAt || updatedAt,
-          ),
+          previous?.createdAt || previous?.updatedAt || updatedAt,
         );
+      // The reader saves annotations whole and does not edit agent replies,
+      // so they are carried over for annotations that still exist.
+      const agentReplies = Object.fromEntries(
+        Object.entries(previous?.agentReplies || {}).filter(([id]) =>
+          annotations.some((item) => item.id === id),
+        ),
+      );
       await atomicWrite(
         file(key, "json"),
         JSON.stringify(
@@ -197,6 +203,7 @@ function createAnnotationStore(directory) {
             updatedAt,
             pageCount,
             annotations,
+            agentReplies,
           },
           null,
           2,
@@ -204,6 +211,28 @@ function createAnnotationStore(directory) {
       );
       return { key, updatedAt };
     }, key);
+  }
+  /** Records the agent's note on one annotation; the user still resolves it. */
+  function reply(projectId, key, annotationId, note) {
+    return queue(async () => {
+      const record = await readRecord(key);
+      if (!record || record.projectId !== projectId)
+        throw new Error("This PDF version is not part of the project.");
+      if (!record.annotations.some((item) => item.id === annotationId))
+        throw new Error("This annotation no longer exists.");
+      record.agentReplies = {
+        ...record.agentReplies,
+        [annotationId]: { note, at: new Date().toISOString() },
+      };
+      await atomicWrite(file(key, "json"), JSON.stringify(record, null, 2));
+      return record.agentReplies;
+    }, key);
+  }
+  /** The project's annotated PDF versions, for the agent's feedback list. */
+  async function projectRecords(projectId) {
+    return (await records()).filter(
+      (entry) => entry.projectId === projectId && entry.annotations.length > 0,
+    );
   }
   async function records() {
     let names;
@@ -303,6 +332,8 @@ function createAnnotationStore(directory) {
   return {
     load,
     save,
+    reply,
+    records: projectRecords,
     library,
     archived,
     pruneAll,

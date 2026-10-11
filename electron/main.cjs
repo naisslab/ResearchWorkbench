@@ -48,10 +48,10 @@ const dictation = createDictation({
   emit: (event) => send("dictation:event", event),
 });
 app.on("before-quit", () => dictation.cancel());
-const { createWritingCapture } = require("./writing.cjs");
-const writingCapture = createWritingCapture((request) =>
-  send("writing:capture", request),
-);
+const { createWindowTools } = require("./window-tools.cjs");
+const windowTools = createWindowTools((request) => send("agent:tool", request));
+const { TOOLS } = require("./agent-tools.cjs");
+const agentActions = require("./agent-actions.cjs");
 let win;
 let ai;
 let maintenance = false;
@@ -231,11 +231,11 @@ function createWindow() {
   win.webContents.on("will-navigate", (event) => event.preventDefault());
   win.webContents.on("did-start-navigation", () => {
     dictation.cancel();
-    writingCapture.cancel();
+    windowTools.cancel();
   });
   win.webContents.on("render-process-gone", () => {
     dictation.cancel();
-    writingCapture.cancel();
+    windowTools.cancel();
   });
   win.webContents.on("will-prevent-unload", (event) => {
     const response = dialog.showMessageBoxSync(win, {
@@ -253,7 +253,7 @@ function createWindow() {
   else win.loadFile(path.join(__dirname, "../dist/index.html"));
   win.on("closed", () => {
     dictation.cancel();
-    writingCapture.cancel();
+    windowTools.cancel();
     // macOS keeps the app running, so a reopened window still needs the AI;
     // only work that reports to this window stops here.
     void ai?.stopAll().catch(() => {});
@@ -337,7 +337,8 @@ app
         count: (next.trackedDeadlines?.length || 0) - before,
       };
     });
-    const searchEngine = require("./search.cjs").createSearch({
+    const { createSearch } = require("./search.cjs");
+    const searchEngine = createSearch({
       directory: app.getPath("userData"),
       workspace: () => state,
       ai: () => ai,
@@ -374,8 +375,8 @@ app
         );
       return { url: pdfUrl(target, p.id, name, sourcePath), name };
     });
-    handle("writing:complete", (id, result) =>
-      writingCapture.complete(id, result),
+    handle("agent:tool-complete", (id, response) =>
+      windowTools.complete(id, response),
     );
     handle("dictation:start", (id) => dictation.start(id));
     handle("dictation:stop", (id) => dictation.stop(id));
@@ -811,6 +812,7 @@ app
         name: metadata.name,
         data: document.bytes,
         annotations: metadata.annotations,
+        agentReplies: metadata.agentReplies,
         updatedAt: metadata.updatedAt,
       };
     });
@@ -964,6 +966,29 @@ app
       ),
     );
     handle("latex:cancel", (id) => builds.get(id)?.abort());
+    const agentCompile = (id, signal) =>
+      agentActions.compileForAgent(
+        project(id),
+        {
+          builds,
+          environment,
+          trusted: async (config) =>
+            (await readTrust())[`${id}\0${config.directory}`] === config.hash,
+          output: coalesce(
+            (text) => send("latex:output", { projectId: id, text }),
+            100,
+          ),
+          events: ({ pdf, ...event }) =>
+            send("latex:agent-build", {
+              projectId: id,
+              ...event,
+              ...(pdf !== undefined && {
+                pdf: pdf && { url: pdfUrl(pdf, id), name: path.basename(pdf) },
+              }),
+            }),
+        },
+        signal,
+      );
     // The compiled PDF's pages, fonts and metadata for the submission check.
     // The compiled PDF's pages, fonts and metadata for the submission check,
     // reused until the PDF changes. `references` is given only when a page
@@ -1126,9 +1151,59 @@ app
       // Use Chromium networking so OAuth follows the desktop's proxy and TLS settings.
       fetcher: (url, options) => net.fetch(url, options),
       project,
-      recordWriting: (id, capture, signal) => {
-        project(id);
-        return writingCapture.request(id, capture, signal);
+      runTool: async (name, id, input, signal) => {
+        const p = project(id);
+        if (TOOLS.find((tool) => tool.name === name)?.window)
+          return windowTools.request(
+            id,
+            name,
+            input,
+            signal,
+            // Checks read every manuscript file and the compiled PDF.
+            name === "check_submission" ? 120000 : 15000,
+          );
+        if (name === "get_project")
+          return agentActions.projectDetails(state, p);
+        if (name === "compile_manuscript") return agentCompile(id, signal);
+        if (name === "lookup_reference") return references.lookup(input.query);
+        if (name === "list_feedback")
+          return agentActions.listFeedback(
+            annotationStore,
+            p,
+            input.status,
+            environment,
+          );
+        if (name === "reply_to_feedback") {
+          const replies = await annotationStore.reply(
+            id,
+            input.documentKey,
+            input.id,
+            input.note,
+          );
+          send("pdf:agent-replies", {
+            projectId: id,
+            key: input.documentKey,
+            replies,
+          });
+          return { saved: true };
+        }
+        if (name === "search_workspace") {
+          // Its own search, so it neither cancels nor waits for the user's.
+          const search = createSearch({
+            directory: app.getPath("userData"),
+            workspace: () => ({ ...state, projects: [project(id)] }),
+            ai: () => ai,
+            emit: () => {},
+          });
+          try {
+            return agentActions.searchResults(
+              await search.search(input.query, crypto.randomUUID()),
+            );
+          } finally {
+            void search.dispose();
+          }
+        }
+        throw new Error("This tool is not available.");
       },
       environment,
       skillRoots: [

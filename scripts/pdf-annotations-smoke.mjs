@@ -195,6 +195,44 @@ await smoke("pdf-annotations", async (root) => {
     .getByLabel("Filter PDF feedback", { exact: true })
     .selectOption("all");
   await waitSaved(page, 3);
+  // The agent's note on open feedback shows beside it; the feedback stays open.
+  const replied = await app.evaluate(async ({ app, BrowserWindow }, id) => {
+    const requireApp = process
+      .getBuiltinModule("node:module")
+      .createRequire(app.getAppPath() + "/package.json");
+    const path = requireApp("node:path");
+    const { createAnnotationStore } = requireApp(
+      "./electron/pdf-annotations.cjs",
+    );
+    const store = createAnnotationStore(
+      path.join(app.getPath("userData"), "pdf-annotations"),
+    );
+    const record = (await store.records(id)).find((r) =>
+      r.annotations.some((a) => !a.resolved && (a.comment || a.quote)),
+    );
+    const target = record.annotations.find(
+      (a) => !a.resolved && (a.comment || a.quote),
+    );
+    const replies = await store.reply(
+      id,
+      record.key,
+      target.id,
+      "Added the ablation table to section 4.",
+    );
+    BrowserWindow.getAllWindows()[0].webContents.send("pdf:agent-replies", {
+      projectId: id,
+      key: record.key,
+      replies,
+    });
+    return target.comment || target.quote;
+  }, projectId);
+  const repliedRow = page.locator(".pdf-note-row").filter({ hasText: replied });
+  await repliedRow.filter({ hasText: "Open · Agent replied" }).waitFor();
+  await repliedRow.click();
+  await page
+    .locator(".pdf-agent-reply")
+    .filter({ hasText: "Added the ablation table to section 4." })
+    .waitFor();
   await page.screenshot({
     path: "output/playwright/pdf-annotations-light.png",
   });
@@ -297,6 +335,11 @@ await smoke("pdf-annotations", async (root) => {
   await page
     .locator(".pdf-note-row")
     .filter({ hasText: "检查实验结果" })
+    .waitFor();
+  // The reply was kept through the reader's saves and the restart.
+  await page
+    .locator(".pdf-note-row")
+    .filter({ hasText: "Open · Agent replied" })
     .waitFor();
   await page
     .getByLabel("Filter PDF feedback", { exact: true })

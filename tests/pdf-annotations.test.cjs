@@ -263,3 +263,71 @@ test("feedback status survives storage, old annotations stay open, and invalid s
     /status/,
   );
 });
+test("agent replies survive the reader's saves, end with their annotation, and list as project feedback", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "research-pdf-reply-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const store = createAnnotationStore(root),
+    bytes = await pdf();
+  const { key } = await store.save(
+    "project-a",
+    bytes,
+    "paper.pdf",
+    "/paper.pdf",
+    marks,
+    2,
+  );
+  await assert.rejects(
+    store.reply("project-b", key, "note-1", "Rewrote the claim."),
+    /not part of the project/,
+  );
+  await assert.rejects(
+    store.reply("project-a", key, "missing", "Rewrote the claim."),
+    /no longer exists/,
+  );
+  const replies = await store.reply(
+    "project-a",
+    key,
+    "note-1",
+    "Rewrote the claim in sec. 3.",
+  );
+  assert.equal(replies["note-1"].note, "Rewrote the claim in sec. 3.");
+  // The reader saves every annotation whole, including a resolved one.
+  const resolved = marks.map((m) =>
+    m.id === "highlight-1" ? { ...m, resolved: true } : m,
+  );
+  await store.save("project-a", bytes, "paper.pdf", "/paper.pdf", resolved, 2);
+  const loaded = await store.load(
+    "project-a",
+    bytes,
+    "paper.pdf",
+    "/paper.pdf",
+  );
+  assert.equal(
+    loaded.agentReplies["note-1"].note,
+    "Rewrote the claim in sec. 3.",
+  );
+  const [record] = await store.records("project-a");
+  assert.equal(record.key, key);
+  assert.deepEqual(
+    record.annotations.map((a) => [a.id, !!a.resolved]),
+    [
+      ["highlight-1", true],
+      ["note-1", false],
+      ["ink-1", false],
+    ],
+  );
+  assert.deepEqual(await store.records("project-b"), []);
+  await store.save(
+    "project-a",
+    bytes,
+    "paper.pdf",
+    "/paper.pdf",
+    marks.filter((m) => m.id !== "note-1"),
+    2,
+  );
+  assert.deepEqual(
+    (await store.load("project-a", bytes, "paper.pdf", "/paper.pdf"))
+      .agentReplies,
+    {},
+  );
+});

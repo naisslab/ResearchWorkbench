@@ -1,4 +1,9 @@
-const { writingTool, validateCapture } = require("./writing.cjs");
+const {
+  TOOLS,
+  threadTools,
+  toolSpec,
+  toolInstructions,
+} = require("./agent-tools.cjs");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -30,7 +35,7 @@ function createAI({
   encryption,
   openBrowser,
   project,
-  recordWriting,
+  runTool,
   validateContext,
   scope,
   environment,
@@ -521,10 +526,12 @@ function createAI({
       await validateContext(projectId, context);
       attachment = { name: context.file, kind: context.kind };
     }
-    // PDF text can carry instructions from whoever wrote the PDF, and the
-    // chat keeps it in context, so such a chat never runs without approvals.
+    // PDF text, attached or read by a tool, can carry instructions from
+    // whoever wrote the PDF, and the chat keeps it in context, so such a chat
+    // never runs without approvals.
     const pdfText =
       context?.kind === "pdf" ||
+      value.untrustedText ||
       value.messages.some((m) => m.attachments?.some((a) => a.kind === "pdf"));
     const appliedPermissions =
       permissionMode === "full-access" && pdfText ? "default" : permissionMode;
@@ -927,6 +934,48 @@ function createAI({
         totalUsage = params.tokenUsage?.total;
       }
     }
+    async function callTool(tool, args) {
+      if (!tool || !runTool) throw new Error("This tool is not available.");
+      signal.throwIfAborted();
+      if (tool.writes && assistant.permissionMode === "read-only")
+        throw new Error(
+          `Switch from Read only to Default permissions before using ${tool.name}.`,
+        );
+      if (tool.untrusted && assistant.permissionMode === "full-access")
+        throw new Error(
+          `${tool.name} returns PDF and document text, so it is unavailable under Full access. Ask the user to switch to Default permissions.`,
+        );
+      const input = tool.parse(args);
+      if (tool.untrusted && !value.untrustedText) {
+        value.untrustedText = true;
+        await saveConversation(value);
+      }
+      const activity = {
+        id: crypto.randomUUID(),
+        type: "tool",
+        status: "inProgress",
+        text: `Running ${tool.name}…`,
+      };
+      assistant.activities.push(activity);
+      updated();
+      try {
+        const result = await runTool(tool.name, value.projectId, input, signal);
+        Object.assign(activity, {
+          status: "completed",
+          text: tool.summary(result, input),
+        });
+        return result;
+      } catch (error) {
+        Object.assign(activity, {
+          status: "failed",
+          text: `${tool.name} failed: ${error.message}`,
+        });
+        throw error;
+      } finally {
+        updated();
+        await saveConversation(value);
+      }
+    }
     try {
       signal.throwIfAborted();
       try {
@@ -972,11 +1021,14 @@ function createAI({
       value.agentCwd = projectScope.cwd;
       entry.gateway.takeError();
       // Dynamic tools are fixed when a thread is created in this runtime.
-      // Keep legacy threads and their full native history instead of replacing
-      // them with a text transcript just to register the writing tool.
-      const writingTools = Boolean(
-        recordWriting && (!value.threadId || value.writingTools),
-      );
+      // Keep earlier threads and their full native history with the tools they
+      // were created with; a new chat gets every tool.
+      const toolNames = value.threadId
+        ? threadTools(value)
+        : runTool
+          ? TOOLS.map((tool) => tool.name)
+          : [];
+      const tools = TOOLS.filter((tool) => toolNames.includes(tool.name));
       const turn = await entry.agent.run({
         savedThreadId: value.threadId,
         model,
@@ -1002,35 +1054,19 @@ function createAI({
               "\nCurrent request:\n"
             : "") +
           value.messages.at(-2).inputText,
-        dynamicTools: writingTools ? [writingTool] : [],
-        onTool: async (name, args) => {
-          if (name !== writingTool.name || !recordWriting)
-            throw new Error("Unknown writing action.");
-          signal.throwIfAborted();
-          if (assistant.permissionMode === "read-only")
-            throw new Error(
-              "Switch from Read only to Default permissions before saving writing tasks or notes.",
-            );
-          const result = await recordWriting(
-            value.projectId,
-            validateCapture(args),
-            signal,
-          );
-          assistant.activities.push({
-            id: crypto.randomUUID(),
-            type: "writing",
-            status: "completed",
-            text: "Saved writing to-dos / research note in Project details.",
-          });
-          updated();
-          await saveConversation(value);
-          return result;
-        },
+        dynamicTools: tools.map(toolSpec),
+        instructions: toolInstructions(tools),
+        onTool: (name, args) =>
+          callTool(
+            tools.find((t) => t.name === name),
+            args,
+          ),
         skills: value.messages.at(-2).skills || [],
         signal,
         onThread: async (threadId) => {
           value.threadId = threadId;
-          value.writingTools = writingTools;
+          value.tools = toolNames;
+          delete value.writingTools;
           delete value.restoredHistory;
           await saveConversation(value);
         },

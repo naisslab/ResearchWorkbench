@@ -9,6 +9,7 @@ const {
   agentArguments,
 } = require("../electron/codex-agent.cjs");
 const { fixture, signIn, waitFor } = require("./ai-fixtures.cjs");
+const { TOOL_NAMES } = require("../electron/agent-tools.cjs");
 
 async function clientFixture(t, inference) {
   const f = await fixture(t);
@@ -476,10 +477,11 @@ test("adding writing capture preserves legacy threads without replaying a shorte
     const file = path.join(f.directory, "conversations", name);
     const data = JSON.parse(await fs.readFile(file, "utf8"));
     delete data.writingTools;
+    delete data.tools;
     await fs.writeFile(file, JSON.stringify(data));
   }
   const restarted = f.make({
-    recordWriting: async () => assert.fail("Legacy thread has no writing tool"),
+    runTool: async () => assert.fail("Legacy thread has no workbench tools"),
   });
   f.cleanup(() => restarted.dispose());
   await restarted.refreshModels();
@@ -507,8 +509,10 @@ test("adding writing capture preserves legacy threads without replaying a shorte
     );
     assert.doesNotMatch(
       received.thread.developerInstructions,
-      /record_writing_items/,
+      /record_writing_items|compile_manuscript/,
     );
+    // Without the compile tool, the thread still learns the workbench build.
+    assert.match(received.thread.developerInstructions, /latexmk -pdf/);
     assert.equal(
       (await restarted.conversation("one")).threadId,
       original.threadId,
@@ -531,7 +535,12 @@ test("adding writing capture preserves legacy threads without replaying a shorte
       "utf8",
     ),
   );
-  assert.equal(created.thread.dynamicTools[0].name, "record_writing_items");
+  assert.deepEqual(
+    created.thread.dynamicTools.map((tool) => tool.name),
+    TOOL_NAMES,
+  );
+  assert.match(created.thread.developerInstructions, /compile_manuscript/);
+  assert.doesNotMatch(created.thread.developerInstructions, /latexmk -pdf/);
 });
 
 test("project context identifies the manuscript without injecting stale venue instructions", async (t) => {
@@ -1202,7 +1211,8 @@ test("writing tool is project-scoped, rejects read-only writes, and registers be
     }),
     scope: async () => ({ cwd: folder, writableRoots: [folder] }),
     validateContext: async () => {},
-    recordWriting: async (id, value) => {
+    runTool: async (name, id, value) => {
+      assert.equal(name, "record_writing_items");
       recorded.push({ id, value });
       return { saved: true };
     },
@@ -1256,6 +1266,107 @@ test("writing tool is project-scoped, rejects read-only writes, and registers be
   assert.deepEqual(recorded, [
     { id: "writing-project", value: { tasks: ["修改摘要"], note: "" } },
   ]);
+});
+
+test("workbench tools follow the permission mode, and document text keeps the chat out of Full access", async (t) => {
+  const f = await fixture(t);
+  const folder = path.join(f.directory, "manuscript");
+  await fs.mkdir(folder);
+  const ran = [],
+    turns = [];
+  let script;
+  const client = createAI({
+    ...f,
+    project: (id) => ({ id, name: "Paper", stage: "writing", folder }),
+    scope: async () => ({ cwd: folder, writableRoots: [folder] }),
+    validateContext: async () => {},
+    runTool: async (name, id, input) => {
+      ran.push({ name, id, input });
+      return name === "search_workspace"
+        ? {
+            results: [{ kind: "pdf", title: "p.pdf", snippet: "x" }],
+            warnings: [],
+          }
+        : { ok: true, problems: [], pdf: "main.pdf" };
+    },
+    agentFactory: () => ({
+      ready: async () => {},
+      close: async () => {},
+      isClosed: () => false,
+      listModels: async () => [
+        {
+          model: "fixture-model",
+          displayName: "Fixture",
+          supportedReasoningEfforts: [],
+          serviceTiers: [],
+        },
+      ],
+      run: async (options) => {
+        turns.push(options);
+        await options.onThread("tools-runtime");
+        await script(options);
+        return { status: "completed" };
+      },
+    }),
+  });
+  f.cleanup(() => client.dispose());
+  await signIn(client);
+  await client.refreshModels();
+  async function send(permissionMode, run) {
+    script = run;
+    await client.send({
+      projectId: "paper",
+      message: "Work on the paper",
+      model: "fixture-model",
+      permissionMode,
+    });
+    await waitFor(
+      async () =>
+        !["running", undefined].includes(
+          (await client.conversation("paper")).messages.at(-1)?.status,
+        ),
+    );
+    const message = (await client.conversation("paper")).messages.at(-1);
+    assert.equal(message.status, "completed", message.error?.message);
+    return message;
+  }
+  const readOnly = await send("read-only", async ({ onTool }) => {
+    await assert.rejects(onTool("compile_manuscript", {}), /Read only/);
+    await assert.rejects(
+      onTool("search_workspace", { query: "x" }),
+      /2–200 characters/,
+    );
+    assert.equal(
+      (await onTool("search_workspace", { query: "ablation" })).results.length,
+      1,
+    );
+  });
+  assert.deepEqual(
+    readOnly.activities.map((a) => [a.type, a.status]),
+    [["tool", "completed"]],
+  );
+  assert.match(readOnly.activities[0].text, /Searched the project/);
+  // The chat now holds PDF text, so Full access runs with approvals.
+  const full = await send("full-access", async ({ onTool, permissionMode }) => {
+    assert.equal(permissionMode, "default");
+    await onTool("compile_manuscript", {});
+  });
+  assert.equal(full.permissionMode, "default");
+  assert.match(full.permissionNote, /PDF/);
+  await client.manageChat("paper", "new");
+  await send("full-access", async ({ onTool, permissionMode }) => {
+    assert.equal(permissionMode, "full-access");
+    await assert.rejects(
+      onTool("list_feedback", { status: "open" }),
+      /unavailable under Full access/,
+    );
+  });
+  assert.deepEqual(
+    ran.map((call) => call.name),
+    ["search_workspace", "compile_manuscript"],
+  );
+  assert.ok(ran.every((call) => call.id === "paper"));
+  assert.match(turns[0].instructions.join("\n"), /compile_manuscript/);
 });
 
 test("exhausted connection retries preserve completed work and show the upstream diagnostic without a loopback URL", async (t) => {

@@ -31,6 +31,8 @@ export interface PdfAnnotation {
   points?: PdfPoint[];
   position?: PdfPoint;
 }
+/** The agent's notes on annotations, by annotation id. */
+export type AgentReplies = Record<string, { note: string; at: string }>;
 export interface AnnotatedPdfData {
   archived?: boolean;
   /** The project's own compiled PDF, which stays on disk and is rebuilt. */
@@ -39,6 +41,7 @@ export interface AnnotatedPdfData {
   name: string;
   data: Uint8Array;
   annotations: PdfAnnotation[];
+  agentReplies?: AgentReplies;
   updatedAt: string;
 }
 export interface PdfVersion {

@@ -345,10 +345,10 @@ test(
 );
 
 test(
-  "native app-server exposes the writing tool and returns its application receipt",
+  "native app-server exposes every workbench tool and returns the application receipt",
   { timeout: 30000 },
   async (t) => {
-    const { writingTool } = require("../electron/writing.cjs");
+    const { TOOLS, toolSpec } = require("../electron/agent-tools.cjs");
     const root = await fs.mkdtemp(
       path.join(os.tmpdir(), "research-writing-tool-"),
     );
@@ -365,9 +365,12 @@ test(
           bytes = zlib.gunzipSync(bytes);
         const body = JSON.parse(bytes.toString());
         requests++;
-        assert.ok(
-          body.tools.some((tool) => tool.name === "record_writing_items"),
-        );
+        // The runtime accepted every schema and offers each tool to the model.
+        for (const { name } of TOOLS)
+          assert.ok(
+            JSON.stringify(body.tools).includes(`"${name}"`),
+            `${name} missing from the model request`,
+          );
         if (requests > 1)
           assert.match(JSON.stringify(body.input), /"saved"|\\"saved\\"/);
         const item =
@@ -436,7 +439,7 @@ test(
       cwd: root,
       writableRoots: [root],
       text: "Record a writing to-do and note.",
-      dynamicTools: [writingTool],
+      dynamicTools: TOOLS.map(toolSpec),
       signal: AbortSignal.timeout(20000),
       onThread: async () => {},
       onEvent: () => {},

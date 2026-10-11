@@ -216,6 +216,12 @@ export interface ReferenceCandidate {
   year: string;
   venue: string;
 }
+export interface AgentToolRequest {
+  id: string;
+  projectId: string;
+  tool: "record_writing_items" | "update_project" | "check_submission";
+  input: unknown;
+}
 export interface DictationEvent {
   id: string;
   type:
@@ -255,17 +261,29 @@ export interface ResearchAPI {
     rootId: string,
     draft: { text: string; base: string } | null,
   ): Promise<void>;
-  onWritingCapture(
-    callback: (request: {
-      id: string;
+  /** An agent tool that runs in the window; see src/agent-tools.ts. */
+  onAgentTool(callback: (request: AgentToolRequest) => void): () => void;
+  completeAgentTool(
+    id: string,
+    response: { ok: true; result: unknown } | { ok: false; error: string },
+  ): Promise<boolean>;
+  /** The agent's own builds, so the workbench shows their log and PDF. */
+  onAgentBuild(
+    callback: (event: {
       projectId: string;
-      capture: import("./writing-capture").WritingCapture;
+      running: boolean;
+      ok?: boolean;
+      log?: string;
+      pdf?: { url: string; name: string } | null;
     }) => void,
   ): () => void;
-  completeWritingCapture(
-    id: string,
-    result: { saved: boolean },
-  ): Promise<boolean>;
+  onAgentReplies(
+    callback: (event: {
+      projectId: string;
+      key: string;
+      replies: import("./pdf-types").AgentReplies;
+    }) => void,
+  ): () => void;
   startDictation(id: string): Promise<{ id: string }>;
   stopDictation(id: string): Promise<void>;
   cancelDictation(id: string): Promise<void>;

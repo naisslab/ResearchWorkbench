@@ -204,6 +204,69 @@ await smoke("writing", async (root) => {
   await page.screenshot({
     path: "output/playwright/writing-submission-check.png",
   });
+  // A failed check offers to hand the fix to the agent; the user sends it.
+  await page
+    .getByRole("button", { name: "Ask Agent to fix", exact: true })
+    .click();
+  assert.match(
+    await page.getByLabel("Message the AI agent", { exact: true }).inputValue(),
+    /^Fix the problems listed in the Build log/,
+  );
+  // The agent's check_submission reads the files and PDF on disk through the
+  // window and returns the same checks.
+  const agentChecks = await app.evaluate(
+    async ({ app, BrowserWindow }, projectId) => {
+      const requireApp = process
+        .getBuiltinModule("node:module")
+        .createRequire(app.getAppPath() + "/package.json");
+      const { createWindowTools } = requireApp("./electron/window-tools.cjs");
+      const { ipcMain } = requireApp("electron");
+      const windowTools = createWindowTools((request) =>
+        BrowserWindow.getAllWindows()[0].webContents.send(
+          "agent:tool",
+          request,
+        ),
+      );
+      ipcMain.removeHandler("agent:tool-complete");
+      ipcMain.handle("agent:tool-complete", (_event, id, response) =>
+        windowTools.complete(id, response),
+      );
+      return windowTools.request(
+        projectId,
+        "check_submission",
+        {},
+        new AbortController().signal,
+        60000,
+      );
+    },
+    id,
+  );
+  const agentReport = agentChecks.checks.map((c) => c.message).join("\n");
+  assert.match(agentReport, /The body fits in 1 of 1 pages/);
+  assert.match(agentReport, /\\author names the authors/);
+  assert.ok(Array.isArray(agentChecks.problems));
+  // A build the agent ran shows in the Build log as if the user compiled.
+  await app.evaluate(({ BrowserWindow }, projectId) => {
+    const send = (event) =>
+      BrowserWindow.getAllWindows()[0].webContents.send("latex:agent-build", {
+        projectId,
+        ...event,
+      });
+    send({ running: true });
+    send({
+      running: false,
+      ok: false,
+      log: "./main.tex:7: Undefined control sequence.\n",
+      pdf: null,
+    });
+  }, id);
+  await page.getByRole("button", { name: /Build log/ }).click();
+  await page.getByText("Build failed", { exact: false }).waitFor();
+  await page
+    .locator(".build-problems")
+    .first()
+    .getByText("Undefined control sequence.")
+    .waitFor();
   // ⌘K runs commands; ">" lists only commands.
   await page.keyboard.press("Meta+k");
   const palette = page.getByRole("combobox", { name: "Search workspace" });

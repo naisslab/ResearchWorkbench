@@ -829,6 +829,8 @@ async function newestValidBackup(store) {
   return null;
 }
 module.exports = {
+  STAGES,
+  DATE_KINDS,
   DEFAULT_AREAS,
   ENGINES,
   DATE_CATEGORIES,

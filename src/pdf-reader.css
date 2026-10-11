@@ -554,3 +554,17 @@
   color: var(--muted);
   font-size: 10px;
 }
+.pdf-agent-reply {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--hover);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.pdf-agent-reply strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}

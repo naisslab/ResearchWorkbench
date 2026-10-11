@@ -394,11 +394,12 @@ export default memo(function AIPanel({
   onFilesChanged,
   onOpenReference,
   visible,
-  pdfContext,
+  request,
   searchTarget,
 }: {
   searchTarget?: import("./types").SearchHit;
-  pdfContext?: { context: AIContext; nonce: number };
+  /** A request to place in the composer for the user to send. */
+  request?: { context?: AIContext; draft: string; nonce: number };
   project: Project;
   file: string;
   rootId: string;
@@ -671,14 +672,11 @@ export default memo(function AIPanel({
     };
   }, [project.id, state?.activeProfileId]);
   useEffect(() => {
-    if (!pdfContext) return;
-    setContext(pdfContext.context);
-    if (!draft.trim())
-      updateDraft(
-        "Please revise the manuscript using this PDF feedback, then show the changes.",
-      );
+    if (!request) return;
+    if (request.context) setContext(request.context);
+    if (!draft.trim()) updateDraft(request.draft);
     input.current?.focus();
-  }, [pdfContext?.nonce]);
+  }, [request?.nonce]);
   useEffect(() => {
     if (
       searchTarget?.kind !== "chat" ||
