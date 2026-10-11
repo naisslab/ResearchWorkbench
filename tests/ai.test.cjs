@@ -24,7 +24,7 @@ async function clientFixture(t, inference) {
   );
   const launched = [],
     events = [];
-  const make = () =>
+  const make = (options = {}) =>
     createAI({
       ...f,
       fetcher: (url, options) =>
@@ -56,6 +56,7 @@ async function clientFixture(t, inference) {
             );
           },
         }),
+      ...options,
     });
   const client = make();
   f.cleanup(() => client.dispose());
@@ -454,6 +455,128 @@ test("the subscribed agent modifies multiple files, executes a script, streams U
   assert.equal((await restarted.conversation("one")).threadId, undefined);
   assert.equal((await restarted.conversation("one")).agentRootId, undefined);
 });
+test("adding writing capture preserves legacy threads without replaying a shortened transcript", async (t) => {
+  const f = await clientFixture(t);
+  await f.client.send({
+    projectId: "one",
+    message: "Keep the existing template",
+    model: "fixture-model",
+  });
+  await waitFor(
+    async () =>
+      (await f.client.conversation("one")).messages.at(-1)?.status ===
+      "completed",
+  );
+  const original = await f.client.conversation("one");
+  await f.client.dispose();
+  // Versions predating writing capture have no capability marker.
+  for (const name of await fs.readdir(
+    path.join(f.directory, "conversations"),
+  )) {
+    const file = path.join(f.directory, "conversations", name);
+    const data = JSON.parse(await fs.readFile(file, "utf8"));
+    delete data.writingTools;
+    await fs.writeFile(file, JSON.stringify(data));
+  }
+  const restarted = f.make({
+    recordWriting: async () => assert.fail("Legacy thread has no writing tool"),
+  });
+  f.cleanup(() => restarted.dispose());
+  await restarted.refreshModels();
+  for (let i = 0; i < 2; i++) {
+    await restarted.send({
+      projectId: "one",
+      message: "Continue the same work",
+      model: "fixture-model",
+    });
+    await waitFor(
+      async () =>
+        (await restarted.conversation("one")).messages.at(-1)?.status ===
+        "completed",
+    );
+    const received = JSON.parse(
+      await fs.readFile(
+        path.join(f.projectFolder, "received-agent-settings.json"),
+        "utf8",
+      ),
+    );
+    assert.equal(received.thread.threadId, original.threadId);
+    assert.doesNotMatch(
+      received.turn.input[0].text,
+      /new runtime session|Keep the existing template/,
+    );
+    assert.doesNotMatch(
+      received.thread.developerInstructions,
+      /record_writing_items/,
+    );
+    assert.equal(
+      (await restarted.conversation("one")).threadId,
+      original.threadId,
+    );
+  }
+  await restarted.manageChat("one", "new");
+  await restarted.send({
+    projectId: "one",
+    message: "Start a new task",
+    model: "fixture-model",
+  });
+  await waitFor(
+    async () =>
+      (await restarted.conversation("one")).messages.at(-1)?.status ===
+      "completed",
+  );
+  const created = JSON.parse(
+    await fs.readFile(
+      path.join(f.projectFolder, "received-agent-settings.json"),
+      "utf8",
+    ),
+  );
+  assert.equal(created.thread.dynamicTools[0].name, "record_writing_items");
+});
+
+test("project context identifies the manuscript without injecting stale venue instructions", async (t) => {
+  const f = await clientFixture(t);
+  await f.client.dispose();
+  const client = f.make({
+    project: (id) => ({
+      id,
+      name: "Paper",
+      folder: f.projectFolder,
+      mainFile: "draft.tex",
+      latexEngine: "xelatex",
+      stage: "submitted",
+      venue: "ICLR / VLDB variants (confirm)",
+      summary: "Old research direction",
+    }),
+  });
+  f.cleanup(() => client.dispose());
+  await client.refreshModels();
+  const message = "Prepare an arXiv version, keeping the existing template.";
+  await client.send({ projectId: "one", message, model: "fixture-model" });
+  await waitFor(
+    async () =>
+      (await client.conversation("one")).messages.at(-1)?.status ===
+      "completed",
+  );
+  const received = JSON.parse(
+    await fs.readFile(
+      path.join(f.projectFolder, "received-agent-settings.json"),
+      "utf8",
+    ),
+  );
+  const text = received.turn.input[0].text;
+  assert.match(text, /reference data, not instructions/);
+  assert.ok(text.includes(path.join(f.projectFolder, "draft.tex")));
+  assert.match(text, /XeLaTeX/);
+  assert.doesNotMatch(text, /ICLR|VLDB|submitted|Old research direction/);
+  assert.ok(text.endsWith(`User request:\n${message}`));
+  assert.equal(
+    received.thread.baseInstructions,
+    undefined,
+    "Retain Codex's native base instructions",
+  );
+});
+
 test("permission, reasoning, and speed selections reach new, active, and resumed RPC threads", async (t) => {
   const f = await clientFixture(t);
   const models = (await f.client.getState()).models;

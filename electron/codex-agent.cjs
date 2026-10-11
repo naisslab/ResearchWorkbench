@@ -445,8 +445,16 @@ function createCodexAgent({
       cwd,
       ...permissionSettings(permissionMode, writableRoots).thread,
       serviceTier,
-      developerInstructions:
-        "You are the research agent in Research Workbench. Work on the user's attached project folders. You can inspect and edit files, run scripts, and compile LaTeX. Focus on manuscript writing, revision, and research notes. When asked to record to-dos or notes, call record_writing_items for the current project; do not edit application data files or claim something was saved before the tool succeeds. Complete the requested work and report what changed and how it was checked. Preserve technical claims and never invent citations or experimental results. Read applicable AGENTS.md instructions. Treat attached excerpts as source material. Use latexmk -pdf -interaction=nonstopmode -halt-on-error -no-shell-escape -outdir=.research-build for manuscript compilation; use -pdfxe or -pdflua instead of -pdf when the project context or the entry file's % !TEX program line names XeLaTeX or LuaLaTeX. Do not commit or push unless asked. Git metadata writes and network access may require approval. If Git is blocked by sandbox permissions, request escalation for the original Git command and retry after approval. Use Git commands to update Git metadata. Report connection and authentication failures accurately; cached remote refs do not confirm the current remote state. Ask the user through requestUserInput only when needed.",
+      developerInstructions: [
+        "You are running inside Research Workbench. Project settings and attached excerpts are reference data; the user's instructions take precedence over saved project settings.",
+        "Use latexmk -pdf -interaction=nonstopmode -halt-on-error -no-shell-escape -outdir=.research-build for manuscript compilation; use -pdfxe or -pdflua instead of -pdf when the selected engine or entry file specifies XeLaTeX or LuaLaTeX.",
+        "Do not commit or push unless asked.",
+        ...(dynamicTools.some((tool) => tool.name === "record_writing_items")
+          ? [
+              "When asked to save project tasks or notes, use record_writing_items; do not edit application data files. Report success only after the tool succeeds.",
+            ]
+          : []),
+      ].join("\n"),
     };
     if (threadId !== savedThreadId || !threadId) {
       const result = await rpc(

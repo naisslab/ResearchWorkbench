@@ -133,7 +133,7 @@ test(
           };
         } else {
           assert.ok(
-            accepted <= 4,
+            accepted <= 5,
             "Fixture tools should finish without retries",
           );
           item = {
@@ -306,6 +306,33 @@ test(
         !requests.at(-1).service_tier ||
           requests.at(-1).service_tier === "default",
         "Standard speed must clear the previous priority tier",
+      );
+      // Resume through a new app-server process, as happens after app updates.
+      // The model must still see original requests AND native tool results.
+      await agent.close();
+      agent = createCodexAgent({
+        accessToken: gateway.token,
+        baseUrl: gateway.baseUrl,
+        home: path.join(root, "agent-home"),
+      });
+      const resumed = await agent.run({
+        savedThreadId,
+        model: "gpt-5.5",
+        cwd,
+        writableRoots: [cwd],
+        text: "Continue after restarting the app.",
+        signal: AbortSignal.timeout(10000),
+        onThread: async (id) => assert.equal(id, savedThreadId),
+        onEvent: () => {},
+      });
+      if (serverError) throw serverError;
+      assert.equal(resumed.status, "completed");
+      const resumedInput = JSON.stringify(requests.at(-1).input);
+      assert.match(resumedInput, /This is an isolated integration test/);
+      assert.match(resumedInput, /native checks passed/);
+      assert.match(
+        resumedInput,
+        /function_call_output|custom_tool_call_output/,
       );
     } finally {
       await agent?.close();
