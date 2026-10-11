@@ -2115,3 +2115,21 @@ button.stat-card:hover {
   margin-top: 6px;
   width: 100%;
 }
+
+/* Where a dragged project, area or collection card will land. */
+:is(.area-projects button, .area-row)[data-drop="before"] {
+  box-shadow: inset 0 2px var(--accent);
+}
+:is(.area-projects button, .area-row)[data-drop="after"] {
+  box-shadow: inset 0 -2px var(--accent);
+}
+.area-row[data-drop="into"] {
+  border-radius: var(--radius-sm);
+  background: var(--selection);
+}
+.collection-card[data-drop="before"] {
+  box-shadow: -3px 0 0 var(--accent);
+}
+.collection-card[data-drop="after"] {
+  box-shadow: 3px 0 0 var(--accent);
+}

@@ -27,7 +27,7 @@ npm run package
 2. 在项目详情中添加下一步任务、研究笔记和目标会议。在 **Workbench setup** 选择本地项目目录、LaTeX 入口文件和编译引擎。
 3. 点击 **Open workbench**。左侧选择 `.tex`、`.bib` 或笔记文件，中间编辑，右侧查看 PDF。`⌘S` 保存文件，**Compile**（`⌘↵`）保存当前编辑文件并执行 `latexmk`，编译中可点 **Stop** 停止。Build log 把 `file:line` 错误和未定义的引用列为 Problems，点击跳到对应行。`⇧⌘J` 或 **Show in PDF** 在 PDF 中定位光标所在行；双击 PDF，或启用 **Jump to source** 后单击，跳回源码对应行。`.tex` 文件显示字数和 Outline，`\cite{`、`\ref{`、`\begin{` 提供补全。文件在外部被修改时，未编辑的内容自动重新载入，有未保存编辑时提示 **Reload** 或 **Keep mine**；切换文件前会询问是否保存；切换项目或离开工作台会保留编辑状态。
 4. 底部终端支持本机交互式 shell。设置 `user@hostname` 或 SSH config alias 后，切换 **SSH**。端口、密钥和代理配置使用 `~/.ssh/config`；密码和主机密钥确认在终端完成。
-5. 在 **Project board** 拖动卡片，或用卡片菜单切换阶段：Idea Exploration、Experiments、Paper Writing、Submitted、Revision、Published。
+5. 左侧栏的研究方向和项目可以拖动调整顺序，也可以选中后按 `Option+↑/↓` 移动；把项目拖到另一个研究方向的项目上或标题上，会移入该方向，提示条提供 **Undo**。顺序保存在工作区中，重启后保留；从未拖动过的项目按阶段和截止日期排在后面。**Research collection** 中的项目卡片同样可以在各自方向内拖动排序。在 **Project board** 拖动卡片，或用卡片菜单切换阶段：Idea Exploration、Experiments、Paper Writing、Submitted、Revision、Published。
 6. **Dates & deadlines** 的 My dates 汇总独立会议日期和个人事项；首次启动会从本机 `mac-ddl-count` 导入已保存的日期、状态和来源（`RESEARCH_MAC_DDL_DIR` 可指定其他目录）。CCF conferences 可搜索会议并添加 Abstract、Paper 等日期；Project milestones 保留每个项目的里程碑。左侧角标、Overview 和此页的计数来自同一份日期列表，角标表示 7 天内到期的数量。项目详情中关联的会议日期可直接点开编辑。删除日期、里程碑、任务或项目后，提示条提供 **Undo**。
 7. 右上角的月亮/太阳按钮切换浅色和深色；Workspace settings 的 Appearance 可选择 Light、Dark 或跟随系统。主题覆盖编辑器、终端和弹窗，并在重启后保留。
 8. 在 **Workspace settings** 管理研究方向，导入或导出项目资料。`⌘K` 搜索项目、文件正文、PDF 正文、笔记、批注和历史对话；输入 `>` 或按 `⇧⌘P` 只列出命令，例如 Compile、切换布局和 Add reference。菜单栏列出同样的命令及其快捷键。

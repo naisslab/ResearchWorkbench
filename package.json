@@ -31,7 +31,8 @@
     "test:finder-ui": "node scripts/finder-smoke.mjs",
     "test:connection-ui": "node scripts/connection-smoke.mjs",
     "test:project-continuity-ui": "node scripts/project-continuity-smoke.mjs",
-    "test:dictation-native": "node scripts/dictation-native-smoke.mjs"
+    "test:dictation-native": "node scripts/dictation-native-smoke.mjs",
+    "test:reorder-ui": "node scripts/reorder-smoke.mjs"
   },
   "dependencies": {
     "@openai/codex": "0.160.0",

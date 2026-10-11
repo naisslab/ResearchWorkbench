@@ -174,6 +174,10 @@ export interface Workspace {
   trackedDeadlines: TrackedDeadline[];
   areas: Area[];
   projects: Project[];
+  /** Project ids in the order the user dragged them in the sidebar. */
+  projectOrder?: string[];
+  /** Research collection ids in the order the user dragged them. */
+  collectionOrder?: string[];
 }
 export interface SearchHit {
   id: string;

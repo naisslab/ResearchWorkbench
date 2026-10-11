@@ -53,6 +53,7 @@ import { DarkContext, useAppearance } from "./theme";
 import { remoteChange } from "./workspace-lock";
 import { ResearchMark } from "./ResearchIcons";
 import { sortProjects } from "./project-order";
+import { applyOrder, moveId } from "./reorder";
 import Sidebar from "./components/Sidebar";
 import ProjectSearch from "./components/ProjectSearch";
 import SaveStatus, {
@@ -510,6 +511,74 @@ export default function App() {
         : [],
     [state?.projects, state?.trackedDeadlines],
   );
+  // The sidebar follows the order the user dragged projects into; projects
+  // never dragged follow, in priority order.
+  const sidebarOrder = (s: Workspace) =>
+    applyOrder(
+      sortProjects(s.projects, undefined, s.trackedDeadlines),
+      (p) => p.id,
+      s.projectOrder,
+    );
+  const sidebarProjects = useMemo(
+    () => (state ? applyOrder(ordered, (p) => p.id, state.projectOrder) : []),
+    [ordered, state?.projectOrder],
+  );
+  const placeProject = useCallback(
+    (moved: string, areaId: string, order: (ids: string[]) => string[]) => {
+      const project = stateRef.current?.projects.find((p) => p.id === moved);
+      const area = stateRef.current?.areas.find((a) => a.id === areaId);
+      if (!project || !area) return;
+      const transform = (s: Workspace) => ({
+        ...s,
+        projectOrder: order(sidebarOrder(s).map((p) => p.id)),
+        projects: s.projects.map((p) =>
+          p.id === moved
+            ? { ...p, areaId, updatedAt: new Date().toISOString() }
+            : p,
+        ),
+      });
+      // Changing a project's area is offered for undo; reordering is not.
+      void (project.areaId === areaId
+        ? commit(transform)
+        : commitWithUndo(`Moved ${project.name} to ${area.name}`, transform));
+    },
+    [commit, commitWithUndo],
+  );
+  const moveProject = useCallback(
+    (moved: string, target: string) => {
+      const areaId = stateRef.current?.projects.find(
+        (p) => p.id === target,
+      )?.areaId;
+      if (areaId)
+        placeProject(moved, areaId, (ids) => moveId(ids, moved, target));
+    },
+    [placeProject],
+  );
+  const moveProjectToArea = useCallback(
+    (moved: string, areaId: string) =>
+      placeProject(moved, areaId, (ids) => {
+        const last = sidebarOrder(stateRef.current!)
+          .filter((p) => p.areaId === areaId && p.id !== moved)
+          .at(-1);
+        return last ? moveId(ids, moved, last.id, true) : ids;
+      }),
+    [placeProject],
+  );
+  const moveArea = useCallback(
+    (moved: string, target: string) =>
+      void commit((s) => {
+        const ids = moveId(
+          s.areas.map((a) => a.id),
+          moved,
+          target,
+        );
+        return {
+          ...s,
+          areas: ids.map((id) => s.areas.find((a) => a.id === id)!),
+        };
+      }),
+    [commit],
+  );
   const items = useMemo(
     () => (state ? upcomingItems(state, now) : []),
     [state?.projects, state?.trackedDeadlines, now],
@@ -581,7 +650,7 @@ export default function App() {
       >
         <Sidebar
           areas={state.areas}
-          projects={ordered}
+          projects={sidebarProjects}
           view={view}
           selected={selected}
           area={areaFilter}
@@ -590,6 +659,9 @@ export default function App() {
           agentRuns={agentRuns}
           navigate={navigate}
           addProject={setNewProjectArea}
+          moveProject={moveProject}
+          moveProjectToArea={moveProjectToArea}
+          moveArea={moveArea}
         />
       </aside>
       <PanelDivider
@@ -773,6 +845,9 @@ export default function App() {
                   state={state}
                   report={report}
                   openProject={openProject}
+                  reorder={(ids) =>
+                    void commit((s) => ({ ...s, collectionOrder: ids }))
+                  }
                   added={(next, count) => {
                     replace(next);
                     notify(

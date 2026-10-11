@@ -13,6 +13,9 @@ import {
 } from "lucide-react";
 import type { Area, Navigate, Project, View } from "../types";
 import { AreaIcon, ResearchMark } from "../ResearchIcons";
+import { useReorder } from "../reorder";
+
+const PROJECT = "application/x-research-project";
 
 const destinations: [View, string, LucideIcon][] = [
   ["overview", "Overview", House],
@@ -32,6 +35,9 @@ export default memo(function Sidebar({
   agentRuns,
   navigate,
   addProject,
+  moveProject,
+  moveProjectToArea,
+  moveArea,
 }: {
   areas: Area[];
   projects: Project[];
@@ -43,7 +49,23 @@ export default memo(function Sidebar({
   agentRuns: Record<string, "running" | "done" | "failed">;
   navigate: Navigate;
   addProject(areaId: string): void;
+  /** Drag or Alt+↑/↓ onto another project, possibly in another area. */
+  moveProject(moved: string, target: string): void;
+  /** A project dropped on an area's heading joins the end of that area. */
+  moveProjectToArea(moved: string, areaId: string): void;
+  moveArea(moved: string, target: string): void;
 }) {
+  const projectDrag = useReorder(
+    PROJECT,
+    projects.map((p) => p.id),
+    moveProject,
+  );
+  const areaDrag = useReorder(
+    "application/x-research-area",
+    areas.map((a) => a.id),
+    moveArea,
+  );
+  const [intoArea, setIntoArea] = useState("");
   const [collapsed, setCollapsed] = useState<string[]>([]);
   const tree = useRef<HTMLDivElement>(null);
   const inProject = view === "details" || view === "workbench";
@@ -101,9 +123,34 @@ export default memo(function Sidebar({
           const active =
             (area === a.id && (view === "overview" || view === "board")) ||
             projectArea === a.id;
+          const heading = areaDrag.row(a.id);
           return (
             <section className="area-group" key={a.id}>
-              <div className={`area-row ${active ? "active" : ""}`}>
+              <div
+                className={`area-row ${active ? "active" : ""}`}
+                {...heading}
+                draggable={!rail}
+                data-drop={intoArea === a.id ? "into" : heading["data-drop"]}
+                onDragOver={(event) => {
+                  if (!event.dataTransfer.types.includes(PROJECT))
+                    return heading.onDragOver(event);
+                  event.preventDefault();
+                  setIntoArea(a.id);
+                }}
+                onDragLeave={(event) => {
+                  if (
+                    !event.currentTarget.contains(event.relatedTarget as Node)
+                  )
+                    setIntoArea("");
+                }}
+                onDrop={(event) => {
+                  const moved = event.dataTransfer.getData(PROJECT);
+                  if (!moved) return heading.onDrop(event);
+                  event.preventDefault();
+                  setIntoArea("");
+                  moveProjectToArea(moved, a.id);
+                }}
+              >
                 <button
                   className="collapse-area"
                   aria-label={`Toggle ${a.name}`}
@@ -144,6 +191,10 @@ export default memo(function Sidebar({
                 <div className="area-projects">
                   {list.map((p) => {
                     const current = inProject && selected === p.id;
+                    const drag = projectDrag.row(
+                      p.id,
+                      list.map((item) => item.id),
+                    );
                     const run = agentRuns[p.id];
                     const status =
                       run === "running"
@@ -156,6 +207,7 @@ export default memo(function Sidebar({
                     return (
                       <button
                         key={p.id}
+                        {...drag}
                         className={current ? "selected" : ""}
                         aria-current={current ? "true" : undefined}
                         // The status describes the row without renaming it.

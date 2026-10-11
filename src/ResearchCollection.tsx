@@ -15,6 +15,7 @@ import type {
 import { AreaIcon, ProjectIcon } from "./ResearchIcons";
 import { openExternal, SearchField, StageBadge, Tabs } from "./components/ui";
 import { exclusive } from "./workspace-lock";
+import { applyOrder, moveId, useReorder } from "./reorder";
 
 type Tab = "current" | "review" | "archive";
 const tabs: [Tab, string, (c: ResearchCandidate) => boolean][] = [
@@ -32,9 +33,12 @@ export default function ResearchCollection({
   added,
   openProject,
   report,
+  reorder,
 }: {
   state: Workspace;
   added(state: Workspace, count: number): void;
+  /** Saves the order cards were dragged into. */
+  reorder(ids: string[]): void;
   openProject(id: string): void;
   report(message: string): void;
 }) {
@@ -72,6 +76,26 @@ export default function ResearchCollection({
   useEffect(() => {
     void load();
   }, []);
+  // Cards keep the order they were dragged into, within their area.
+  const ordered = catalog
+    ? applyOrder(catalog.candidates, (c) => c.id, state.collectionOrder)
+    : [];
+  const drag = useReorder(
+    "application/x-research-candidate",
+    ordered.map((c) => c.id),
+    (moved, target) => {
+      const area = (id: string) =>
+        ordered.find((c) => c.id === id)?.project.areaId;
+      if (area(moved) === area(target))
+        reorder(
+          moveId(
+            ordered.map((c) => c.id),
+            moved,
+            target,
+          ),
+        );
+    },
+  );
   if (!catalog)
     return (
       <div className="collection-loading">
@@ -177,8 +201,8 @@ export default function ResearchCollection({
         aria-labelledby={`collection-panel-${tab}`}
       >
         {catalog.areas.map((area) => {
-          const candidates = visible.filter(
-            (c) => c.project.areaId === area.id,
+          const candidates = ordered.filter(
+            (c) => visible.includes(c) && c.project.areaId === area.id,
           );
           if (!candidates.length) return null;
           return (
@@ -199,6 +223,10 @@ export default function ResearchCollection({
                     <article
                       className={`collection-card ${selected.includes(c.id) && !own ? "selected" : ""}`}
                       key={c.id}
+                      {...drag.row(
+                        c.id,
+                        candidates.map((item) => item.id),
+                      )}
                       style={
                         { "--area-color": area.color } as React.CSSProperties
                       }

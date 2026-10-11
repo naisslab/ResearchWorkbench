@@ -86,6 +86,14 @@ function validateState(value) {
     typeof value.deadlineReminders !== "boolean"
   )
     throw new Error("Invalid deadline reminder setting.");
+  for (const key of ["projectOrder", "collectionOrder"])
+    if (
+      value[key] !== undefined &&
+      (!Array.isArray(value[key]) ||
+        value[key].length > 5000 ||
+        value[key].some((id) => !text(id)))
+    )
+      throw new Error("Invalid saved order.");
   if (value.trackedDeadlines !== undefined) {
     if (
       !Array.isArray(value.trackedDeadlines) ||
