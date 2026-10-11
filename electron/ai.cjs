@@ -384,7 +384,13 @@ function createAI({
     const finalizing = running.has(key(value.profileId, value.projectId));
     return {
       ...value,
-      queue: (value.queue || []).map(({ request, ...item }) => item),
+      queue: (value.queue || []).map(({ request, ...item }) => ({
+        ...item,
+        images: (request?.images || []).map(({ name, file }) => ({
+          name,
+          file,
+        })),
+      })),
       messages: value.messages.map((item, index) => {
         const message = publicMessage(item);
         return finalizing &&
@@ -516,11 +522,7 @@ function createAI({
         "plan_usage_disabled",
         "Connect ChatGPT and enable ChatGPT plan usage to send a message.",
       );
-    if (
-      typeof message !== "string" ||
-      !message.trim() ||
-      Buffer.byteLength(message) > 32000
-    )
+    if (typeof message !== "string" || Buffer.byteLength(message) > 32000)
       throw new AIError("invalid_message", "Write a message of up to 32 KB.");
     if (
       modelProfileId !== session.activeProfileId ||
@@ -600,6 +602,11 @@ function createAI({
       });
     }
     const storedImages = await storeImages(images);
+    if (!message.trim() && !storedImages.length)
+      throw new AIError(
+        "invalid_message",
+        "Write a message or attach an image.",
+      );
     if (storedImages.length && selectedModel.images === false)
       throw new AIError(
         "model_without_images",
@@ -1292,10 +1299,15 @@ function createAI({
       throw new AIError("invalid_chat", "Choose a saved conversation.");
     return path.join(chatFolder(value), `${id}.json`);
   }
-  const chatTitle = (value) =>
-    value.title ||
-    value.messages.find((m) => m.role === "user")?.text.slice(0, 70) ||
-    "New conversation";
+  function chatTitle(value) {
+    const user = value.messages.find((m) => m.role === "user");
+    return (
+      value.title ||
+      user?.text.slice(0, 70) ||
+      user?.images?.[0]?.name.slice(0, 70) ||
+      "New conversation"
+    );
+  }
   async function savedChats(value) {
     const names = await fs.readdir(chatFolder(value)).catch((error) => {
       if (error.code === "ENOENT") return [];

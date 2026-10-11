@@ -34,6 +34,7 @@ import {
   Pause,
   Play,
   ShieldCheck,
+  ImagePlus,
 } from "lucide-react";
 import type {
   AIApproval,
@@ -307,8 +308,8 @@ const Message = memo(function Message({
       </div>
       {!!message.images?.length && (
         <div className="ai-message-images">
-          {message.images.map((image) => (
-            <SentImage key={image.file} {...image} />
+          {message.images.map((image, index) => (
+            <SentImage key={`${image.file}.${index}`} {...image} />
           ))}
         </div>
       )}
@@ -465,24 +466,30 @@ export default memo(function AIPanel({
   const [model, setModel] = useState("");
   const [agentRoot, setAgentRoot] = useState("primary");
   const [context, setContext] = useState<AIContext>();
-  // Images dropped or pasted into the composer, sent with the next request.
-  const [images, setImages] = useState<PendingImage[]>([]);
+  // Keep unsent images with their chat, including while a file is being read.
+  const [imageDrafts, setImageDrafts] = useState<
+    Record<string, PendingImage[]>
+  >({});
+  const [imageReads, setImageReads] = useState<Record<string, number>>({});
   const [dropping, setDropping] = useState(false);
-  const pendingImages = useRef(images);
-  pendingImages.current = images;
-  useEffect(
-    () => () =>
-      pendingImages.current.forEach((image) => URL.revokeObjectURL(image.url)),
-    [],
-  );
-  const removeImages = (remove: (image: PendingImage) => boolean) =>
-    setImages((current) =>
-      current.filter((image) => {
-        if (!remove(image)) return true;
-        URL.revokeObjectURL(image.url);
-        return false;
-      }),
-    );
+  const pendingImageDrafts = useRef(imageDrafts);
+  const imagesMounted = useRef(true);
+  const imagePicker = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    imagesMounted.current = true;
+    return () => {
+      imagesMounted.current = false;
+      Object.values(pendingImageDrafts.current)
+        .flat()
+        .forEach((image) => URL.revokeObjectURL(image.url));
+    };
+  }, []);
+  function updateImages(key: string, next: PendingImage[]) {
+    const drafts = { ...pendingImageDrafts.current, [key]: next };
+    if (!next.length) delete drafts[key];
+    pendingImageDrafts.current = drafts;
+    setImageDrafts(drafts);
+  }
   const [operation, setOperation] = useState("");
   const [reviewMessage, setReviewMessage] = useState<string>();
   const [error, setError] = useState("");
@@ -520,6 +527,21 @@ export default memo(function AIPanel({
     : state && !state.activeProfileId
       ? `research-workbench.ai-draft.disconnected.${project.id}.legacy`
       : null;
+  const images = draftKey ? imageDrafts[draftKey] || [] : [];
+  const readingImages = !!(draftKey && imageReads[draftKey]);
+  const activeImageKey = useRef(draftKey);
+  activeImageKey.current = draftKey;
+  function removeImages(remove: (image: PendingImage) => boolean) {
+    if (!draftKey) return;
+    updateImages(
+      draftKey,
+      (pendingImageDrafts.current[draftKey] || []).filter((image) => {
+        if (!remove(image)) return true;
+        URL.revokeObjectURL(image.url);
+        return false;
+      }),
+    );
+  }
   const [draft, saveDraft] = useDraft(
     draftKey,
     conversation.chatId === "legacy"
@@ -544,6 +566,8 @@ export default memo(function AIPanel({
   const profile = state?.profiles.find((p) => p.id === state.activeProfileId);
   const selectedModel = state?.models.find((m) => m.slug === model);
   async function addImages(files: File[]) {
+    const key = draftKey;
+    if (!key || !files.length || submitting.current) return;
     const accepted = files.filter((file) => IMAGE_TYPES.includes(file.type));
     const problem =
       accepted.length < files.length
@@ -552,21 +576,47 @@ export default memo(function AIPanel({
           ? `${selectedModel.displayName} does not accept images. Choose another model.`
           : accepted.some((file) => file.size > 10 * 1024 * 1024)
             ? "Each image can be up to 10 MB."
-            : pendingImages.current.length + accepted.length > 6
+            : (pendingImageDrafts.current[key]?.length || 0) + accepted.length >
+                6
               ? "Attach up to six images."
               : "";
     if (problem) return setError(problem);
-    const next = await Promise.all(
-      accepted.map(async (file) => ({
+    setImageReads((current) => ({
+      ...current,
+      [key]: (current[key] || 0) + 1,
+    }));
+    try {
+      const bytes = await Promise.all(
+        accepted.map((file) => file.arrayBuffer()),
+      );
+      if (!imagesMounted.current) return;
+      const current = pendingImageDrafts.current[key] || [];
+      // Multiple paste/drop operations may finish in a different order.
+      if (current.length + accepted.length > 6) {
+        if (activeImageKey.current === key)
+          setError("Attach up to six images.");
+        return;
+      }
+      const next = accepted.map((file, index) => ({
         id: crypto.randomUUID(),
         name: file.name || "Pasted image",
         type: file.type,
-        data: new Uint8Array(await file.arrayBuffer()),
+        data: new Uint8Array(bytes[index]),
         url: URL.createObjectURL(file),
-      })),
-    );
-    setError("");
-    setImages((current) => [...current, ...next]);
+      }));
+      if (activeImageKey.current === key) setError("");
+      updateImages(key, [...current, ...next]);
+    } catch {
+      if (imagesMounted.current && activeImageKey.current === key)
+        setError("Could not read the image. Try attaching it again.");
+    } finally {
+      if (imagesMounted.current)
+        setImageReads((current) => {
+          const next = { ...current, [key]: (current[key] || 1) - 1 };
+          if (!next[key]) delete next[key];
+          return next;
+        });
+    }
   }
   const { settings: agentSettings, update: updateAgentSettings } =
     useAIAgentSettings(state?.activeProfileId, project.id, selectedModel);
@@ -966,7 +1016,8 @@ export default memo(function AIPanel({
   async function send() {
     if (dictating) return;
     if (
-      !draft.trim() ||
+      (!draft.trim() && !images.length) ||
+      readingImages ||
       skillCommand ||
       submitting.current ||
       operation ||
@@ -1505,8 +1556,17 @@ export default memo(function AIPanel({
                 {queued.map((item, index) => (
                   <li key={item.id}>
                     <span className="ai-queue-number">{index + 1}</span>
-                    <div className="ai-queue-request" title={item.text}>
-                      <p>{item.text}</p>
+                    <div
+                      className="ai-queue-request"
+                      title={
+                        item.text ||
+                        item.images?.map((image) => image.name).join(", ")
+                      }
+                    >
+                      <p>
+                        {item.text ||
+                          item.images?.map((image) => image.name).join(", ")}
+                      </p>
                       <small>
                         {state?.models.find((m) => m.slug === item.model)
                           ?.displayName || item.model}
@@ -1514,6 +1574,9 @@ export default memo(function AIPanel({
                           ? ` · ${effortLabel(item.reasoningEffort)}`
                           : ""}
                         {item.attachments?.length ? " · attachment" : ""}
+                        {item.images?.length
+                          ? ` · ${item.images.length} image${item.images.length === 1 ? "" : "s"}`
+                          : ""}
                         {item.skills?.length
                           ? ` · ${item.skills.map((s) => s.displayName).join(", ")}`
                           : ""}
@@ -1549,6 +1612,29 @@ export default memo(function AIPanel({
             </section>
           )}
           <div className="ai-context-bar">
+            <input
+              ref={imagePicker}
+              type="file"
+              accept={IMAGE_TYPES.join(",")}
+              multiple
+              hidden
+              onChange={(event) => {
+                const files = [...(event.currentTarget.files || [])];
+                event.currentTarget.value = "";
+                void addImages(files);
+              }}
+            />
+            <button
+              type="button"
+              aria-label="Attach images"
+              title="Attach images, paste a screenshot, or drop a figure here"
+              disabled={
+                actionDisabled || !draftKey || selectedModel?.images === false
+              }
+              onClick={() => imagePicker.current?.click()}
+            >
+              <ImagePlus size={11} /> Images
+            </button>
             <Folder size={11} />
             <select
               aria-label="Agent working folder"
@@ -1674,6 +1760,7 @@ export default memo(function AIPanel({
             </div>
           )}
           <div className="ai-input-row">
+            {readingImages && <small role="status">Loading images…</small>}
             {skillCommand && (
               <AISkills
                 anchor={input.current}
@@ -1733,7 +1820,7 @@ export default memo(function AIPanel({
                 busy
                   ? "Send another request to add it to the queue…"
                   : state?.sharing
-                    ? "Ask for a revision, add a to-do, or save a research note…"
+                    ? "Ask the agent, paste a screenshot, or drop a figure…"
                     : "Connect ChatGPT, then tell the agent what to work on…"
               }
               rows={1}
@@ -1893,7 +1980,8 @@ export default memo(function AIPanel({
                 }
                 disabled={
                   dictating ||
-                  !draft.trim() ||
+                  (!draft.trim() && !images.length) ||
+                  readingImages ||
                   !!skillCommand ||
                   !model ||
                   !state?.sharing ||

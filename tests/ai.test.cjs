@@ -1470,6 +1470,94 @@ test("images are stored once, reach the agent as local images, keep the chat out
   assert.match(assistant.permissionNote, /images/);
 });
 
+test("image-only requests preserve empty user text and attachments across restart", async (t) => {
+  const f = await clientFixture(t);
+  const png = Buffer.from(
+    "89504e470d0a1a0a0000000d4948445200000008000000080806000000" +
+      "c40fbe8b0000001249444154789c63504838f01f1f6618190a00c4af8f" +
+      "c19d70eb660000000049454e44ae426082",
+    "hex",
+  );
+  const send = (message, images) =>
+    f.client.send({
+      projectId: "one",
+      message,
+      model: "fixture-model",
+      images,
+    });
+  for (const message of ["", " \n\t"])
+    await assert.rejects(send(message, []), {
+      code: "invalid_message",
+    });
+  for (const images of [
+    null,
+    {},
+    [null],
+    [{ name: "broken.png", type: "image/png", data: Buffer.from("broken") }],
+  ])
+    await assert.rejects(send("", images), { code: "invalid_images" });
+  assert.equal((await f.client.conversation("one")).messages.length, 0);
+
+  for (const [index, message] of ["", " \n\t"].entries()) {
+    await send(message, [
+      { name: `screenshot-${index}.png`, type: "image/png", data: png },
+    ]);
+    await waitFor(
+      async () =>
+        (await f.client.conversation("one")).messages.at(-1)?.status ===
+          "completed" && !f.client.isRunning("one"),
+    );
+  }
+  const original = await f.client.conversation("one");
+  const users = original.messages.filter((message) => message.role === "user");
+  assert.deepEqual(
+    users.map((message) => message.text),
+    ["", ""],
+  );
+  const received = JSON.parse(
+    await fs.readFile(
+      path.join(f.projectFolder, "received-agent-settings.json"),
+      "utf8",
+    ),
+  );
+  assert.match(received.turn.input[0].text, /User request:\n$/);
+  assert.equal(received.turn.input[1].type, "localImage");
+  assert.equal((await f.client.chats("one"))[0].title, "screenshot-0.png");
+
+  await f.client.send({
+    projectId: "two",
+    message: "wait-for-stop",
+    model: "fixture-model",
+  });
+  const queued = await f.client.send({
+    projectId: "two",
+    message: "",
+    model: "fixture-model",
+    images: [{ name: "queued.png", type: "image/png", data: png }],
+  });
+  const queuedImages = [{ name: "queued.png", file: users[0].images[0].file }];
+  assert.deepEqual(queued.queue[0].images, queuedImages);
+  assert.equal(queued.queue[0].text, "");
+  assert.equal(queued.queue[0].request, undefined);
+
+  await f.client.dispose();
+  const reopened = f.make();
+  f.cleanup(() => reopened.dispose());
+  const restored = await reopened.conversation("one");
+  assert.equal(restored.threadId, original.threadId);
+  assert.deepEqual(
+    restored.messages.filter((message) => message.role === "user"),
+    users,
+  );
+  for (const user of users)
+    assert.deepEqual(await reopened.readImage(user.images[0].file), png);
+  assert.equal((await reopened.chats("one"))[0].title, "screenshot-0.png");
+  assert.deepEqual(
+    (await reopened.conversation("two")).queue[0].images,
+    queuedImages,
+  );
+});
+
 test("exhausted connection retries preserve completed work and show the upstream diagnostic without a loopback URL", async (t) => {
   let attempts = 0;
   const f = await clientFixture(t, async () => {

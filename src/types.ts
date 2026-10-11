@@ -786,6 +786,7 @@ export interface AIConversation {
   queueError?: AIErrorInfo;
 }
 export interface AIQueuedRequest {
+  images?: { name: string; file: string }[];
   id: string;
   text: string;
   createdAt: string;
