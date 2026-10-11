@@ -170,6 +170,12 @@ This manuscript exists only in the automated test workspace.
     .waitFor();
   await page.getByRole("button", { name: "src", exact: true }).click();
   await page.getByRole("button", { name: "train.py", exact: true }).click();
+  // The tree resolves the file before the editor switches; typing earlier
+  // would land in main.tex.
+  await page
+    .locator(".cm-content")
+    .filter({ hasText: "print('before')" })
+    .waitFor();
   await page.locator(".cm-content").fill("print('saved with Ctrl S')");
   await page.keyboard.press("Control+s");
   await page
@@ -406,17 +412,19 @@ This manuscript exists only in the automated test workspace.
   await page
     .getByText("Build succeeded · PDF updated")
     .waitFor({ timeout: 30000 });
-  const savedLayout = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("research-workbench.panels.v1")),
-  );
+  // The sidebar width is global; pane sizes are saved per project.
+  const storedLayout = () =>
+    page.evaluate(async () => {
+      const { projects } = await window.research.load();
+      const id = projects.find((p) => p.name === "UI Integration Project").id;
+      const read = (key) =>
+        JSON.parse(localStorage.getItem(`research-workbench.${key}`));
+      return { ...read("sidebar"), ...read(`project-panels.${id}`) };
+    });
+  const savedLayout = await storedLayout();
   await closeApp();
   ({ app, page } = await launchApp());
-  assert.deepEqual(
-    await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("research-workbench.panels.v1")),
-    ),
-    savedLayout,
-  );
+  assert.deepEqual(await storedLayout(), savedLayout);
   assert.equal(
     Math.round((await page.locator(".sidebar").boundingBox()).width),
     Math.round(savedLayout.sidebar),

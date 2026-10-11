@@ -103,7 +103,11 @@ await smoke("ai", async (root) => {
   assert.ok(
     (
       await page.evaluate(() =>
-        JSON.parse(localStorage.getItem("research-workbench.panels.v1")),
+        JSON.parse(
+          localStorage.getItem(
+            "research-workbench.project-panels.ai-ui-project",
+          ),
+        ),
       )
     ).ai >=
       initialAIHeight + 49,
@@ -1351,9 +1355,10 @@ await smoke("ai", async (root) => {
       layout: getComputedStyle(document.querySelector(".workbench")).display,
     };
   });
+  // Both mode lays the workbench out as a grid; unstyled it would be a block.
   assert.equal(
     visibleChat.layout,
-    "flex",
+    "grid",
     "The packaged workbench layout stylesheet must load",
   );
   assert.match(

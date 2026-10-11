@@ -19,6 +19,7 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  min-width: 0;
 }
 .workbench-header {
   display: flex;
@@ -696,7 +697,6 @@
 .workbench.mode-agent {
   display: grid;
   grid-template-rows: 40px 30px minmax(0, 1fr);
-  min-width: 0;
 }
 .mode-agent > .workbench-header {
   grid-area: 1 / 1 / 2 / 4;
@@ -796,7 +796,6 @@
 .workbench.mode-columns {
   display: grid;
   grid-template-rows: 40px 32px minmax(0, 1fr);
-  min-width: 0;
   overflow: auto;
 }
 .mode-columns > .workbench-header {
