@@ -1661,9 +1661,28 @@
   color: var(--text);
 }
 .dictation-phase {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   color: var(--muted);
   font-size: 11px;
+}
+.dictation-wave {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 18px;
+}
+.dictation-wave > i {
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  transition: height 80ms linear;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dictation-wave > i {
+    transition: none;
+  }
 }
 .dictation-error {
   color: var(--danger);

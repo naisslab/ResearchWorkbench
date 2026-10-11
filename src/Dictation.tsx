@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Mic, X } from "lucide-react";
 import type { DictationEvent } from "./types";
 
+// The latest microphone levels, oldest first, drawn as a scrolling waveform.
+const silence: number[] = Array(28).fill(0);
+
 export default function Dictation({
   insert,
   disabled = false,
@@ -12,6 +15,8 @@ export default function Dictation({
   onActive?(active: boolean): void;
 }) {
   const [phase, setPhase] = useState("");
+  const [language, setLanguage] = useState("");
+  const [levels, setLevels] = useState(silence);
   const [preview, setPreview] = useState("");
   const [error, setError] = useState("");
   const session = useRef("");
@@ -20,11 +25,20 @@ export default function Dictation({
   useEffect(() => {
     const off = window.research!.onDictation((event: DictationEvent) => {
       if (event.id !== session.current) return;
-      if (event.type === "listening") setPhase("Listening…");
+      if (event.language) setLanguage(event.language);
+      if (event.type === "preparing")
+        setPhase(
+          (event.message || "Preparing speech recognition…") +
+            (event.progress ? ` ${Math.round(event.progress * 100)}%` : ""),
+        );
+      if (event.type === "listening") setPhase("Listening");
+      if (event.type === "level")
+        setLevels((current) => [...current.slice(1), event.value ?? 0]);
       if (event.type === "partial") setPreview(event.text || "");
       if (["final", "cancelled", "error"].includes(event.type)) {
         session.current = "";
         setPhase("");
+        setLevels(silence);
         callbacks.current.onActive?.(false);
         if (event.type !== "cancelled" && event.text?.trim())
           callbacks.current.insert(event.text.trim());
@@ -55,6 +69,8 @@ export default function Dictation({
     session.current = id;
     setError("");
     setPreview("");
+    setLanguage("");
+    setLevels(silence);
     setPhase("Starting microphone…");
     onActive?.(true);
     try {
@@ -97,7 +113,18 @@ export default function Dictation({
       )}
       {phase && (
         <span className="dictation-preview" role="status">
-          <span className="dictation-phase">{phase}</span>
+          <span className="dictation-phase">
+            {phase === "Listening" && (
+              <span className="dictation-wave" aria-hidden="true">
+                {levels.map((level, index) => (
+                  <i key={index} style={{ height: `${3 + level * 15}px` }} />
+                ))}
+              </span>
+            )}
+            {phase === "Listening" && language
+              ? `Listening · ${language}`
+              : phase}
+          </span>
           {preview}
         </span>
       )}

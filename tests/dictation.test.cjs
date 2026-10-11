@@ -64,3 +64,38 @@ test("cancel and process failure release the microphone session without inventin
   assert.equal(f.events[1].type, "error");
   f.dictation.start("z");
 });
+test("dictation relays loudness, model downloads and the recognized language", (t) => {
+  const f = fixture(t);
+  f.dictation.start("x");
+  const send = (event) =>
+    f.children[0].stdout.write(JSON.stringify(event) + "\n");
+  send({ type: "preparing", message: "Downloading", progress: 1.5 });
+  send({ type: "listening", language: "English (United States)" });
+  send({ type: "level", value: 2 });
+  send({ type: "level", value: "loud" });
+  send({ type: "partial", text: "检索", language: "Chinese (China mainland)" });
+  send({ type: "final", text: "检索提高准确率" });
+  assert.deepEqual(f.events, [
+    { id: "x", type: "preparing", message: "Downloading", progress: 1 },
+    {
+      id: "x",
+      type: "listening",
+      text: "",
+      language: "English (United States)",
+    },
+    { id: "x", type: "level", value: 1 },
+    {
+      id: "x",
+      type: "partial",
+      text: "检索",
+      language: "Chinese (China mainland)",
+    },
+    {
+      id: "x",
+      type: "final",
+      text: "检索提高准确率",
+      message: undefined,
+      language: "Chinese (China mainland)",
+    },
+  ]);
+});

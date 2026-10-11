@@ -25,8 +25,17 @@ function createDictation({
     const proc = spawnProcess(executable, [], {
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const session = { id, proc, text: "", timeout: null };
+    const session = { id, proc, text: "", language: "", timeout: null };
     active = session;
+    // Until the microphone opens, the helper may wait on a permission dialog
+    // or a first-use model download; a silent helper is given up on.
+    const wait = (ms, message) => {
+      clearTimeout(session.timeout);
+      session.timeout = setTimeout(
+        () => finish({ type: "error", text: session.text, message }),
+        ms,
+      );
+    };
     let buffer = "";
     const decoder = new StringDecoder("utf8");
     const finish = (event) => {
@@ -34,7 +43,7 @@ function createDictation({
       active = undefined;
       clearTimeout(session.timeout);
       proc.kill();
-      emit({ id, ...event });
+      emit({ id, ...event, language: session.language });
     };
     proc.stdout.on("data", (bytes) => {
       if (active !== session) return;
@@ -53,17 +62,42 @@ function createDictation({
           const event = JSON.parse(line);
           if (typeof event.text === "string")
             session.text = event.text.slice(0, 20000);
+          if (typeof event.language === "string" && event.language)
+            session.language = event.language.slice(0, 100);
+          const message =
+            typeof event.message === "string"
+              ? event.message.slice(0, 1000)
+              : undefined;
           if (["final", "error", "cancelled"].includes(event.type))
-            finish({
+            finish({ type: event.type, text: session.text, message });
+          else if (event.type === "level") {
+            if (Number.isFinite(event.value))
+              emit({
+                id,
+                type: "level",
+                value: Math.max(0, Math.min(1, event.value)),
+              });
+          } else if (event.type === "preparing") {
+            wait(120000, "The speech model download stalled. Try again.");
+            emit({
+              id,
+              type: "preparing",
+              message,
+              ...(Number.isFinite(event.progress) && {
+                progress: Math.max(0, Math.min(1, event.progress)),
+              }),
+            });
+          } else if (["partial", "listening"].includes(event.type)) {
+            // The helper ends a dictation after five minutes.
+            if (event.type === "listening")
+              wait(330000, "Dictation stopped responding. Try again.");
+            emit({
+              id,
               type: event.type,
               text: session.text,
-              message:
-                typeof event.message === "string"
-                  ? event.message.slice(0, 1000)
-                  : undefined,
+              language: session.language,
             });
-          else if (["partial", "listening"].includes(event.type))
-            emit({ id, type: event.type, text: session.text });
+          }
         } catch {
           finish({
             type: "error",
@@ -91,15 +125,9 @@ function createDictation({
           "Dictation stopped unexpectedly. Check microphone and speech recognition permissions.",
       }),
     );
-    session.timeout = setTimeout(
-      () =>
-        finish({
-          type: "error",
-          text: session.text,
-          message:
-            "Dictation timed out. Check the macOS permission dialog and try again.",
-        }),
+    wait(
       120000,
+      "Dictation timed out. Check the macOS permission dialog and try again.",
     );
     return { id };
   }

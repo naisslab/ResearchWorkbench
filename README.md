@@ -65,9 +65,9 @@ Agent 回复支持 Markdown、列表、表格和带复制按钮的代码块。�
 
 **Skills** 在输入框旁，可搜索并选择本轮使用的 skill。在消息输入框输入 `/` 弹出技能建议，输入 `/scale` 等名称实时筛选。方向键选择，Enter 或 Tab 确认，Esc 关闭并保留文字；也可点击建议。选中后，`/名称` 替换为技能标签，焦点留在输入框，可继续写请求或添加其他技能。运行期间同样可为下一条排队指令选择技能。文件路径和 URL 保留为普通文字。在空输入框按 `$` 也可打开搜索菜单。应用通过 Codex 原生 `skills/list` 读取用户的 `~/.agents/skills`、`~/.codex/skills` 和当前项目的 skills；发送时使用正式的 skill 输入载入 `SKILL.md`。`scale-writing` 优先显示，直接使用本机安装版本及其参考文件，不复制或改写定义。选中的 skill 会显示为标签，发送成功后清空选择，消息历史保留 skill 名称。**Refresh skills** 重新发现安装或更新的 skills。Skills 不需要额外 API key，Agent 仍使用当前 ChatGPT 授权和所选模型。
 
-发送键旁的麦克风图标启动听写，语言使用 macOS 默认设置，无需在输入框中选择。首次使用需要允许 macOS 的 Microphone 与 Speech Recognition 权限。识别过程中显示文字预览，点击确认后把文字插入光标处或替换选区；取消会保留原有草稿。听写不会自动发送，最长一轮约 55 秒，可继续下一轮。切换项目、对话或隐藏 Agent 会结束本轮听写，关闭窗口也会释放麦克风。
+发送键旁的麦克风图标启动听写，无需选择语言：应用为 macOS「语言与地区」中的前四种首选语言各运行一个识别器，听同一段声音，显示已确定内容置信度最高的结果，例如英语、粤语或普通话。首次使用需要允许 macOS 的 Microphone 权限；某种语言首次使用时会从 Apple 下载设备端语音模型，预览框显示下载进度。说话时预览框显示随音量变化的声波和识别出的语言，点击确认后把文字插入光标处或替换选区；取消会保留原有草稿。整轮听写使用同一种语言的结果。听写不会自动发送，最长一轮 5 分钟，可继续下一轮。切换项目、对话或隐藏 Agent 会结束本轮听写，关闭窗口也会释放麦克风。
 
-听写使用 [macOS Speech framework](https://developer.apple.com/documentation/speech/sfspeechrecognizer)，支持设备端识别时在本机处理，否则由 macOS 使用 Apple 的识别服务。应用不保存录音，也不调用单独计费的 OpenAI 音频 API。此实现没有复用 Codex 桌面应用的听写服务。识别失败时保留已识别的文字，并显示权限或麦克风提示。开发构建通过 Swift 编译原生辅助程序，需要 Xcode Command Line Tools；发布的 Mac 应用已包含该程序。
+听写使用 macOS 的 [SpeechAnalyzer](https://developer.apple.com/documentation/speech/speechanalyzer) 设备端识别，录音不离开本机，应用也不保存录音。ChatGPT 订阅登录不包含转写接口，所以听写不使用 OpenAI 的语音服务，也没有复用 Codex 桌面应用的听写服务。识别失败时保留已识别的文字，并显示权限或麦克风提示。`npm run test:dictation-native` 用合成的英语和普通话录音检查语言选择。开发构建通过 Swift 编译原生辅助程序，需要 Xcode Command Line Tools；发布的 Mac 应用已包含该程序。
 
 可以口述或输入“帮我加两个待办：改写摘要、检查引用”，或“把这段想法记到研究笔记”。Agent 通过 `record_writing_items` 保存到当前项目详情的 **Next steps** 与 **Research notes**，收到保存结果后才报告完成。新增内容与已有内容合并，相同待办与笔记不重复添加，提示条提供 **Undo**。没有关联文件夹的项目同样可以记待办和笔记；Read only 模式下此写入操作不可用。每次请求附带项目当前笔记与待办，便于延续写作。旧对话首次使用新工具时会开启新的运行会话，携带最近的对话文本，完整历史与修改审阅仍保留。
 

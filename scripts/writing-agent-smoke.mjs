@@ -40,7 +40,8 @@ await smoke("writing-agent", async () => {
       ipcMain.removeHandler(channel);
     ipcMain.handle("dictation:start", (_event, value) => {
       id = value;
-      emit({ type: "listening" });
+      emit({ type: "listening", language: "Chinese (China mainland)" });
+      for (const value of [0.2, 0.9, 0.5]) emit({ type: "level", value });
       emit({ type: "partial", text: "加一个待办：修改摘要" });
       return { id };
     });
@@ -60,6 +61,19 @@ await smoke("writing-agent", async () => {
     .getByRole("button", { name: "Start dictation", exact: true })
     .click();
   await page.getByRole("status").filter({ hasText: "加一个待办" }).waitFor();
+  await page
+    .getByRole("status")
+    .filter({ hasText: "Listening · Chinese (China mainland)" })
+    .waitFor();
+  // The newest loudness is the rightmost bar of the waveform.
+  assert.equal(
+    await page
+      .locator(".dictation-wave > i")
+      .last()
+      .evaluate((bar) => bar.style.height),
+    "10.5px",
+  );
+  await page.screenshot({ path: "output/playwright/dictation-listening.png" });
   assert.equal(await input.getAttribute("readonly"), "");
   await page
     .getByRole("button", { name: "Finish dictation", exact: true })

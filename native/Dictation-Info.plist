@@ -4,5 +4,5 @@
 <key>CFBundleIdentifier</key><string>com.research.workbench.dictation</string>
 <key>CFBundleName</key><string>Research Workbench Dictation</string>
 <key>NSMicrophoneUsageDescription</key><string>Turn your speech into editable text when you start dictation.</string>
-<key>NSSpeechRecognitionUsageDescription</key><string>Transcribe speech into editable text. macOS may send audio to Apple when on-device recognition is unavailable for your language.</string>
+<key>NSSpeechRecognitionUsageDescription</key><string>Transcribe speech into editable text on this Mac.</string>
 </dict></plist>

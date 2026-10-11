@@ -30,7 +30,8 @@
     "test:writing-agent-ui": "node scripts/writing-agent-smoke.mjs",
     "test:finder-ui": "node scripts/finder-smoke.mjs",
     "test:connection-ui": "node scripts/connection-smoke.mjs",
-    "test:project-continuity-ui": "node scripts/project-continuity-smoke.mjs"
+    "test:project-continuity-ui": "node scripts/project-continuity-smoke.mjs",
+    "test:dictation-native": "node scripts/dictation-native-smoke.mjs"
   },
   "dependencies": {
     "@openai/codex": "0.160.0",
@@ -103,7 +104,7 @@
       "icon": "build/icon.icns",
       "extendInfo": {
         "NSMicrophoneUsageDescription": "Turn your speech into editable text when you start dictation.",
-        "NSSpeechRecognitionUsageDescription": "Transcribe speech into editable text. macOS may send audio to Apple when on-device recognition is unavailable for your language."
+        "NSSpeechRecognitionUsageDescription": "Transcribe speech into editable text on this Mac."
       }
     },
     "dmg": {

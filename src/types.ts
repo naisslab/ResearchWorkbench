@@ -218,9 +218,22 @@ export interface ReferenceCandidate {
 }
 export interface DictationEvent {
   id: string;
-  type: "listening" | "partial" | "final" | "error" | "cancelled";
+  type:
+    | "preparing"
+    | "listening"
+    | "level"
+    | "partial"
+    | "final"
+    | "error"
+    | "cancelled";
   text?: string;
   message?: string;
+  /** The recognized language's name, such as "English (United States)". */
+  language?: string;
+  /** Microphone loudness from 0 to 1, for "level". */
+  value?: number;
+  /** Model download progress from 0 to 1, for "preparing". */
+  progress?: number;
 }
 export interface ResearchAPI {
   aiPaper(
