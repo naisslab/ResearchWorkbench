@@ -144,37 +144,39 @@ export default memo(function Sidebar({
                 <div className="area-projects">
                   {list.map((p) => {
                     const current = inProject && selected === p.id;
+                    const run = agentRuns[p.id];
+                    const status =
+                      run === "running"
+                        ? "Agent working"
+                        : run === "failed"
+                          ? "Agent stopped with an error"
+                          : run
+                            ? "Agent finished"
+                            : undefined;
                     return (
                       <button
                         key={p.id}
                         className={current ? "selected" : ""}
                         aria-current={current ? "true" : undefined}
+                        // The status describes the row without renaming it.
+                        aria-description={status}
                         onClick={() =>
                           navigate("workbench", { projectId: p.id })
                         }
-                        title={p.name}
+                        title={status ? `${p.name} · ${status}` : p.name}
                       >
                         <span className="project-dot" data-stage={p.stage} />
                         <span className="project-name">{p.name}</span>
-                        {agentRuns[p.id] === "running" ? (
+                        {run === "running" ? (
                           <LoaderCircle
                             size={12}
                             className="spin project-agent"
-                            aria-label="Agent working"
+                            aria-hidden
                           />
-                        ) : agentRuns[p.id] ? (
+                        ) : run ? (
                           <i
-                            className={`project-agent-done ${agentRuns[p.id]}`}
-                            aria-label={
-                              agentRuns[p.id] === "failed"
-                                ? "Agent stopped with an error"
-                                : "Agent finished"
-                            }
-                            title={
-                              agentRuns[p.id] === "failed"
-                                ? "Agent stopped with an error"
-                                : "Agent finished"
-                            }
+                            className={`project-agent-done ${run}`}
+                            aria-hidden
                           />
                         ) : null}
                       </button>

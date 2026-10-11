@@ -4,7 +4,7 @@ export interface PanelLayout {
   editorFraction: number;
   terminal: number;
   ai: number;
-  workMode: "agent" | "edit" | "combined" | "columns";
+  workMode: "agent" | "edit" | "columns";
   agentWidth: number;
   sourceWidth: number;
   columnsAgentWidth: number;
@@ -55,9 +55,13 @@ export function parsePanelLayout(value: string | null): PanelLayout {
     editorFraction: clamp(next.editorFraction, 0.01, 0.99),
     terminal: clamp(next.terminal, 120, 600),
     ai: next.ai === 0 ? 0 : clamp(next.ai, 340, 1200),
-    workMode: ["agent", "edit", "combined", "columns"].includes(next.workMode)
-      ? next.workMode
-      : "agent",
+    // "combined" (All panels) was Source with the bottom panel open.
+    workMode:
+      (next.workMode as string) === "combined"
+        ? "edit"
+        : ["agent", "edit", "columns"].includes(next.workMode)
+          ? next.workMode
+          : "agent",
     agentWidth: next.agentWidth === 0 ? 0 : clamp(next.agentWidth, 360, 900),
     sourceWidth:
       next.sourceWidth === 0 ? 0 : clamp(next.sourceWidth, 240, 2400),

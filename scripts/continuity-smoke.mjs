@@ -86,7 +86,7 @@ await smoke("continuity", async (root) => {
   );
   await page
     .getByRole("group", { name: "Workbench mode" })
-    .getByRole("button", { name: "Source + PDF", exact: true })
+    .getByRole("button", { name: "Source", exact: true })
     .click();
   await page.locator(".cm-content").click();
   await page.keyboard.press("Meta+End");

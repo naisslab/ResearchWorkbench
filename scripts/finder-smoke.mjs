@@ -72,14 +72,14 @@ await smoke("finder", async (root) => {
   };
   await link("ZIP").click();
   await expectRevealed("results bundle.zip", 1);
-  assert.equal(await mode("Agent + PDF").getAttribute("aria-pressed"), "true");
+  assert.equal(await mode("Agent").getAttribute("aria-pressed"), "true");
   await link("RAR").click();
   await expectRevealed("review.rar", 2);
   await page
     .getByRole("button", { name: "Show main.tex:1 in Finder", exact: true })
     .click();
   await expectRevealed("main.tex", 3);
-  assert.equal(await mode("Agent + PDF").getAttribute("aria-pressed"), "true");
+  assert.equal(await mode("Agent").getAttribute("aria-pressed"), "true");
   await page
     .getByRole("button", { name: "Show paper.pdf in Finder", exact: true })
     .click();
@@ -92,7 +92,7 @@ await smoke("finder", async (root) => {
     "PDF preview must stay in the app",
   );
   await link("manuscript").click();
-  await page.locator(".workbench.mode-combined").waitFor();
+  await page.locator(".workbench.mode-columns").waitFor();
   const editor = page.locator(".cm-content");
   await editor.fill("Unsaved manuscript");
   await page

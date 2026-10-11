@@ -114,12 +114,12 @@ await smoke("project-continuity", async (root) => {
       .getByRole("button", { name, exact: true })
       .click();
   await select(0);
-  await mode("Source + Agent + PDF");
+  await mode("Both");
   await active().locator(".cm-content").fill("Unsaved project one");
   const editorHandle = await active().locator(".cm-content").elementHandle();
   await active().getByLabel("Message the AI agent").fill("Draft for one");
   await select(1);
-  await mode("Source + PDF");
+  await mode("Source");
   await active().locator(".cm-content").fill("Saved project two");
   await page.keyboard.press("Meta+s");
   await until(
@@ -168,7 +168,7 @@ await smoke("project-continuity", async (root) => {
     .getByLabel("Message the AI agent")
     .fill("Next instruction for one");
   await select(1);
-  await mode("Source + Agent + PDF");
+  await mode("Both");
   await active().getByLabel("Message the AI agent").fill("Draft for two");
   // Deliver a real IPC completion while its workbench is hidden.
   await app.evaluate(({ BrowserWindow }, id) => {

@@ -39,7 +39,7 @@ Project board 按研究时间线排列阶段：Idea Exploration → Experiments 
 
 ## PDF 标注
 
-在工作台编译稿件后，双击 PDF 中的文字会打开对应的源文件，并将光标定位到源文件的行。PDF 工具栏中的 **Jump to source** 切换为单击定位，按 Esc 恢复文字选择；也支持 `⌘` 点击或 `Ctrl` 点击。定位支持多页 PDF、`\input` 引入的子文件、缩放和旋转页面；在 **Agent + PDF** 或展开 PDF 时会自动显示编辑器。切换文件前仍会提示保存未保存的修改。源码定位使用编译生成的 SyncTeX 数据；其他本地 PDF、旧版批注快照和过期预览会显示提示，要求使用当前编译产物。
+在工作台编译稿件后，双击 PDF 中的文字会打开对应的源文件，并将光标定位到源文件的行。PDF 工具栏中的 **Jump to source** 切换为单击定位，按 Esc 恢复文字选择；也支持 `⌘` 点击或 `Ctrl` 点击。定位支持多页 PDF、`\input` 引入的子文件、缩放和旋转页面；在 **Agent** 或展开 PDF 时会自动显示编辑器。切换文件前仍会提示保存未保存的修改。源码定位使用编译生成的 SyncTeX 数据；其他本地 PDF、旧版批注快照和过期预览会显示提示，要求使用当前编译产物。
 
 右侧阅读器支持文字选择、高亮、便签和画笔，提供四种标注颜色。点击 **Show PDF annotations** 查看批注列表、搜索内容或跳到对应页面；选择批注后可编辑评论或删除，工具栏支持撤销。每条批注默认 **Open**，点击 **Mark resolved** 标为已解决，或用 **Reopen feedback** 重新打开。列表可按 All feedback、Open、Resolved 筛选；状态自动保存，随完整备份和高亮迁移保留，不会因为发给 Agent 就自动解决。扫描件没有文字层时，可使用便签和画笔。
 
@@ -49,7 +49,7 @@ Project board 按研究时间线排列阶段：Idea Exploration → Experiments 
 
 ## ChatGPT Agent
 
-工作台默认进入 **Agent + PDF**：左侧使用完整高度的 Agent，右侧阅读 PDF。顶部可切换 **Source + PDF** 手动编辑，或 **Source + Agent + PDF** 从左到右以完整高度并排显示源码、Agent 和 PDF，文件树保留在源码旁。三栏宽度在重启后保留；拖动竖直分隔线调整，双击恢复默认。窗口较窄时可水平滚动查看各栏。**All panels** 保留源码与 PDF 在上、工具在下的布局。切换保留对话草稿、编辑内容与 PDF 阅读位置；点击 Agent 中的源码链接会自动显示编辑器。模式与分栏宽度会记住，拖动 PDF 与 Agent 之间的分隔线可调整比例。**AI** 与 **Terminal**、**Build log** 共用工具栏。点击 **Continue with ChatGPT**，在系统浏览器登录并允许应用使用 ChatGPT plan。应用使用 [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source/) 和 [Codex app-server](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server) 执行本地 Agent 任务；Codex runtime 与 Code Mode host 随应用打包。`gpt-6-astra` 等模型通过 Code Mode host 调用本地文件与执行工具。
+工作台默认进入 **Agent**：左侧使用完整高度的 Agent，右侧阅读 PDF。顶部可切换 **Source** 手动编辑，或 **Both** 从左到右以完整高度并排显示源码、Agent 和 PDF，文件树保留在源码旁。三栏宽度在重启后保留；拖动竖直分隔线调整，双击恢复默认。窗口较窄时可水平滚动查看各栏。**Source** 模式下，Terminal、AI 和 Build log 在源码与 PDF 下方打开，点击底部的标签切换或收起。切换保留对话草稿、编辑内容与 PDF 阅读位置；在 **Agent** 模式点击回复中的源码链接会切换到 **Both**，同时显示编辑器和 Agent。模式与分栏宽度会记住，拖动 PDF 与 Agent 之间的分隔线可调整比例。**AI** 与 **Terminal**、**Build log** 共用工具栏。点击 **Continue with ChatGPT**，在系统浏览器登录并允许应用使用 ChatGPT plan。应用使用 [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source/) 和 [Codex app-server](https://developers.openai.com/siwc/token-sharing-open-source/codex-app-server) 执行本地 Agent 任务；Codex runtime 与 Code Mode host 随应用打包。`gpt-6-astra` 等模型通过 Code Mode host 调用本地文件与执行工具。
 
 模型菜单读取该账户实时返回的可用模型。选择项目目录后，可要求 Agent 修改多个文件、运行脚本或修复 LaTeX 编译。**Current file** 和 **Selection** 附加文本快照；发送前保存当前编辑文件，运行时暂停编辑，结束后刷新文件、PDF 和 Git 状态。执行记录可展开查看命令输出及文件 diff，需要额外访问时在 AI 页审批。**Stop** 中断当前任务，已完成的文件修改会保留。
 
@@ -61,7 +61,7 @@ Project board 按研究时间线排列阶段：Idea Exploration → Experiments 
 
 Agent 运行期间，按 Enter 或点击 **Queue message** 可继续提交指令，最多等待 20 条。队列按顺序执行；每条指令保留提交时的模型、权限、推理强度、速度、附件快照和 Skills。输入框上方显示等待队列，可调整顺序、删除或 **Pause / Resume**。Pause 让当前任务继续完成；Stop 中断当前任务并暂停队列。任务失败、切换账户、关闭窗口或退出应用后，等待指令会保留并暂停，点击 Resume 继续；关闭窗口同时停止当前任务，重新打开窗口后 Agent 照常可用。开始执行前会重新检查模型、项目目录和 Skills；不可用时暂停并显示原因。队列按账户和项目保存，新建或切换对话前需要等待当前任务结束，并暂停正在运行的队列；旧对话保留自己的等待指令，重新打开后需手动 Resume。
 
-Agent 回复支持 Markdown、列表、表格和带复制按钮的代码块。文件链接在编辑器打开，可定位到行号；PDF 链接在预览区打开。**Work log** 收起执行过程，**Review changes** 展开完整 diff。在 **All panels** 模式下，AI 默认使用约半个工作区高度，与 Terminal 分别记忆大小；拖动面板顶部的横条调整，双击恢复默认。**Expand AI** 切换到完整对话视图，打开文件后恢复分栏。输入框自动增高，Enter 发送，Shift+Enter 换行，⌘Enter 也可发送。上翻阅读时停止自动跟随，**Jump to latest** 返回最新回复。
+Agent 回复支持 Markdown、列表、表格和带复制按钮的代码块。文件链接在编辑器打开，可定位到行号；PDF 链接在预览区打开。**Work log** 收起执行过程，**Review changes** 展开完整 diff。在 **Source** 模式下打开 AI 时，AI 默认使用约半个工作区高度，与 Terminal 分别记忆大小；拖动面板顶部的横条调整，双击恢复默认。**Expand AI** 切换到完整对话视图，打开文件后恢复分栏。输入框自动增高，Enter 发送，Shift+Enter 换行，⌘Enter 也可发送。上翻阅读时停止自动跟随，**Jump to latest** 返回最新回复。
 
 **Skills** 在输入框旁，可搜索并选择本轮使用的 skill。在消息输入框输入 `/` 弹出技能建议，输入 `/scale` 等名称实时筛选。方向键选择，Enter 或 Tab 确认，Esc 关闭并保留文字；也可点击建议。选中后，`/名称` 替换为技能标签，焦点留在输入框，可继续写请求或添加其他技能。运行期间同样可为下一条排队指令选择技能。文件路径和 URL 保留为普通文字。在空输入框按 `$` 也可打开搜索菜单。应用通过 Codex 原生 `skills/list` 读取用户的 `~/.agents/skills`、`~/.codex/skills` 和当前项目的 skills；发送时使用正式的 skill 输入载入 `SKILL.md`。`scale-writing` 优先显示，直接使用本机安装版本及其参考文件，不复制或改写定义。选中的 skill 会显示为标签，发送成功后清空选择，消息历史保留 skill 名称。**Refresh skills** 重新发现安装或更新的 skills。Skills 不需要额外 API key，Agent 仍使用当前 ChatGPT 授权和所选模型。
 

@@ -774,7 +774,7 @@ function Workbench({
   const guard = (next: () => void) => (dirty ? setPrompt(() => next) : next());
   const openFile = useStableCallback(
     (file: string, rootId: string = "primary", line?: number) => {
-      if (agentMode) switchMode("combined");
+      if (agentMode) switchMode("columns");
       if (file !== active || rootId !== activeRoot)
         guard(() =>
           load(rootId, file, line).catch((error) => report(error.message)),
@@ -1252,10 +1252,9 @@ function Workbench({
       : []),
     ...(
       [
-        ["agent", "Agent + PDF"],
-        ["edit", "Source + PDF"],
-        ["columns", "Source + Agent + PDF"],
-        ["combined", "All panels"],
+        ["agent", "Agent"],
+        ["edit", "Source"],
+        ["columns", "Both"],
       ] as const
     ).map(([mode, title]) => ({
       id: `layout-${mode}`,
@@ -1345,17 +1344,17 @@ function Workbench({
             onClick={() => switchMode("agent")}
           >
             <Sparkles size={13} />
-            Agent + PDF
+            Agent
           </button>
           <button
             type="button"
             aria-pressed={layout.workMode === "edit"}
-            aria-label="Source + PDF"
-            title="Edit the source beside the PDF"
+            aria-label="Source"
+            title="Edit the source beside the PDF; Terminal, AI and Build log open below"
             onClick={() => switchMode("edit")}
           >
             <FileText size={13} />
-            Source + PDF{dirty && <i title="Unsaved source edits" />}
+            Source{dirty && <i title="Unsaved source edits" />}
           </button>
           <button
             type="button"
@@ -1364,16 +1363,7 @@ function Workbench({
             onClick={() => switchMode("columns")}
           >
             <PanelsTopLeft size={13} />
-            Source + Agent + PDF
-          </button>
-          <button
-            type="button"
-            aria-pressed={layout.workMode === "combined"}
-            title="Source and PDF above the agent and tools"
-            onClick={() => switchMode("combined")}
-          >
-            <PanelsTopLeft size={13} />
-            All panels
+            Both
           </button>
         </div>
         <div className="toolbar-actions">

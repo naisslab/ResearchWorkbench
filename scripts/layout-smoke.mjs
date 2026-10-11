@@ -82,7 +82,7 @@ Review the source, ask the agent, and read the manuscript side by side.
     page
       .getByRole("group", { name: "Workbench mode" })
       .getByRole("button", { name, exact: true });
-  await mode("Source + Agent + PDF").click();
+  await mode("Both").click();
   await page
     .getByRole("button", { name: "Continue with ChatGPT", exact: false })
     .waitFor();
@@ -178,12 +178,7 @@ Review the source, ask the agent, and read the manuscript side by side.
       ),
     ),
   );
-  for (const name of [
-    "Source + PDF",
-    "Agent + PDF",
-    "All panels",
-    "Source + Agent + PDF",
-  ]) {
+  for (const name of ["Source", "Agent", "Both"]) {
     await mode(name).click();
     assert.ok(
       await page.evaluate(() =>
@@ -274,10 +269,7 @@ Review the source, ask the agent, and read the manuscript side by side.
     .locator(".area-projects")
     .getByRole("button", { name: "Layout Review", exact: true })
     .click();
-  assert.equal(
-    await mode("Source + Agent + PDF").getAttribute("aria-pressed"),
-    "true",
-  );
+  assert.equal(await mode("Both").getAttribute("aria-pressed"), "true");
   const persisted = await checkColumns();
   assert.ok(Math.abs(persisted.source.width - savedWidths.sourceWidth) < 1);
   assert.ok(

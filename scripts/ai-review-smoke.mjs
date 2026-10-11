@@ -179,7 +179,11 @@ await smoke("ai-review", async (root) => {
     .click();
   await page
     .getByRole("group", { name: "Workbench mode" })
-    .getByRole("button", { name: "All panels", exact: true })
+    .getByRole("button", { name: "Source", exact: true })
+    .click();
+  await page
+    .locator(".bottom-tabs")
+    .getByRole("button", { name: "AI", exact: true })
     .click();
   const reviewButton = page.locator(
     '[data-message-id="review-run"] .ai-review-button',

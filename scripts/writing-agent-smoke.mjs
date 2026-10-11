@@ -177,17 +177,19 @@ await smoke("writing-agent", async () => {
     .locator(".area-projects")
     .getByRole("button", { name: /Writing capture/ });
   await activity({ running: true });
-  await row.getByLabel("Agent working").waitFor();
+  await row.and(page.locator("[aria-description='Agent working']")).waitFor();
   await page
     .locator(".main-nav")
     .getByRole("button", { name: "Overview", exact: true })
     .click();
   await activity({ running: false, status: "completed", continues: false });
-  await row.getByLabel("Agent finished").waitFor();
+  await row.and(page.locator("[aria-description='Agent finished']")).waitFor();
   await page.getByText("The agent finished in Writing capture").waitFor();
   await page.getByRole("button", { name: "Open", exact: true }).click();
   await page.getByLabel("Message the AI agent", { exact: true }).waitFor();
-  await row.getByLabel("Agent finished").waitFor({ state: "detached" });
+  await row
+    .and(page.locator("[aria-description]"))
+    .waitFor({ state: "detached" });
   await closeApp();
   ({ app, page } = await launchApp());
   assert.deepEqual(

@@ -99,13 +99,24 @@ test("work modes migrate to PDF + Agent and column widths fit the workspace", ()
     parsePanelLayout(JSON.stringify({ workMode: "invalid" })).workMode,
     "agent",
   );
-  for (const workMode of ["agent", "edit", "combined", "columns"]) {
+  for (const workMode of ["agent", "edit", "columns"]) {
     const saved = parsePanelLayout(
       JSON.stringify({ workMode, agentWidth: 500 }),
     );
     assert.equal(saved.workMode, workMode);
     assert.equal(saved.agentWidth, 500);
   }
+  // All panels was Source with its tools open below; it reopens that way.
+  const allPanels = parsePanelLayout(
+    JSON.stringify({
+      workMode: "combined",
+      bottomOpen: true,
+      bottomTab: "build",
+    }),
+  );
+  assert.equal(allPanels.workMode, "edit");
+  assert.equal(allPanels.bottomOpen, true);
+  assert.equal(allPanels.bottomTab, "build");
   for (const width of [700, 800, 1200, 1800]) {
     for (const preferred of [0, 360, 900]) {
       const result = fitAgentColumns(width, preferred);

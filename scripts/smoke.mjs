@@ -139,7 +139,10 @@ This manuscript exists only in the automated test workspace.
     .filter({ hasText: "Attach folder" })
     .click();
   await page.getByRole("button", { name: "Open workbench" }).click();
-  await page.getByRole("button", { name: "All panels", exact: true }).click();
+  await page
+    .getByRole("group", { name: "Workbench mode" })
+    .getByRole("button", { name: "Source", exact: true })
+    .click();
   await page.locator(".cm-content").waitFor();
   assert.ok(
     (await page.locator(".cm-content").innerText()).includes(
@@ -249,7 +252,10 @@ This manuscript exists only in the automated test workspace.
   await page
     .getByRole("button", { name: "UI Integration Project", exact: true })
     .click();
-  await page.getByRole("button", { name: "All panels", exact: true }).click();
+  await page
+    .getByRole("group", { name: "Workbench mode" })
+    .getByRole("button", { name: "Source", exact: true })
+    .click();
   await page.locator(".cm-content").waitFor();
   await page
     .locator(".bottom-tabs")
@@ -386,8 +392,14 @@ This manuscript exists only in the automated test workspace.
     await page.getByLabel("Message the AI agent", { exact: true }).inputValue(),
     /^Fix the problems listed in the Build log/,
   );
-  await page.getByRole("button", { name: "All panels", exact: true }).click();
-  await page.getByRole("tab", { name: "Build log" }).click();
+  await page
+    .getByRole("group", { name: "Workbench mode" })
+    .getByRole("button", { name: "Source", exact: true })
+    .click();
+  await page
+    .locator(".bottom-tabs")
+    .getByRole("button", { name: /Build log/ })
+    .click();
   await page.getByLabel("Compile on save").check();
   await page.locator(".cm-content").fill(original);
   await page.getByRole("button", { name: /^Save/ }).click();

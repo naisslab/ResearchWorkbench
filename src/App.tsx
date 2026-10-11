@@ -345,7 +345,10 @@ export default function App() {
         setAgentRuns((current) => ({
           ...current,
           ...Object.fromEntries(
-            result.value.runningProjects.map((id) => [id, "running" as const]),
+            (result.value.runningProjects ?? []).map((id) => [
+              id,
+              "running" as const,
+            ]),
           ),
         }));
     });

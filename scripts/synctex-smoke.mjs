@@ -127,11 +127,14 @@ await smoke("synctex", async (root) => {
     .click();
   await ready(page, 1);
 
-  // A double-click opens the editor from the default Agent + PDF mode.
+  // A double-click opens the editor from the default Agent mode.
   await clickText(page, 1, "Overview sentence", { clickCount: 2 });
   await atSource(page, "main.tex", 4, "Overview sentence");
   assert.equal(await page.locator(".editor-pane:visible").count(), 1);
-  await page.getByRole("button", { name: "Source + PDF", exact: true }).click();
+  await page
+    .getByRole("group", { name: "Workbench mode" })
+    .getByRole("button", { name: "Source", exact: true })
+    .click();
 
   // SyncTeX opens the included file rather than the entry's input statement.
   await goTo(page, 2);
@@ -154,11 +157,17 @@ await smoke("synctex", async (root) => {
   assert.equal(await page.locator(".editor-pane:visible").count(), 1);
 
   // Same-file jumps refocus a source editor hidden by the Agent layout.
-  await page.getByRole("button", { name: "Agent + PDF", exact: true }).click();
+  await page
+    .getByRole("group", { name: "Workbench mode" })
+    .getByRole("button", { name: "Agent", exact: true })
+    .click();
   await goTo(page, 2);
   await clickText(page, 2, "Distinct included sentence");
   await atSource(page, "sections/details.tex", 3, "Distinct included sentence");
-  await page.getByRole("button", { name: "Source + PDF", exact: true }).click();
+  await page
+    .getByRole("group", { name: "Workbench mode" })
+    .getByRole("button", { name: "Source", exact: true })
+    .click();
 
   // Existing modifier-click behavior remains available without changing tools.
   await page.getByRole("button", { name: "Select text", exact: true }).click();
@@ -217,7 +226,10 @@ await smoke("synctex", async (root) => {
   );
   await page.getByRole("button", { name: "Compile", exact: true }).click();
   await page.getByText("Build failed", { exact: false }).waitFor();
-  await page.getByRole("button", { name: "Source + PDF", exact: true }).click();
+  await page
+    .getByRole("group", { name: "Workbench mode" })
+    .getByRole("button", { name: "Source", exact: true })
+    .click();
   await goTo(page, 2);
   await clickText(page, 2, "Distinct included sentence", { clickCount: 2 });
   await atSource(
@@ -231,7 +243,10 @@ await smoke("synctex", async (root) => {
   await page
     .locator('.build-summary[data-state="ok"]')
     .waitFor({ state: "attached" });
-  await page.getByRole("button", { name: "Source + PDF", exact: true }).click();
+  await page
+    .getByRole("group", { name: "Workbench mode" })
+    .getByRole("button", { name: "Source", exact: true })
+    .click();
 
   // A missing map shows actionable feedback without moving the source cursor.
   const pdfFile = path.join(folder, ".research-build", "main.pdf");

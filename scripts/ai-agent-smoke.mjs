@@ -44,7 +44,7 @@ await smoke("ai", async (root) => {
     page
       .getByRole("group", { name: "Workbench mode" })
       .getByRole("button", { name, exact: true });
-  assert.equal(await mode("Agent + PDF").getAttribute("aria-pressed"), "true");
+  assert.equal(await mode("Agent").getAttribute("aria-pressed"), "true");
   assert.equal(await page.locator(".editor-pane").isVisible(), false);
   const columns = await page.evaluate(() => {
     const pdf = document.querySelector(".pdf-pane").getBoundingClientRect();
@@ -63,10 +63,10 @@ await smoke("ai", async (root) => {
       columns.height > 500 &&
       columns.bottom <= columns.viewport,
   );
-  await mode("Source + PDF").click();
+  await mode("Source").click();
   assert.equal(await page.locator(".editor-pane").isVisible(), true);
   assert.equal(await page.locator(".ai-panel").isVisible(), false);
-  await mode("All panels").click();
+  await mode("Source").click();
   await page
     .locator(".bottom-tabs")
     .getByRole("button", { name: "Terminal", exact: true })
@@ -827,7 +827,11 @@ await smoke("ai", async (root) => {
     .locator(".area-projects")
     .getByRole("button", { name: "Agent Integration", exact: true })
     .click();
-  await mode("All panels").click();
+  await mode("Source").click();
+  await page
+    .locator(".bottom-tabs")
+    .getByRole("button", { name: "AI", exact: true })
+    .click();
   assert.match(
     await page
       .getByRole("button", { name: "Agent permissions", exact: true })
@@ -1085,9 +1089,9 @@ await smoke("ai", async (root) => {
     window.__modeEditor = document.querySelector(".cm-content");
     window.__modeComposer = document.querySelector(".ai-composer textarea");
   });
-  await mode("Agent + PDF").click();
-  await mode("Source + PDF").click();
-  await mode("All panels").click();
+  await mode("Agent").click();
+  await mode("Source").click();
+  await mode("Both").click();
   assert.equal(
     await page.locator(".cm-content").innerText(),
     sourceBeforeModeSwitch,
@@ -1385,7 +1389,7 @@ await smoke("ai", async (root) => {
   await page.evaluate(() => {
     window.__modePDF = document.querySelector(".pdf-reader");
   });
-  await mode("Agent + PDF").click();
+  await mode("Agent").click();
   assert.equal(
     await page.evaluate(
       () => window.__modePDF === document.querySelector(".pdf-reader"),
@@ -1411,7 +1415,7 @@ await smoke("ai", async (root) => {
   });
   assert.ok(
     sideFits,
-    "Agent + PDF should provide a full-height conversation even in a compact window",
+    "Agent mode should provide a full-height conversation even in a compact window",
   );
   await page.screenshot({ path: "output/playwright/pdf-agent-compact.png" });
   await page.getByTitle("Expand AI panel", { exact: true }).click();
@@ -1433,13 +1437,13 @@ await smoke("ai", async (root) => {
     .getByRole("button", { name: "AI", exact: true })
     .click();
   await page.getByRole("link", { name: "main.tex", exact: true }).click();
-  await page.locator(".workbench.mode-combined").waitFor();
+  await page.locator(".workbench.mode-columns").waitFor();
   assert.equal(
-    await mode("All panels").getAttribute("aria-pressed"),
+    await mode("Both").getAttribute("aria-pressed"),
     "true",
     "Source links should reveal the editor",
   );
-  await mode("Agent + PDF").click();
+  await mode("Agent").click();
   await page.getByLabel("Message the AI agent").fill("Run another check");
   await page.getByRole("button", { name: "Run AI agent", exact: true }).click();
   await desktop.evaluate(() => {

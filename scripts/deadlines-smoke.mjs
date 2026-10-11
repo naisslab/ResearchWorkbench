@@ -226,7 +226,10 @@ E = mc^2 + \alpha
   await page
     .getByRole("button", { name: "Dark Editor Test", exact: true })
     .click();
-  await page.getByRole("button", { name: "All panels", exact: true }).click();
+  await page
+    .getByRole("group", { name: "Workbench mode" })
+    .getByRole("button", { name: "Source", exact: true })
+    .click();
   await page
     .locator(".bottom-tabs")
     .getByRole("button", { name: "Terminal", exact: true })

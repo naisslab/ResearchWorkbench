@@ -74,7 +74,10 @@ await smoke("writing", async (root) => {
   await page
     .getByRole("button", { name: "Writing Workflow", exact: true })
     .click();
-  await page.getByRole("button", { name: "Source + PDF", exact: true }).click();
+  await page
+    .getByRole("group", { name: "Workbench mode" })
+    .getByRole("button", { name: "Source", exact: true })
+    .click();
   await page.locator(".cm-content").waitFor();
 
   // The outline follows \input into other files, in reading order.
@@ -270,15 +273,15 @@ await smoke("writing", async (root) => {
   // ⌘K runs commands; ">" lists only commands.
   await page.keyboard.press("Meta+k");
   const palette = page.getByRole("combobox", { name: "Search workspace" });
-  await palette.fill(">layout all");
-  await page.getByRole("option", { name: /All panels/ }).waitFor();
+  await palette.fill(">layout both");
+  await page.getByRole("option", { name: /Both/ }).waitFor();
   await palette.press("Enter");
-  await page.locator(".workbench.mode-combined").waitFor({ state: "attached" });
+  await page.locator(".workbench.mode-columns").waitFor({ state: "attached" });
   // The application menu sends the same commands.
   await app.evaluate(({ Menu }) => {
     const item = Menu.getApplicationMenu()
       .items.find((menu) => menu.label === "View")
-      .submenu.items.find((entry) => entry.label === "Source + PDF");
+      .submenu.items.find((entry) => entry.label === "Source");
     item.click();
   });
   await page.locator(".workbench.mode-edit").waitFor({ state: "attached" });
