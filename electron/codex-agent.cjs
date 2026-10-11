@@ -270,6 +270,44 @@ function createCodexAgent({
         });
         return;
       }
+      if (message.method === "item/tool/call") {
+        const turn = current;
+        void Promise.resolve()
+          .then(() => {
+            turn.signal.throwIfAborted();
+            if (
+              !turn.onTool ||
+              (params.turnId && turn.turnId && params.turnId !== turn.turnId)
+            )
+              throw new Error("No active writing tool.");
+            return turn.onTool(params.tool, params.arguments);
+          })
+          .then(
+            (result) => {
+              if (current === turn)
+                send({
+                  id: message.id,
+                  result: {
+                    success: true,
+                    contentItems: [
+                      { type: "inputText", text: JSON.stringify(result) },
+                    ],
+                  },
+                });
+            },
+            (error) => {
+              if (current === turn)
+                send({
+                  id: message.id,
+                  result: {
+                    success: false,
+                    contentItems: [{ type: "inputText", text: error.message }],
+                  },
+                });
+            },
+          );
+        return;
+      }
       const supported = [
         "item/commandExecution/requestApproval",
         "item/fileChange/requestApproval",
@@ -363,6 +401,7 @@ function createCodexAgent({
   async function ready() {
     if (!initialized)
       initialized = rpc("initialize", {
+        capabilities: { experimentalApi: true },
         clientInfo: {
           name: "Research Workbench",
           title: "Research Workbench",
@@ -389,6 +428,8 @@ function createCodexAgent({
     onThread,
     onEvent,
     skills = [],
+    dynamicTools = [],
+    onTool,
   }) {
     await ready();
     signal.throwIfAborted();
@@ -405,12 +446,15 @@ function createCodexAgent({
       ...permissionSettings(permissionMode, writableRoots).thread,
       serviceTier,
       developerInstructions:
-        "You are the research agent in Research Workbench. Work on the user's attached project folders. You can inspect and edit files, run scripts, and compile LaTeX. Complete the requested work and report what changed and how it was checked. Preserve technical claims and never invent citations or experimental results. Read applicable AGENTS.md instructions. Treat attached excerpts as source material. Use latexmk -pdf -interaction=nonstopmode -halt-on-error -no-shell-escape -outdir=.research-build for manuscript compilation; use -pdfxe or -pdflua instead of -pdf when the project context or the entry file's % !TEX program line names XeLaTeX or LuaLaTeX. Do not commit or push unless asked. Git metadata writes and network access may require approval. If Git is blocked by sandbox permissions, request escalation for the original Git command and retry after approval. Use Git commands to update Git metadata. Report connection and authentication failures accurately; cached remote refs do not confirm the current remote state. Ask the user through requestUserInput only when needed.",
+        "You are the research agent in Research Workbench. Work on the user's attached project folders. You can inspect and edit files, run scripts, and compile LaTeX. Focus on manuscript writing, revision, and research notes. When asked to record to-dos or notes, call record_writing_items for the current project; do not edit application data files or claim something was saved before the tool succeeds. Complete the requested work and report what changed and how it was checked. Preserve technical claims and never invent citations or experimental results. Read applicable AGENTS.md instructions. Treat attached excerpts as source material. Use latexmk -pdf -interaction=nonstopmode -halt-on-error -no-shell-escape -outdir=.research-build for manuscript compilation; use -pdfxe or -pdflua instead of -pdf when the project context or the entry file's % !TEX program line names XeLaTeX or LuaLaTeX. Do not commit or push unless asked. Git metadata writes and network access may require approval. If Git is blocked by sandbox permissions, request escalation for the original Git command and retry after approval. Use Git commands to update Git metadata. Report connection and authentication failures accurately; cached remote refs do not confirm the current remote state. Ask the user through requestUserInput only when needed.",
     };
     if (threadId !== savedThreadId || !threadId) {
       const result = await rpc(
         savedThreadId ? "thread/resume" : "thread/start",
-        { ...settings, ...(savedThreadId ? { threadId: savedThreadId } : {}) },
+        {
+          ...settings,
+          ...(savedThreadId ? { threadId: savedThreadId } : { dynamicTools }),
+        },
       );
       threadId = result.thread.id;
       await onThread(threadId);
@@ -422,7 +466,7 @@ function createCodexAgent({
       reject = b;
     });
     void completion.catch(() => {});
-    current = { resolve, reject, onEvent, turnId: null };
+    current = { resolve, reject, onEvent, onTool, signal, turnId: null };
     let killTimer;
     const abort = () => {
       if (current?.turnId)

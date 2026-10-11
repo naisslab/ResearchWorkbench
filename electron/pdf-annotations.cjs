@@ -50,6 +50,8 @@ function validateAnnotations(input, pageCount) {
       !Number.isFinite(Date.parse(item.createdAt))
     )
       throw new Error("Invalid PDF annotation.");
+    if (item.resolved !== undefined && typeof item.resolved !== "boolean")
+      throw new Error("Invalid PDF feedback status.");
     ids.add(item.id);
     const clean = {
       id: item.id,
@@ -60,6 +62,7 @@ function validateAnnotations(input, pageCount) {
       comment: item.comment,
       createdAt: item.createdAt,
     };
+    if (item.resolved !== undefined) clean.resolved = item.resolved;
     if (item.kind === "highlight") {
       if (
         !Array.isArray(item.rects) ||

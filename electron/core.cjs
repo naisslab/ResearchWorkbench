@@ -271,7 +271,7 @@ async function safeNewPath(root, relative) {
 }
 // Breadth-first, eight directories at a time, within a directory-entry budget.
 // `truncated` reports that the limits left part of the folder unlisted.
-async function scanFiles(root) {
+async function scanFiles(root, allFiles = false) {
   if (!root) return { files: [], truncated: false };
   const results = [];
   let truncated = false;
@@ -303,7 +303,7 @@ async function scanFiles(root) {
           if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue;
           const file = path.join(batch[index], entry.name);
           if (entry.isDirectory()) next.push(file);
-          else if (entry.isFile() && isTextFile(entry.name)) {
+          else if (entry.isFile() && (allFiles || isTextFile(entry.name))) {
             if (results.length < 1500) results.push(path.relative(root, file));
             else truncated = true;
           }
@@ -347,11 +347,17 @@ async function projectFiles(project) {
   return Promise.all(
     projectRoots(project).map(async (root) => {
       try {
-        return { ...root, ...(await scanFiles(root.folder)) };
+        const listing = await scanFiles(root.folder, true);
+        return {
+          ...root,
+          ...listing,
+          editableFiles: listing.files.filter(isTextFile),
+        };
       } catch {
         return {
           ...root,
           files: [],
+          editableFiles: [],
           error: "Folder unavailable. Check its location in Finder.",
         };
       }

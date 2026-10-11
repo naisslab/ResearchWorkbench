@@ -221,3 +221,38 @@ test("a blocked discovery attempt never opens authorization and can be retried",
   assert.equal((await signIn(auth)).sharing, true);
   assert.equal(opens, 1);
 });
+
+test("transport diagnostics classify known codes without publishing raw messages or secrets", () => {
+  const { networkError } = require("../electron/chatgpt.cjs");
+  for (const [error, code, retryable] of [
+    [
+      new Error("net::ERR_CONNECTION_RESET at https://private.test"),
+      "ERR_CONNECTION_RESET",
+      true,
+    ],
+    [
+      new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } }),
+      "ERR_CONNECTION_REFUSED",
+      true,
+    ],
+    [
+      new Error("net::ERR_CERT_AUTHORITY_INVALID private credential"),
+      "ERR_CERT_AUTHORITY_INVALID",
+      false,
+    ],
+    [
+      new DOMException("private credential", "TimeoutError"),
+      "ERR_TIMED_OUT",
+      true,
+    ],
+    [new Error("private credential"), undefined, false],
+  ]) {
+    const failure = networkError(error);
+    assert.equal(failure.networkCode, code);
+    assert.equal(failure.retryable, retryable);
+    assert.doesNotMatch(
+      JSON.stringify(publicError(failure)),
+      /private|credential|retryable/,
+    );
+  }
+});

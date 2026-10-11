@@ -54,16 +54,11 @@ async function resolveProjectReference(project, reference, rootId = "primary") {
   const stat = await fs.stat(target);
   if (!stat.isFile()) throw new Error("This link does not point to a file.");
   const pdf = path.extname(target).toLowerCase() === ".pdf";
-  if (!pdf && !core.isTextFile(target))
-    throw new Error("This file cannot be opened in the editor.");
-  if (stat.size > (pdf ? 64 : 2) * 1024 * 1024)
-    throw new Error(
-      pdf
-        ? "PDF is too large (maximum 64 MB)."
-        : "File is too large to edit (maximum 2 MB).",
-    );
+  const previewable =
+    (pdf || core.isTextFile(target)) &&
+    stat.size <= (pdf ? 64 : 2) * 1024 * 1024;
   return {
-    kind: pdf ? "pdf" : "text",
+    kind: previewable ? (pdf ? "pdf" : "text") : "finder",
     target,
     file: relative,
     rootId: selected.id,

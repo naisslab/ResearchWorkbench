@@ -333,7 +333,8 @@
   font-weight: 400;
   margin-left: 4px;
 }
-.pdf-notes > input {
+.pdf-notes > input,
+.pdf-notes > select {
   width: 100%;
   font-size: var(--text-xs);
   padding: 7px 8px;
@@ -408,6 +409,7 @@
   padding-top: 12px;
 }
 .pdf-note-editor label {
+  display: block;
   font-size: var(--text-2xs);
   color: var(--muted);
 }
@@ -541,4 +543,14 @@
 }
 .pdf-migration li {
   margin: 4px 0;
+}
+
+.pdf-note-editor > button:first-child {
+  display: flex;
+  margin-bottom: 8px;
+}
+.pdf-feedback-state {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
 }

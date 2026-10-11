@@ -9,6 +9,7 @@ import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  FileArchive,
   FileCode2,
   FileText,
   Folder,
@@ -113,12 +114,18 @@ export default memo(function ProjectFiles({
       },
     };
   };
+  const editable =
+    !!menu &&
+    roots.some(
+      (root) =>
+        root.id === menu.rootId && root.editableFiles.includes(menu.path),
+    );
   const items = menu
     ? (
         [
           ["create", "New file here…", menu.folder],
-          ["rename", "Rename…", !menu.folder],
-          ["trash", "Move to Trash", !menu.folder],
+          ["rename", "Rename…", editable],
+          ["trash", "Move to Trash", editable],
           ["reveal", "Reveal in Finder", true],
           [
             "entry",
@@ -170,7 +177,9 @@ export default memo(function ProjectFiles({
           title={node.path}
           {...menuProps({ rootId, path: node.path, folder: false })}
         >
-          {/\.(py|js|jsx|ts|tsx|rs|go|c|cpp|h|sh|sql)$/.test(node.name) ? (
+          {/\.(zip|rar|7z|tar|gz|bz2|xz|tgz)$/i.test(node.name) ? (
+            <FileArchive size={13} />
+          ) : /\.(py|js|jsx|ts|tsx|rs|go|c|cpp|h|sh|sql)$/.test(node.name) ? (
             <FileCode2 size={13} />
           ) : (
             <FileText size={13} />
@@ -248,9 +257,7 @@ export default memo(function ProjectFiles({
                   </>
                 ) : (
                   <p className="file-empty">
-                    {query
-                      ? "No matching files"
-                      : "No editable files in this folder"}
+                    {query ? "No matching files" : "No files in this folder"}
                   </p>
                 ))}
             </section>

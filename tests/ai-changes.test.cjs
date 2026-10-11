@@ -475,3 +475,66 @@ test("after a restart, collected stores still skip unchanged files and keep thei
   await restarted.revert(next, [f.folder]);
   assert.equal((await f.read("stable.txt")).toString(), "stable");
 });
+
+test("partial revert preserves unselected later edits and completes the remainder after restart", async (t) => {
+  const f = await fixture(t);
+  await f.write("intro.tex", "original intro");
+  await f.write("eval.tex", "original eval");
+  await f.store.begin(f.id, [f.folder]);
+  await f.write("intro.tex", "agent intro");
+  await f.write("eval.tex", "agent eval");
+  await f.store.finish(f.id);
+  await f.write("eval.tex", "my later eval");
+  const review = await f.store.review(f.id, [f.folder]);
+  const intro = review.files.find((f) => f.path === "intro.tex");
+  const evaluation = review.files.find((f) => f.path === "eval.tex");
+  assert.equal(review.canRevert, false);
+  assert.equal(intro.canRevert, true);
+  assert.equal(evaluation.canRevert, false);
+  const result = await f.store.revert(f.id, [f.folder], [intro.id]);
+  assert.equal(result.revertedAt, undefined);
+  assert.equal(result.revertedFiles, 1);
+  assert.equal((await f.read("intro.tex")).toString(), "original intro");
+  assert.equal((await f.read("eval.tex")).toString(), "my later eval");
+  await assert.rejects(
+    f.store.revert(f.id, [f.folder], [intro.id]),
+    /already been reverted/,
+  );
+  const restarted = createChangeStore(f.storage);
+  assert.ok(
+    (await restarted.review(f.id, [f.folder])).files.find(
+      (f) => f.id === intro.id,
+    ).revertedAt,
+  );
+  await f.write("eval.tex", "agent eval");
+  assert.ok((await restarted.revert(f.id, [f.folder])).revertedAt);
+  assert.equal((await f.read("eval.tex")).toString(), "original eval");
+});
+
+test("invalid partial selections never change files and a failed partial revert keeps earlier reversions", async (t) => {
+  let fail = false;
+  const f = await fixture(t, {
+    replace: async (target, bytes, options) => {
+      if (fail && target.endsWith("b.tex")) throw new Error("disk full");
+      return atomicWrite(target, bytes, options);
+    },
+  });
+  for (const file of ["a.tex", "b.tex", "c.tex"]) await f.write(file, "before");
+  await f.store.begin(f.id, [f.folder]);
+  for (const file of ["a.tex", "b.tex", "c.tex"]) await f.write(file, "after");
+  await f.store.finish(f.id);
+  const review = await f.store.review(f.id, [f.folder]);
+  const ids = Object.fromEntries(review.files.map((f) => [f.path, f.id]));
+  for (const list of [[], ["missing"], [ids["a.tex"], ids["a.tex"]]])
+    await assert.rejects(f.store.revert(f.id, [f.folder], list));
+  await f.store.revert(f.id, [f.folder], [ids["c.tex"]]);
+  fail = true;
+  await assert.rejects(
+    f.store.revert(f.id, [f.folder], [ids["a.tex"], ids["b.tex"]]),
+  );
+  assert.equal((await f.read("a.tex")).toString(), "after");
+  assert.equal((await f.read("c.tex")).toString(), "before");
+  fail = false;
+  await f.store.revert(f.id, [f.folder]);
+  assert.equal((await f.read("b.tex")).toString(), "before");
+});

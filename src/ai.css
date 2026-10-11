@@ -1342,6 +1342,33 @@
   align-self: center;
   flex-shrink: 0;
 }
+.ai-file-reference {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  vertical-align: baseline;
+}
+.ai-finder-action {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.ai-finder-action:hover,
+.ai-finder-action:focus-visible {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--selection);
+}
 .ai-web-link svg {
   margin-left: 3px;
 }
@@ -1589,4 +1616,50 @@
   display: flex;
   gap: 6px;
   padding-right: 8px;
+}
+
+.dictation-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 4px 0;
+  font-size: 12px;
+}
+.dictation-control select {
+  width: auto;
+  padding: 3px 5px;
+  font-size: 11px;
+}
+.dictation-preview,
+.dictation-error {
+  flex-basis: 100%;
+  max-height: 90px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.dictation-preview {
+  color: var(--muted);
+}
+.dictation-error {
+  color: var(--danger);
+}
+
+.ai-review-file-choice {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 8px;
+}
+.ai-review-file-choice > input {
+  width: 14px;
+  flex: 0 0 14px;
+}
+.ai-review-file-choice > button {
+  min-width: 0;
+  flex: 1;
+}
+.dictation-privacy {
+  color: var(--muted);
+  font-size: 10px;
 }

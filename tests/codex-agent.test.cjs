@@ -9,7 +9,7 @@ const { createCodexAgent } = require("../electron/codex-agent.cjs");
 const { createResponseGateway } = require("../electron/response-gateway.cjs");
 
 test(
-  "the bundled native app-server survives mid-turn token expiry without replaying file edits or commands",
+  "the bundled native app-server survives mid-turn disconnection and token expiry without replaying file edits or commands",
   { timeout: 30000 },
   async () => {
     const root = await fs.mkdtemp(
@@ -21,6 +21,7 @@ test(
       events = [];
     let serverError, agent, gateway, savedThreadId;
     let accepted = 0,
+      disconnections = 0,
       refreshes = 0,
       credential = "unused-native-fixture-token";
     const server = http.createServer(async (request, response) => {
@@ -194,8 +195,20 @@ test(
           }
           return credential;
         },
-        fetcher: (url, options) =>
-          fetch(url.replace("https://api.openai.com/v1", local), options),
+        fetcher: async (url, options) => {
+          if (requests.length === 1 && !disconnections) {
+            disconnections++;
+            assert.equal(
+              await fs.readFile(path.join(cwd, "one.txt"), "utf8"),
+              "First file\n",
+            );
+            throw new Error("net::ERR_CONNECTION_RESET");
+          }
+          return fetch(
+            url.replace("https://api.openai.com/v1", local),
+            options,
+          );
+        },
       });
       agent = createCodexAgent({
         accessToken: gateway.token,
@@ -260,6 +273,7 @@ test(
       );
       assert.equal(requests.length, 4);
       assert.equal(refreshes, 1);
+      assert.equal(disconnections, 1);
       assert.equal(
         await fs.readFile(path.join(cwd, "executions.txt"), "utf8"),
         "once\n",
@@ -300,5 +314,118 @@ test(
       await new Promise((resolve) => server.close(resolve));
       await fs.rm(root, { recursive: true, force: true });
     }
+  },
+);
+
+test(
+  "native app-server exposes the writing tool and returns its application receipt",
+  { timeout: 30000 },
+  async (t) => {
+    const { writingTool } = require("../electron/writing.cjs");
+    const root = await fs.mkdtemp(
+      path.join(os.tmpdir(), "research-writing-tool-"),
+    );
+    let agent,
+      requests = 0,
+      serverError;
+    const calls = [];
+    const server = http.createServer(async (req, res) => {
+      try {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        let bytes = Buffer.concat(chunks);
+        if (req.headers["content-encoding"] === "gzip")
+          bytes = zlib.gunzipSync(bytes);
+        const body = JSON.parse(bytes.toString());
+        requests++;
+        assert.ok(
+          body.tools.some((tool) => tool.name === "record_writing_items"),
+        );
+        if (requests > 1)
+          assert.match(JSON.stringify(body.input), /"saved"|\\"saved\\"/);
+        const item =
+          requests === 1
+            ? {
+                id: "writing_call",
+                type: "function_call",
+                call_id: "writing_call",
+                name: "record_writing_items",
+                arguments: JSON.stringify({
+                  tasks: ["修改摘要"],
+                  note: "保持技术结论",
+                }),
+              }
+            : {
+                id: "writing_reply",
+                type: "message",
+                role: "assistant",
+                status: "completed",
+                content: [
+                  {
+                    type: "output_text",
+                    text: "Saved in project details.",
+                    annotations: [],
+                  },
+                ],
+              };
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        const emit = (type, value) =>
+          res.write(
+            `event: ${type}\ndata: ${JSON.stringify({ type, ...value })}\n\n`,
+          );
+        const id = `writing_response_${requests}`;
+        emit("response.created", {
+          response: { id, status: "in_progress", output: [] },
+        });
+        emit("response.output_item.added", { output_index: 0, item });
+        emit("response.output_item.done", { output_index: 0, item });
+        emit("response.completed", {
+          response: { id, status: "completed", output: [item] },
+        });
+        res.end();
+      } catch (error) {
+        serverError = error;
+        res.writeHead(500);
+        res.end();
+      }
+    });
+    t.after(async () => {
+      await agent?.close();
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+      await fs.rm(root, { recursive: true, force: true });
+    });
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    agent = createCodexAgent({
+      accessToken: "unused-fixture-token",
+      baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+      home: path.join(root, "home"),
+    });
+    const result = await agent.run({
+      model: "gpt-5.5",
+      cwd: root,
+      writableRoots: [root],
+      text: "Record a writing to-do and note.",
+      dynamicTools: [writingTool],
+      signal: AbortSignal.timeout(20000),
+      onThread: async () => {},
+      onEvent: () => {},
+      onTool: async (name, args) => {
+        calls.push({ name, args });
+        return { saved: true };
+      },
+    });
+    if (serverError) throw serverError;
+    assert.equal(result.status, "completed", JSON.stringify(result));
+    assert.deepEqual(calls, [
+      {
+        name: "record_writing_items",
+        args: { tasks: ["修改摘要"], note: "保持技术结论" },
+      },
+    ]);
+    assert.equal(requests, 2);
   },
 );

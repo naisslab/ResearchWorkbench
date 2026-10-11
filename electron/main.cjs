@@ -39,6 +39,18 @@ if (process.env.RESEARCH_TEST_DATA)
   app.setPath("userData", path.resolve(process.env.RESEARCH_TEST_DATA));
 if (!process.env.RESEARCH_TEST_DATA && !app.requestSingleInstanceLock())
   app.quit();
+const { createDictation } = require("./dictation.cjs");
+const dictation = createDictation({
+  executable: app.isPackaged
+    ? path.join(process.resourcesPath, "research-dictation")
+    : path.join(__dirname, "../build/native/research-dictation"),
+  emit: (event) => send("dictation:event", event),
+});
+app.on("before-quit", () => dictation.cancel());
+const { createWritingCapture } = require("./writing.cjs");
+const writingCapture = createWritingCapture((request) =>
+  send("writing:capture", request),
+);
 let win;
 let ai;
 let maintenance = false;
@@ -216,6 +228,14 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   editMenu(win);
   win.webContents.on("will-navigate", (event) => event.preventDefault());
+  win.webContents.on("did-start-navigation", () => {
+    dictation.cancel();
+    writingCapture.cancel();
+  });
+  win.webContents.on("render-process-gone", () => {
+    dictation.cancel();
+    writingCapture.cancel();
+  });
   win.webContents.on("will-prevent-unload", (event) => {
     const response = dialog.showMessageBoxSync(win, {
       type: "question",
@@ -230,6 +250,8 @@ function createWindow() {
   if (process.env.RESEARCH_DEV_URL) win.loadURL(process.env.RESEARCH_DEV_URL);
   else win.loadFile(path.join(__dirname, "../dist/index.html"));
   win.on("closed", () => {
+    dictation.cancel();
+    writingCapture.cancel();
     // macOS keeps the app running, so a reopened window still needs the AI;
     // only work that reports to this window stops here.
     void ai?.stopAll().catch(() => {});
@@ -350,6 +372,12 @@ app
         );
       return { url: pdfUrl(target, p.id, name, sourcePath), name };
     });
+    handle("writing:complete", (id, result) =>
+      writingCapture.complete(id, result),
+    );
+    handle("dictation:start", (id, language) => dictation.start(id, language));
+    handle("dictation:stop", (id) => dictation.stop(id));
+    handle("dictation:cancel", (id) => dictation.cancel(id));
     handle("workspace:load", () => state);
     handle("catalog:list", () => catalog.researchCatalog());
     handle("catalog:add", async (ids) => {
@@ -474,25 +502,34 @@ app
       async (id, relative, rootId) =>
         (await fs.stat(await textTarget(id, relative, rootId))).mtimeMs,
     );
-    handle("project:open-reference", async (id, reference, rootId) => {
-      const resolved = await resolveProjectReference(
-        project(id),
-        reference,
-        rootId,
-      );
-      if (resolved.kind === "pdf")
+    handle(
+      "project:open-reference",
+      async (id, reference, rootId, action = "open") => {
+        if (action !== "open" && action !== "reveal")
+          throw new Error("Unknown file action.");
+        const resolved = await resolveProjectReference(
+          project(id),
+          reference,
+          rootId,
+        );
+        if (action === "reveal" || resolved.kind === "finder") {
+          shell.showItemInFolder(resolved.target);
+          return { kind: "finder" };
+        }
+        if (resolved.kind === "pdf")
+          return {
+            kind: "pdf",
+            url: pdfUrl(resolved.target, id),
+            name: path.basename(resolved.target),
+          };
         return {
-          kind: "pdf",
-          url: pdfUrl(resolved.target, id),
-          name: path.basename(resolved.target),
+          kind: "text",
+          file: resolved.file,
+          rootId: resolved.rootId,
+          line: resolved.line,
         };
-      return {
-        kind: "text",
-        file: resolved.file,
-        rootId: resolved.rootId,
-        line: resolved.line,
-      };
-    });
+      },
+    );
     handle("file:write", async (id, relative, contents, rootId, expected) => {
       if (ai?.isRunning(id))
         throw new Error(
@@ -1055,6 +1092,10 @@ app
       // Use Chromium networking so OAuth follows the desktop's proxy and TLS settings.
       fetcher: (url, options) => net.fetch(url, options),
       project,
+      recordWriting: (id, capture, signal) => {
+        project(id);
+        return writingCapture.request(id, capture, signal);
+      },
       environment,
       skillRoots: [
         path.join(app.getPath("home"), ".agents", "skills"),
@@ -1072,12 +1113,23 @@ app
             "Wait for the current Git operation to finish before starting the agent or restoring files.",
           );
         const p = project(id);
-        const folder = core.fileRoot(p, rootId);
-        if (!folder)
-          throw new AIError(
-            "project_folder_required",
-            "Attach a local project folder before starting the agent.",
+        const folder =
+          (!rootId || rootId === "primary") && !p.folder
+            ? ""
+            : core.fileRoot(p, rootId);
+        if (!folder) {
+          const cwd = path.join(
+            app.getPath("userData"),
+            "ai",
+            "writing-workspaces",
+            crypto.createHash("sha256").update(id).digest("hex"),
           );
+          await fs.mkdir(cwd, { recursive: true });
+          return {
+            cwd: await fs.realpath(cwd),
+            writableRoots: [await fs.realpath(cwd)],
+          };
+        }
         const cwd = await fs.realpath(folder);
         const roots = [
           p.folder,
@@ -1146,7 +1198,8 @@ app
       "ai:review": (id, messageId) => ai.review(id, messageId),
       "ai:review-file": (id, messageId, fileId) =>
         ai.reviewFile(id, messageId, fileId),
-      "ai:revert": (id, messageId) => ai.revert(id, messageId),
+      "ai:revert": (id, messageId, fileIds) =>
+        ai.revert(id, messageId, fileIds),
       "ai:send": (request) => ai.send(request),
       "ai:queue": (request) => ai.queue(request),
       "ai:stop": (id) => ai.stop(id),

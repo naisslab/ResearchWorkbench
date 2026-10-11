@@ -112,6 +112,20 @@ test("file listing excludes dependencies, build artifacts, and symlinks", async 
     path.join("sections", "intro.tex"),
   ]);
 });
+test("project tree includes archives and PDFs while editor listings stay text-only", async (t) => {
+  const root = await temporary(t);
+  for (const name of ["main.tex", "assets.zip", "review.rar", "paper.pdf"])
+    await fs.writeFile(path.join(root, name), "fixture");
+  const [listing] = await core.projectFiles({ folder: root });
+  assert.deepEqual(listing.files, [
+    "assets.zip",
+    "main.tex",
+    "paper.pdf",
+    "review.rar",
+  ]);
+  assert.deepEqual(listing.editableFiles, ["main.tex"]);
+  assert.deepEqual(await core.listFiles(root), ["main.tex"]);
+});
 test("saving a script keeps its execute permission", async (t) => {
   const root = await temporary(t);
   const script = path.join(root, "run.sh");

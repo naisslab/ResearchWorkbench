@@ -1,3 +1,4 @@
+import Dictation from "./Dictation";
 import { useDraft } from "./useDraft";
 import AIChats from "./AIChats";
 import {
@@ -238,7 +239,7 @@ const Message = memo(function Message({
     decision: "accept" | "decline" | "answer",
     answers?: Record<string, { answers: string[] }>,
   ): void;
-  openReference(reference: string): void;
+  openReference(reference: string, action?: "open" | "reveal"): void;
   review(messageId: string): void;
 }) {
   const changedFiles = [
@@ -339,6 +340,11 @@ const Message = memo(function Message({
                 {message.review.files === 1 ? "file" : "files"}
               </span>
             )}
+            {!!message.review?.revertedFiles && !message.review.revertedAt && (
+              <span className="ai-reverted">
+                {message.review.revertedFiles} files reverted
+              </span>
+            )}
             {message.review?.revertedAt ? (
               <span className="ai-reverted">
                 <Check size={12} /> Reverted
@@ -404,7 +410,11 @@ export default memo(function AIPanel({
   prepare(): Promise<void>;
   onRunning(running: boolean): void;
   onFilesChanged(): Promise<void>;
-  onOpenReference(reference: string, rootId: string): Promise<void>;
+  onOpenReference(
+    reference: string,
+    rootId: string,
+    action?: "open" | "reveal",
+  ): Promise<void>;
   visible: boolean;
 }) {
   const [state, setState] = useState<AIState | null>(null);
@@ -436,6 +446,8 @@ export default memo(function AIPanel({
   const [showLatest, setShowLatest] = useState(false);
   const stateRef = useRef<AIState | null>(null);
   const modelRefresh = useRef("");
+  const [dictating, setDictating] = useState(false);
+  const dictationRange = useRef({ start: 0, end: 0 });
   const transcript = useRef<HTMLDivElement>(null);
   const transcriptContent = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -485,7 +497,7 @@ export default memo(function AIPanel({
               folder: project.folder,
             },
           ]
-        : []),
+        : [{ id: "primary", label: "Project notes & to-dos", folder: "" }]),
       ...(project.localFolders || []),
     ],
     [project.folder, project.folderLabel, project.localFolders],
@@ -813,11 +825,15 @@ export default memo(function AIPanel({
     [],
   );
   const openReference = useCallback(
-    (reference: string) => {
+    (reference: string, action: "open" | "reveal" = "open") => {
       setError("");
       const open = /^https?:/i.test(reference)
         ? window.research!.openLink(reference)
-        : onOpenReference(reference, conversation.agentRootId || agentRoot);
+        : onOpenReference(
+            reference,
+            conversation.agentRootId || agentRoot,
+            action,
+          );
       void open.catch((error: Error) => setError(error.message));
     },
     [onOpenReference, conversation.agentRootId, agentRoot],
@@ -844,13 +860,13 @@ export default memo(function AIPanel({
   useEffect(() => {
     setReviewMessage(undefined);
   }, [state?.activeProfileId]);
-  async function revert(messageId: string) {
+  async function revert(messageId: string, fileIds?: string[]) {
     // Flush the editor first so the backend guard sees unsaved user changes.
     await prepare();
     setOperation("revert");
     try {
       setConversation(
-        await unwrap(window.research!.aiRevert(project.id, messageId)),
+        await unwrap(window.research!.aiRevert(project.id, messageId, fileIds)),
       );
     } finally {
       setOperation("");
@@ -864,6 +880,7 @@ export default memo(function AIPanel({
     });
   }
   async function send() {
+    if (dictating) return;
     if (
       !draft.trim() ||
       skillCommand ||
@@ -1245,8 +1262,8 @@ export default memo(function AIPanel({
                 <div>
                   <h3>Your research, with an agent</h3>
                   <p>
-                    Edit project files, run experiments, and fix LaTeX builds
-                    using your ChatGPT plan.
+                    Revise manuscripts, record writing tasks, and fix LaTeX
+                    builds using your ChatGPT plan.
                   </p>
                 </div>
                 {state.status === "connecting" ? (
@@ -1548,6 +1565,29 @@ export default memo(function AIPanel({
               ))}
             </div>
           )}
+          <Dictation
+            key={`${project.id}.${state?.activeProfileId}.${conversation.chatId || "legacy"}`}
+            disabled={operation === "send" || !visible}
+            onActive={(active) => {
+              setDictating(active);
+              if (active)
+                dictationRange.current = {
+                  start: input.current?.selectionStart ?? draft.length,
+                  end: input.current?.selectionEnd ?? draft.length,
+                };
+            }}
+            insert={(text) => {
+              const { start, end } = dictationRange.current;
+              updateDraft(draft.slice(0, start) + text + draft.slice(end));
+              requestAnimationFrame(() => {
+                input.current?.focus();
+                input.current?.setSelectionRange(
+                  start + text.length,
+                  start + text.length,
+                );
+              });
+            }}
+          />
           <div className="ai-input-row">
             {skillCommand && (
               <AISkills
@@ -1581,12 +1621,12 @@ export default memo(function AIPanel({
                   : undefined
               }
               value={draft}
-              readOnly={operation === "send"}
+              readOnly={operation === "send" || dictating}
               placeholder={
                 busy
                   ? "Send another request to add it to the queue…"
                   : state?.sharing
-                    ? "Ask the agent to edit files, run a script, or fix a build…"
+                    ? "Ask for a revision, add a to-do, or save a research note…"
                     : "Connect ChatGPT, then tell the agent what to work on…"
               }
               rows={1}
@@ -1714,6 +1754,7 @@ export default memo(function AIPanel({
                   busy || queued.length ? "Queue message" : "Run AI agent"
                 }
                 disabled={
+                  dictating ||
                   !draft.trim() ||
                   !!skillCommand ||
                   !model ||

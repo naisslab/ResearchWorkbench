@@ -34,7 +34,15 @@ function publicError(error) {
         "The AI connection could not complete this operation. Try again.",
     };
   return Object.fromEntries(
-    ["code", "message", "status", "requestId", "param", "responseShape"]
+    [
+      "code",
+      "message",
+      "status",
+      "requestId",
+      "param",
+      "responseShape",
+      "networkCode",
+    ]
       .filter(
         (key) =>
           typeof error[key] === "string" || typeof error[key] === "number",
@@ -108,7 +116,109 @@ const protectedWrite = (file, contents) =>
     flag: "wx",
     mode: 0o600,
   });
+// Never expose the raw transport message: it can contain URLs, credentials,
+// or request content. Preserve only known error codes and our own guidance.
+const networkFailures = {
+  ERR_INVALID_ARGUMENT: [
+    "The app could not forward this request to ChatGPT. Try again; if it persists, report this error.",
+    false,
+  ],
+  ERR_FAILED: [
+    "The network request to ChatGPT failed. Check your connection or system proxy, then try again.",
+    false,
+  ],
+  ERR_PROXY_CONNECTION_FAILED: [
+    "Could not connect through the macOS proxy. Check that your proxy or VPN is running, then try again.",
+    true,
+  ],
+  ERR_TUNNEL_CONNECTION_FAILED: [
+    "The proxy could not establish a connection to ChatGPT. Check your proxy or VPN, then try again.",
+    true,
+  ],
+  ERR_CONNECTION_RESET: [
+    "The connection to ChatGPT was reset. Try again to continue from the saved conversation.",
+    true,
+  ],
+  ERR_CONNECTION_CLOSED: [
+    "The connection to ChatGPT closed unexpectedly. Try again to continue from the saved conversation.",
+    true,
+  ],
+  ERR_CONNECTION_REFUSED: [
+    "The connection to ChatGPT or its proxy was refused. Check your connection and proxy, then try again.",
+    true,
+  ],
+  ERR_NETWORK_CHANGED: [
+    "The network changed while connecting to ChatGPT. Wait for your connection to settle, then try again.",
+    true,
+  ],
+  ERR_INTERNET_DISCONNECTED: [
+    "The network is disconnected. Reconnect, then try again.",
+    true,
+  ],
+  ERR_NAME_NOT_RESOLVED: [
+    "The network could not resolve ChatGPT's address. Check your DNS or proxy, then try again.",
+    true,
+  ],
+  ERR_TIMED_OUT: [
+    "The connection to ChatGPT timed out. Check your connection or proxy, then try again.",
+    true,
+  ],
+  ERR_CONNECTION_TIMED_OUT: [
+    "The connection to ChatGPT timed out. Check your connection or proxy, then try again.",
+    true,
+  ],
+  ERR_CERT_AUTHORITY_INVALID: [
+    "The connection to ChatGPT failed certificate verification. Check your macOS certificates and proxy settings.",
+    false,
+  ],
+  ERR_CERT_DATE_INVALID: [
+    "The connection to ChatGPT failed certificate verification. Check your system clock and certificates.",
+    false,
+  ],
+  ERR_CERT_COMMON_NAME_INVALID: [
+    "The connection to ChatGPT failed certificate verification. Check your proxy and certificate settings.",
+    false,
+  ],
+  ERR_SSL_PROTOCOL_ERROR: [
+    "A secure connection to ChatGPT could not be established. Check your proxy and TLS settings.",
+    false,
+  ],
+};
+function networkError(error) {
+  const aliases = {
+    ECONNRESET: "ERR_CONNECTION_RESET",
+    ECONNREFUSED: "ERR_CONNECTION_REFUSED",
+    EAI_AGAIN: "ERR_NAME_NOT_RESOLVED",
+    ENOTFOUND: "ERR_NAME_NOT_RESOLVED",
+    ETIMEDOUT: "ERR_TIMED_OUT",
+    UND_ERR_CONNECT_TIMEOUT: "ERR_CONNECTION_TIMED_OUT",
+    UND_ERR_SOCKET: "ERR_CONNECTION_CLOSED",
+  };
+  const codes = [
+    error?.code,
+    error?.cause?.code,
+    typeof error?.message === "string"
+      ? error.message.match(/\bnet::(ERR_[A-Z_]+)\b/)?.[1]
+      : undefined,
+  ];
+  if (error?.name === "TimeoutError") codes.push("ERR_TIMED_OUT");
+  const code = codes
+    .map((value) => aliases[value] || value)
+    .find((value) => Object.hasOwn(networkFailures, value || ""));
+  const failure = networkFailures[code];
+  return new AIError(
+    "network_error",
+    failure
+      ? `${failure[0]} (${code})`
+      : "Could not reach ChatGPT. Check your connection or system proxy and try again.",
+    {
+      networkCode: code,
+      retryable: failure?.[1] || false,
+    },
+  );
+}
 async function remote(fetcher, url, options = {}, timeout = 20000) {
+  const timeoutSignal = AbortSignal.timeout(timeout);
   try {
     return await fetcher(url, {
       ...options,
@@ -116,16 +226,13 @@ async function remote(fetcher, url, options = {}, timeout = 20000) {
       redirect: "error",
       signal: AbortSignal.any([
         options.signal || new AbortController().signal,
-        AbortSignal.timeout(timeout),
+        timeoutSignal,
       ]),
     });
-  } catch {
+  } catch (error) {
     if (options.signal?.aborted)
       throw new AIError("cancelled", "The operation was cancelled.");
-    throw new AIError(
-      "network_error",
-      "Could not reach ChatGPT. Check your connection and try again.",
-    );
+    throw networkError(timeoutSignal.aborted ? timeoutSignal.reason : error);
   }
 }
 async function jsonResponse(response, stage = "ChatGPT request") {
@@ -799,6 +906,7 @@ module.exports = {
   createChatGPT,
   AIError,
   publicError,
+  networkError,
   apiError,
   protectedWrite,
   remote,

@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, Copy, ExternalLink, FileText } from "lucide-react";
+import { Check, Copy, ExternalLink, FileText, FolderOpen } from "lucide-react";
 
 export function CopyAction({
   text,
@@ -78,7 +78,7 @@ const AIMarkdown = memo(function AIMarkdown({
   openReference,
 }: {
   text: string;
-  openReference(reference: string): void;
+  openReference(reference: string, action?: "open" | "reveal"): void;
 }) {
   return (
     <div className="ai-markdown">
@@ -90,7 +90,7 @@ const AIMarkdown = memo(function AIMarkdown({
           a: ({ href, children }) => {
             if (!href) return <span>{children}</span>;
             const web = /^https?:/i.test(href);
-            return (
+            const link = (
               <a
                 href={href}
                 title={web ? href : `Open ${href}`}
@@ -104,6 +104,22 @@ const AIMarkdown = memo(function AIMarkdown({
                 {children}
                 {web && <ExternalLink size={10} aria-hidden="true" />}
               </a>
+            );
+            return web ? (
+              link
+            ) : (
+              <span className="ai-file-reference">
+                {link}
+                <button
+                  type="button"
+                  className="ai-finder-action"
+                  title="Show in Finder"
+                  aria-label={`Show ${href} in Finder`}
+                  onClick={() => openReference(href, "reveal")}
+                >
+                  <FolderOpen size={13} aria-hidden="true" />
+                </button>
+              </span>
             );
           },
           pre: ({ node, children }) => {

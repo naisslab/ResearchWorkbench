@@ -240,3 +240,26 @@ test("at launch, superseded copies without annotations are pruned while annotate
   assert.ok(!after.has(`${"f".repeat(64)}.pdf`));
   assert.ok(after.has(`${damaged[1]}.pdf`));
 });
+
+test("feedback status survives storage, old annotations stay open, and invalid status is rejected", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "research-feedback-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const store = createAnnotationStore(root),
+    bytes = await pdf();
+  const feedback = marks.map((mark, i) =>
+    i === 0 ? { ...mark, resolved: true } : mark,
+  );
+  await store.save("p", bytes, "paper.pdf", "/paper.pdf", feedback, 2);
+  const read = await createAnnotationStore(root).load(
+    "p",
+    bytes,
+    "paper.pdf",
+    "/paper.pdf",
+  );
+  assert.equal(read.annotations[0].resolved, true);
+  assert.equal(read.annotations[1].resolved, undefined);
+  assert.throws(
+    () => validateAnnotations([{ ...marks[0], resolved: "yes" }], 2),
+    /status/,
+  );
+});

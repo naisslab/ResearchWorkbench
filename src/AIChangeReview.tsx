@@ -52,11 +52,12 @@ export default function AIChangeReview({
   messageId: string;
   agentBusy: boolean;
   onClose(): void;
-  onRevert(messageId: string): Promise<void>;
+  onRevert(messageId: string, fileIds?: string[]): Promise<void>;
   openReference(reference: string): void;
 }) {
   const [review, setReview] = useState<Review>();
   const [selected, setSelected] = useState("");
+  const [chosen, setChosen] = useState<string[]>([]);
   const [loadedFile, setFile] = useState<AIReviewedFile>();
   const file = loadedFile?.id === selected ? loadedFile : undefined;
   const [view, setView] = useState<"diff" | "versions">("diff");
@@ -109,11 +110,12 @@ export default function AIChangeReview({
       setChecking(false);
     }
   }
-  async function revert() {
+  async function revert(fileIds?: string[]) {
     setRestoring(true);
     setError("");
     try {
-      await onRevert(messageId);
+      await onRevert(messageId, fileIds);
+      setChosen([]);
       setReview(await unwrap(window.research!.aiReview(projectId, messageId)));
     } catch (error) {
       setError((error as Error).message);
@@ -130,7 +132,8 @@ export default function AIChangeReview({
   }
   const active = review?.files.find((item) => item.id === selected);
   function lineNumber(value: number | undefined, version: "before" | "after") {
-    const currentVersion = review?.revertedAt ? "before" : "after";
+    const currentVersion =
+      review?.revertedAt || active?.revertedAt ? "before" : "after";
     if (
       value &&
       file &&
@@ -178,26 +181,47 @@ export default function AIChangeReview({
       <div className="ai-review-workspace">
         <nav className="ai-review-files" aria-label="Changed files">
           {review?.files.map((item) => (
-            <button
-              type="button"
-              key={item.id}
-              className={selected === item.id ? "active" : ""}
-              aria-pressed={selected === item.id}
-              onClick={() => setSelected(item.id)}
-            >
-              <FileText size={14} />
-              <span>
-                <strong title={item.path}>{item.path}</strong>
-                <small>{item.folder}</small>
-              </span>
-              <small className={"ai-file-kind " + item.kind}>
-                {item.kind === "added"
-                  ? "A"
-                  : item.kind === "deleted"
-                    ? "D"
-                    : "M"}
-              </small>
-            </button>
+            <div key={item.id} className="ai-review-file-choice">
+              <input
+                type="checkbox"
+                aria-label={`Select ${item.path} for revert`}
+                title={item.reason || "Select file to revert"}
+                disabled={
+                  item.canRevert !== true ||
+                  !!item.revertedAt ||
+                  agentBusy ||
+                  restoring
+                }
+                checked={chosen.includes(item.id)}
+                onChange={(event) =>
+                  setChosen((ids) =>
+                    event.target.checked
+                      ? [...ids, item.id]
+                      : ids.filter((id) => id !== item.id),
+                  )
+                }
+              />
+              <button
+                type="button"
+                key={item.id}
+                className={selected === item.id ? "active" : ""}
+                aria-pressed={selected === item.id}
+                onClick={() => setSelected(item.id)}
+              >
+                <FileText size={14} />
+                <span>
+                  <strong title={item.path}>{item.path}</strong>
+                  <small>{item.revertedAt ? "Reverted" : item.folder}</small>
+                </span>
+                <small className={"ai-file-kind " + item.kind}>
+                  {item.kind === "added"
+                    ? "A"
+                    : item.kind === "deleted"
+                      ? "D"
+                      : "M"}
+                </small>
+              </button>
+            </div>
           ))}
           {review && !review.files.length && <p>No project files changed.</p>}
         </nav>
@@ -327,14 +351,14 @@ export default function AIChangeReview({
             .map((warning) => (
               <small key={warning}>{warning}</small>
             ))}
-          {review?.interrupted && review.canRevert && (
+          {review?.interrupted && (review.canRevert || chosen.length > 0) && (
             <label className="ai-revert-confirm">
               <input
                 type="checkbox"
                 checked={confirmed}
                 onChange={(event) => setConfirmed(event.target.checked)}
               />
-              I checked the diff; revert every listed change
+              I checked the diff for the files to revert
             </label>
           )}
         </div>
@@ -346,6 +370,25 @@ export default function AIChangeReview({
           title="Check whether these files can be reverted"
         >
           <RefreshCw size={14} className={checking ? "spin" : ""} /> Check files
+        </button>
+        <button
+          type="button"
+          className="secondary"
+          disabled={
+            !chosen.length ||
+            restoring ||
+            checking ||
+            agentBusy ||
+            (review?.interrupted && !confirmed) ||
+            chosen.some(
+              (id) =>
+                review?.files.find((file) => file.id === id)?.canRevert ===
+                false,
+            )
+          }
+          onClick={() => void revert(chosen)}
+        >
+          Revert selected ({chosen.length})
         </button>
         <button
           type="button"

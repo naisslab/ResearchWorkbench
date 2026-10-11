@@ -83,9 +83,57 @@ test("agent file links cannot escape attached folders through traversal, absolut
   ]) {
     await assert.rejects(resolveProjectReference(f.project, reference));
   }
-  await fs.writeFile(path.join(f.manuscript, "executable.command"), "echo no");
+});
+
+test("archives and other unsupported files resolve to Finder without reading or executing them", async (t) => {
+  const f = await fixture(t);
+  for (const name of [
+    "results bundle.ZIP",
+    "review.rar",
+    "data.7z",
+    "figure.png",
+    "executable.command",
+  ]) {
+    const target = path.join(f.code, name);
+    await fs.writeFile(target, Buffer.from([0, 255, 0, 128]));
+    for (const reference of [
+      encodeURIComponent(name),
+      pathToFileURL(target).href,
+    ]) {
+      const result = await resolveProjectReference(
+        f.project,
+        reference,
+        "code",
+      );
+      assert.equal(result.kind, "finder");
+      assert.equal(result.target, await fs.realpath(target));
+      assert.equal(result.rootId, "code");
+    }
+  }
+  const outside = path.join(f.root, "outside.zip");
+  await fs.writeFile(outside, "archive");
+  await fs.symlink(outside, path.join(f.code, "escape.zip"));
   await assert.rejects(
-    resolveProjectReference(f.project, "executable.command"),
-    /cannot be opened/,
+    resolveProjectReference(f.project, "escape.zip", "code"),
+    /inside/,
   );
+  await assert.rejects(
+    resolveProjectReference(f.project, "missing.rar", "code"),
+  );
+});
+
+test("files exceeding preview limits can still be revealed in Finder", async (t) => {
+  const f = await fixture(t);
+  for (const [name, size] of [
+    ["large.txt", 2 * 1024 * 1024 + 1],
+    ["large.pdf", 64 * 1024 * 1024 + 1],
+  ]) {
+    const target = path.join(f.manuscript, name);
+    await fs.writeFile(target, "");
+    await fs.truncate(target, size);
+    assert.equal(
+      (await resolveProjectReference(f.project, name)).kind,
+      "finder",
+    );
+  }
 });

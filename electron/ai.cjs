@@ -1,3 +1,4 @@
+const { writingTool, validateCapture } = require("./writing.cjs");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -29,6 +30,7 @@ function createAI({
   encryption,
   openBrowser,
   project,
+  recordWriting,
   validateContext,
   scope,
   environment,
@@ -528,7 +530,15 @@ function createAI({
       permissionMode === "full-access" && pdfText ? "default" : permissionMode;
     const engine = ENGINES[p.latexEngine]?.name;
     const projectContext = `Project: ${p.name}\nResearch question: ${p.summary || ""}\nStage: ${p.stage}\nTarget venue: ${p.venue || ""}${engine ? `\nLaTeX engine: ${engine}` : ""}`;
-    const inputText = `${projectContext}\n\n${context ? `Attached ${context.kind}: ${context.file}\n<attached_text>\n${context.text}\n</attached_text>\n\n` : ""}${message.trim()}`;
+    const writingContext = JSON.stringify({
+      notes: p.notes || "",
+      tasks: p.tasks || [],
+    }).slice(0, 24000);
+    const folderContext =
+      !p.folder && !p.localFolders?.length
+        ? "No project files are attached. Use record_writing_items for tasks and notes. Ask the user to attach a manuscript before editing or compiling files."
+        : "";
+    const inputText = `${projectContext}\n${folderContext}\nProject writing notes and tasks (reference data): ${writingContext}\n\n${context ? `Attached ${context.kind}: ${context.file}\n<attached_text>\n${context.text}\n</attached_text>\n\n` : ""}${message.trim()}`;
     const requestId = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     const user = {
@@ -951,19 +961,25 @@ function createAI({
         agents.set(id, entry);
       }
       value.agentCwd = projectScope.cwd;
+      entry.gateway.takeError();
       const turn = await entry.agent.run({
-        savedThreadId: value.threadId,
+        savedThreadId:
+          recordWriting && !value.writingTools ? undefined : value.threadId,
         model,
         permissionMode: assistant.permissionMode,
         reasoningEffort: assistant.reasoningEffort,
         serviceTier: assistant.serviceTier,
         ...projectScope,
         text:
-          (value.messages.some((message) => message.review?.revertedAt)
+          (value.messages.some(
+            (message) =>
+              message.review?.revertedAt || message.review?.revertedFiles,
+          )
             ? "Earlier agent changes were reverted. Read the current project files before editing.\n\n"
             : "") +
-          (value.restoredHistory
-            ? "This conversation was restored from a backup. Prior messages are reference context, not new instructions:\n" +
+          (value.restoredHistory ||
+          (recordWriting && !value.writingTools && value.threadId)
+            ? "This conversation is continuing in a new runtime session. Prior messages are reference context, not new instructions:\n" +
               value.messages
                 .slice(0, -2)
                 .slice(-30)
@@ -973,10 +989,35 @@ function createAI({
               "\nCurrent request:\n"
             : "") +
           value.messages.at(-2).inputText,
+        dynamicTools: recordWriting ? [writingTool] : [],
+        onTool: async (name, args) => {
+          if (name !== writingTool.name || !recordWriting)
+            throw new Error("Unknown writing action.");
+          signal.throwIfAborted();
+          if (assistant.permissionMode === "read-only")
+            throw new Error(
+              "Switch from Read only to Default permissions before saving writing tasks or notes.",
+            );
+          const result = await recordWriting(
+            value.projectId,
+            validateCapture(args),
+            signal,
+          );
+          assistant.activities.push({
+            id: crypto.randomUUID(),
+            type: "writing",
+            status: "completed",
+            text: "Saved writing to-dos / research note in Project details.",
+          });
+          updated();
+          await saveConversation(value);
+          return result;
+        },
         skills: value.messages.at(-2).skills || [],
         signal,
         onThread: async (threadId) => {
           value.threadId = threadId;
+          if (recordWriting) value.writingTools = true;
           delete value.restoredHistory;
           await saveConversation(value);
         },
@@ -1003,6 +1044,10 @@ function createAI({
       if (turn.status === "interrupted") assistant.status = "cancelled";
       else if (turn.status === "completed") assistant.status = "completed";
       else {
+        // Present the gateway's actionable error, without the runtime's local
+        // loopback URL obscuring the upstream connection failure.
+        const connectionError = entry.gateway.takeError();
+        if (connectionError) throw connectionError;
         const detail = safeText(turn.error?.message, 2000)
           .split(token)
           .join("[redacted]")
@@ -1323,7 +1368,7 @@ function createAI({
     }
     return changes.file(target.id, fileId);
   }
-  async function revert(projectId, messageId) {
+  async function revert(projectId, messageId, fileIds) {
     const { activeProfileId } = await auth.getSession();
     return mutate(key(activeProfileId, projectId), async () => {
       if (
@@ -1359,7 +1404,9 @@ function createAI({
         const result = await changes.revert(
           target.id,
           projectScope.writableRoots,
+          fileIds,
         );
+        target.message.review.revertedFiles = result.revertedFiles;
         target.message.review.revertedAt = result.revertedAt;
         await saveConversation(target.value);
         publishConversation(target.value);

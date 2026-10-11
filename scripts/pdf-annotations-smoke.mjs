@@ -180,6 +180,21 @@ await smoke("pdf-annotations", async (root) => {
     .locator(".pdf-note-row")
     .filter({ hasText: "检查实验结果" })
     .click();
+  await page
+    .getByRole("button", { name: "Mark resolved", exact: true })
+    .click();
+  await page
+    .getByLabel("Filter PDF feedback", { exact: true })
+    .selectOption("resolved");
+  assert.equal(await page.locator(".pdf-note-row").count(), 1);
+  await page
+    .getByLabel("Filter PDF feedback", { exact: true })
+    .selectOption("open");
+  assert.equal(await page.locator(".pdf-note-row").count(), 2);
+  await page
+    .getByLabel("Filter PDF feedback", { exact: true })
+    .selectOption("all");
+  await waitSaved(page, 3);
   await page.screenshot({
     path: "output/playwright/pdf-annotations-light.png",
   });
@@ -283,6 +298,18 @@ await smoke("pdf-annotations", async (root) => {
     .locator(".pdf-note-row")
     .filter({ hasText: "检查实验结果" })
     .waitFor();
+  await page
+    .getByLabel("Filter PDF feedback", { exact: true })
+    .selectOption("resolved");
+  assert.equal(await page.locator(".pdf-note-row").count(), 1);
+  await page.locator(".pdf-note-row").click();
+  await page
+    .getByRole("button", { name: "Reopen feedback", exact: true })
+    .click();
+  assert.equal(await page.locator(".pdf-note-row").count(), 0);
+  await page
+    .getByLabel("Filter PDF feedback", { exact: true })
+    .selectOption("all");
   assert.equal(await page.locator(".pdf-reader-error").count(), 0);
   return "PDF annotation UI passed: text highlights, notes, ink, zoom, undo, search, Unicode export, rotated pages, version archives and restart persistence.";
 });

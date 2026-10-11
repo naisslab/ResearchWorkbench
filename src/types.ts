@@ -99,6 +99,7 @@ export interface LocalFolder {
 }
 export interface ProjectFileRoot extends LocalFolder {
   files: string[];
+  editableFiles: string[];
   /** The folder holds more files than the tree lists. */
   truncated?: boolean;
   error?: string;
@@ -215,7 +216,28 @@ export interface ReferenceCandidate {
   year: string;
   venue: string;
 }
+export interface DictationEvent {
+  id: string;
+  type: "listening" | "partial" | "final" | "error" | "cancelled";
+  text?: string;
+  message?: string;
+}
 export interface ResearchAPI {
+  onWritingCapture(
+    callback: (request: {
+      id: string;
+      projectId: string;
+      capture: import("./writing-capture").WritingCapture;
+    }) => void,
+  ): () => void;
+  completeWritingCapture(
+    id: string,
+    result: { saved: boolean },
+  ): Promise<boolean>;
+  startDictation(id: string, language: string): Promise<{ id: string }>;
+  stopDictation(id: string): Promise<void>;
+  cancelDictation(id: string): Promise<void>;
+  onDictation(callback: (event: DictationEvent) => void): () => void;
   cancelBackup(): Promise<void>;
   onBackupProgress(
     callback: (value: {
@@ -288,6 +310,7 @@ export interface ResearchAPI {
   aiRevert(
     projectId: string,
     messageId: string,
+    fileIds?: string[],
   ): Promise<AIResult<AIConversation>>;
   aiSend(request: {
     projectId: string;
@@ -393,9 +416,11 @@ export interface ResearchAPI {
     id: string,
     reference: string,
     rootId?: string,
+    action?: "open" | "reveal",
   ): Promise<
     | { kind: "text"; file: string; rootId: string; line?: number }
     | { kind: "pdf"; url: string; name: string }
+    | { kind: "finder" }
   >;
   fileMtime(id: string, file: string, rootId?: string): Promise<number>;
   /**
@@ -476,6 +501,7 @@ export interface AIErrorInfo {
   status?: number;
   requestId?: string;
   param?: string;
+  networkCode?: string;
 }
 export type AIResult<T> =
   { ok: true; value: T } | { ok: false; error: AIErrorInfo };
@@ -557,10 +583,18 @@ export interface AIMessage {
   activities?: AIActivity[];
   approvals?: AIApproval[];
   diff?: string;
-  review?: { files: number; revertedAt?: string; unavailable?: string };
+  review?: {
+    files: number;
+    revertedAt?: string;
+    revertedFiles?: number;
+    unavailable?: string;
+  };
   plan?: { step: string; status: string }[];
 }
 export interface AIChangedFile {
+  revertedAt?: string;
+  canRevert?: boolean;
+  reason?: string;
   id: string;
   path: string;
   absolutePath?: string;

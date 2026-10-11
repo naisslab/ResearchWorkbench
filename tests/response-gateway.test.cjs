@@ -94,6 +94,7 @@ test("the gateway checks credentials per request, retries only explicit expiry o
   assert.equal(calls[1].url, "https://api.openai.com/v1/responses");
   assert.equal(calls[1].headers.get("content-encoding"), "gzip");
   assert.equal(calls[1].headers.get("originator"), "Research_Workbench");
+  assert.equal(calls[1].headers.has("sec-fetch-mode"), false);
   assert.equal(calls[1].headers.get("authorization"), "Bearer new");
   assert.equal(calls[0].headers.get("authorization"), "Bearer old");
   assert.equal(calls[1].redirect, "error");
@@ -253,4 +254,141 @@ test("gateway shutdown waits for credential renewal to settle before an account 
   await closing;
   assert.equal(stopped, true);
   assert.equal(calls, 0);
+});
+
+test("temporary transport failures retry the same request before streaming, without renewing credentials", async (t) => {
+  const attempts = [];
+  let checks = 0;
+  const gateway = await fixture(t, {
+    accessToken: async () => {
+      checks++;
+      return "fixture-credential";
+    },
+    fetcher: async (_url, options) => {
+      attempts.push({
+        body: Buffer.from(options.body),
+        headers: new Headers(options.headers),
+      });
+      if (attempts.length < 3) throw new Error("net::ERR_CONNECTION_RESET");
+      return Response.json({ recovered: true });
+    },
+  });
+  const response = await request(gateway);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { recovered: true });
+  assert.equal(checks, 1);
+  assert.equal(attempts.length, 3);
+  for (const attempt of attempts) {
+    assert.deepEqual(attempt.body, attempts[0].body);
+    assert.deepEqual([...attempt.headers], [...attempts[0].headers]);
+  }
+  assert.equal(gateway.takeError(), undefined);
+});
+
+test("persistent proxy failures stop after two retries and expose only a safe diagnostic", async (t) => {
+  let calls = 0;
+  const gateway = await fixture(t, {
+    accessToken: async () => "private-oauth-token",
+    fetcher: async () => {
+      calls++;
+      throw new Error(
+        "net::ERR_PROXY_CONNECTION_FAILED at https://secret.test/?token=private-oauth-token",
+      );
+    },
+  });
+  const response = await request(gateway);
+  assert.equal(response.status, 502);
+  const body = await response.json();
+  assert.equal(calls, 3);
+  assert.equal(body.error.networkCode, "ERR_PROXY_CONNECTION_FAILED");
+  assert.match(body.error.message, /proxy or VPN/);
+  assert.doesNotMatch(JSON.stringify(body), /private-oauth-token|secret.test/);
+  assert.equal(gateway.takeError().networkCode, "ERR_PROXY_CONNECTION_FAILED");
+  assert.equal(gateway.takeError(), undefined);
+});
+
+test("certificate and unknown errors do not retry, and HTTP failures remain upstream responses", async (t) => {
+  for (const failure of [
+    new Error("net::ERR_CERT_AUTHORITY_INVALID"),
+    new Error("net::ERR_INVALID_ARGUMENT"),
+    new TypeError("private payload"),
+  ]) {
+    let calls = 0;
+    const gateway = await fixture(t, {
+      accessToken: async () => "fixture",
+      fetcher: async () => {
+        calls++;
+        throw failure;
+      },
+    });
+    const response = await request(gateway);
+    assert.equal(response.status, 502);
+    assert.doesNotMatch(await response.text(), /private payload/);
+    assert.equal(calls, 1);
+  }
+  let calls = 0;
+  const gateway = await fixture(t, {
+    accessToken: async () => "fixture",
+    fetcher: async () => {
+      calls++;
+      return new Response("Unavailable", { status: 503 });
+    },
+  });
+  const response = await request(gateway);
+  assert.equal(response.status, 503);
+  assert.equal(await response.text(), "Unavailable");
+  assert.equal(calls, 1);
+  assert.equal(gateway.takeError(), undefined);
+});
+
+test("cancelling during reconnect backoff prevents another upstream request", async (t) => {
+  let calls = 0,
+    signal;
+  const gateway = await fixture(t, {
+    accessToken: async () => "fixture",
+    fetcher: async (_url, options) => {
+      calls++;
+      signal = options.signal;
+      throw new Error("net::ERR_NETWORK_CHANGED");
+    },
+  });
+  const controller = new AbortController();
+  const pending = request(gateway, "responses", {
+    signal: controller.signal,
+  }).catch(() => null);
+  await waitFor(() => calls === 1);
+  controller.abort();
+  await pending;
+  await waitFor(() => signal.aborted);
+  await gateway.close();
+  assert.equal(calls, 1);
+});
+
+test("a transport failure after streaming starts never replays the model request", async (t) => {
+  let calls = 0,
+    stream;
+  const gateway = await fixture(t, {
+    accessToken: async () => "fixture",
+    fetcher: async () => {
+      calls++;
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            stream = controller;
+            controller.enqueue(
+              Buffer.from("event: response.created\ndata: {}\n\n"),
+            );
+          },
+        }),
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+  const response = await request(gateway);
+  const reader = response.body.getReader();
+  assert.equal((await reader.read()).done, false);
+  stream.error(new Error("net::ERR_CONNECTION_RESET"));
+  await assert.rejects(reader.read());
+  await gateway.close();
+  assert.equal(calls, 1);
 });

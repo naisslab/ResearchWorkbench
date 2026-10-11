@@ -505,7 +505,7 @@ function Workbench({
         const root = list.find((root) => root.id === "primary") || list[0];
         const fallback = root?.files.includes(project.mainFile)
           ? project.mainFile
-          : root?.files[0];
+          : root?.editableFiles[0];
         if (fallback) await load(root.id, fallback);
       })
       .catch((error) => report(error.message))
@@ -880,12 +880,18 @@ function Workbench({
     openFile(source.file, source.rootId, source.line);
   });
   const openReference = useStableCallback(
-    async (reference: string, rootId: string) => {
+    async (
+      reference: string,
+      rootId: string,
+      action: "open" | "reveal" = "open",
+    ) => {
       const target = await window.research!.openProjectReference(
         project.id,
         reference,
         rootId,
+        action,
       );
+      if (target.kind === "finder") return;
       setExpandedPdf(false);
       if (target.kind === "pdf") {
         setPdf(target);
@@ -1437,7 +1443,11 @@ function Workbench({
             active={active}
             activeRoot={activeRoot}
             mainFile={project.mainFile}
-            open={openFile}
+            open={(file, rootId) => {
+              void openReference(encodeURIComponent(file), rootId).catch(
+                (error) => report(error.message),
+              );
+            }}
             remove={removeRoot}
             act={fileAction}
           />

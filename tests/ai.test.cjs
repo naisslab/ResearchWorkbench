@@ -1060,3 +1060,113 @@ test("a chat that includes PDF text never runs with Full access", async (t) => {
   const restored = await send({});
   assert.deepEqual(restored.turn.sandboxPolicy, { type: "dangerFullAccess" });
 });
+
+test("writing tool is project-scoped, rejects read-only writes, and registers before resuming a chat", async (t) => {
+  const f = await fixture(t);
+  const folder = path.join(f.directory, "manuscript");
+  await fs.mkdir(folder);
+  const recorded = [],
+    turns = [];
+  const client = createAI({
+    ...f,
+    project: (id) => ({
+      id,
+      name: "Writing",
+      stage: "writing",
+      folder,
+      notes: "Existing research note",
+      tasks: [],
+    }),
+    scope: async () => ({ cwd: folder, writableRoots: [folder] }),
+    validateContext: async () => {},
+    recordWriting: async (id, value) => {
+      recorded.push({ id, value });
+      return { saved: true };
+    },
+    agentFactory: () => ({
+      ready: async () => {},
+      close: async () => {},
+      isClosed: () => false,
+      listModels: async () => [
+        {
+          model: "fixture-model",
+          displayName: "Fixture",
+          supportedReasoningEfforts: [],
+          serviceTiers: [],
+        },
+      ],
+      run: async (options) => {
+        turns.push(options);
+        assert.equal(options.dynamicTools[0].name, "record_writing_items");
+        assert.match(options.text, /Existing research note/);
+        await options.onThread("writing-runtime");
+        const action = () =>
+          options.onTool("record_writing_items", {
+            tasks: ["修改摘要"],
+            note: "",
+          });
+        if (options.permissionMode === "read-only")
+          await assert.rejects(action(), /Read only/);
+        else assert.equal((await action()).saved, true);
+        return { status: "completed" };
+      },
+    }),
+  });
+  f.cleanup(() => client.dispose());
+  await signIn(client);
+  await client.refreshModels();
+  for (const permissionMode of ["read-only", "default"]) {
+    await client.send({
+      projectId: "writing-project",
+      message: "Add a writing to-do",
+      model: "fixture-model",
+      permissionMode,
+    });
+    await waitFor(
+      async () =>
+        (await client.conversation("writing-project")).messages.at(-1)
+          ?.status === "completed",
+    );
+  }
+  assert.equal(turns[0].savedThreadId, undefined);
+  assert.equal(turns[1].savedThreadId, "writing-runtime");
+  assert.deepEqual(recorded, [
+    { id: "writing-project", value: { tasks: ["修改摘要"], note: "" } },
+  ]);
+});
+
+test("exhausted connection retries preserve completed work and show the upstream diagnostic without a loopback URL", async (t) => {
+  let attempts = 0;
+  const f = await clientFixture(t, async () => {
+    attempts++;
+    throw new Error("net::ERR_PROXY_CONNECTION_FAILED private credential");
+  });
+  await f.client.send({
+    projectId: "one",
+    message: "fixture-auth-expiry",
+    model: "fixture-model",
+    rootId: "primary",
+  });
+  const finished = await waitFor(async () => {
+    const value = await f.client.conversation("one");
+    return value.messages.at(-1)?.status === "failed" &&
+      !f.client.isRunning("one")
+      ? value
+      : false;
+  });
+  const message = finished.messages.at(-1);
+  assert.equal(attempts, 3);
+  assert.equal(message.error.code, "network_error");
+  assert.equal(message.error.networkCode, "ERR_PROXY_CONNECTION_FAILED");
+  assert.match(message.error.message, /proxy or VPN/);
+  assert.doesNotMatch(
+    message.error.message,
+    /127\.0\.0\.1|private credential|502/,
+  );
+  assert.equal(message.review.files, 4);
+  assert.equal(
+    await fs.readFile(path.join(f.projectFolder, "draft.tex"), "utf8"),
+    "Revised manuscript\n",
+  );
+  assert.equal((await f.client.getState()).status, "connected");
+});

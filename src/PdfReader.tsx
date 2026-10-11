@@ -762,6 +762,7 @@ export default memo(function PdfReader({
     [zoom, setZoom] = useState(initialView?.zoom ?? 1),
     [pageSize, setPageSize] = useState({ width: 595, height: 842 });
   const [filter, setFilter] = useState("");
+  const [feedbackFilter, setFeedbackFilter] = useState("all");
   const scroller = useRef<HTMLDivElement>(null),
     pageField = useRef<HTMLInputElement>(null);
   const anchor = useRef<Anchor | null>(
@@ -1016,10 +1017,13 @@ export default memo(function PdfReader({
     return pages;
   }, [items]);
   const active = items.find((item) => item.id === selectedId);
-  const matching = items.filter((item) =>
-    `${item.comment} ${item.quote} ${item.page}`
-      .toLowerCase()
-      .includes(filter.toLowerCase()),
+  const matching = items.filter(
+    (item) =>
+      (feedbackFilter === "all" ||
+        (feedbackFilter === "resolved" ? item.resolved : !item.resolved)) &&
+      `${item.comment} ${item.quote} ${item.page}`
+        .toLowerCase()
+        .includes(filter.toLowerCase()),
   );
   const [saveLabel, saveTitle] = saving
     ? ["Saving…", "Saving annotations…"]
@@ -1407,7 +1411,11 @@ export default memo(function PdfReader({
           <aside className="pdf-notes">
             <header>
               <strong>
-                Annotations <small>{items.length}</small>
+                Annotations{" "}
+                <small>
+                  {items.filter((item) => !item.resolved).length} open /{" "}
+                  {items.length}
+                </small>
               </strong>
               <button
                 className="icon-button"
@@ -1423,6 +1431,15 @@ export default memo(function PdfReader({
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
             />
+            <select
+              aria-label="Filter PDF feedback"
+              value={feedbackFilter}
+              onChange={(event) => setFeedbackFilter(event.target.value)}
+            >
+              <option value="all">All feedback</option>
+              <option value="open">Open</option>
+              <option value="resolved">Resolved</option>
+            </select>
             {matching.length ? (
               matching.map((item) => (
                 <button
@@ -1442,19 +1459,37 @@ export default memo(function PdfReader({
                         : "Drawing"}
                     <small>p. {item.page}</small>
                   </span>
+                  <small className="pdf-feedback-state">
+                    {item.resolved ? "Resolved" : "Open"}
+                  </small>
                   {item.quote && <q>{item.quote}</q>}
                   {item.comment && <p>{item.comment}</p>}
                 </button>
               ))
             ) : (
               <p className="pdf-notes-empty">
-                {filter
-                  ? "No annotations match your search."
+                {filter || feedbackFilter !== "all"
+                  ? "No annotations match this filter."
                   : "Highlights, notes and drawings appear here."}
               </p>
             )}
             {active && (
               <div className="pdf-note-editor">
+                <button
+                  type="button"
+                  className="button small"
+                  onClick={() => {
+                    update(
+                      current.current.map((item) =>
+                        item.id === active.id
+                          ? { ...item, resolved: !item.resolved }
+                          : item,
+                      ),
+                    );
+                  }}
+                >
+                  {active.resolved ? "Reopen feedback" : "Mark resolved"}
+                </button>
                 <label>
                   Annotation comment
                   <textarea

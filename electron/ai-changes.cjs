@@ -384,6 +384,7 @@ function createChangeStore(
       allowedRoots.map((root) => fs.realpath(root).catch(() => null)),
     );
     for (const change of value.changes) {
+      if (change.revertedAt) continue;
       const entry = change.after || change.before;
       if (
         !allowed.some(
@@ -401,7 +402,11 @@ function createChangeStore(
         const current = await entryAt(entry.root, entry.relative);
         if (
           !same(current, change.after) &&
-          !(value.reverting && same(current, change.before))
+          !(
+            value.reverting &&
+            (!value.revertingIds || value.revertingIds.includes(change.id)) &&
+            same(current, change.before)
+          )
         )
           return (
             entry.relative +
@@ -420,6 +425,7 @@ function createChangeStore(
     const entry = change.after || change.before;
     return {
       id: change.id,
+      revertedAt: change.revertedAt,
       path: entry.relative,
       absolutePath: path.join(entry.root, entry.relative),
       folder: path.basename(entry.root),
@@ -440,7 +446,19 @@ function createChangeStore(
     const value = await load(id);
     const reason = await check(value, allowedRoots);
     return {
-      files: (value.changes || []).map(fileInfo),
+      files: await Promise.all(
+        (value.changes || []).map(async (change) => {
+          const reason = change.revertedAt
+            ? "This file was already reverted."
+            : await check({ ...value, changes: [change] }, allowedRoots);
+          return {
+            ...fileInfo(change),
+            revertedAt: change.revertedAt || value.revertedAt,
+            canRevert: !reason,
+            reason,
+          };
+        }),
+      ),
       canRevert: !reason,
       reason,
       revertedAt: value.revertedAt,
@@ -561,27 +579,60 @@ function createChangeStore(
       await fs.chmod(target, entry.mode);
     }
   }
-  async function revert(id, allowedRoots) {
+  async function revert(id, allowedRoots, fileIds) {
     await collected();
     if (locks.has(id))
       throw new Error("These changes are already being restored.");
     locks.add(id);
     const written = [];
     let value;
-    let wasReverting = false;
+    let original;
+    let journalWritten = false;
     try {
       value = await load(id);
-      wasReverting = !!value.reverting;
-      const reason = await check(value, allowedRoots);
+      original = structuredClone(value);
+      const ids =
+        fileIds === undefined
+          ? value.revertingIds ||
+            (value.changes || []).filter((c) => !c.revertedAt).map((c) => c.id)
+          : fileIds;
+      if (
+        !Array.isArray(ids) ||
+        !ids.length ||
+        ids.some((id) => typeof id !== "string") ||
+        new Set(ids).size !== ids.length ||
+        ids.some(
+          (id) => !value.changes?.some((c) => c.id === id && !c.revertedAt),
+        )
+      )
+        throw new AIError(
+          "revert_blocked",
+          "Choose files from this run that have not already been reverted.",
+        );
+      if (
+        value.revertingIds &&
+        (ids.length !== value.revertingIds.length ||
+          ids.some((id) => !value.revertingIds.includes(id)))
+      )
+        throw new AIError(
+          "revert_blocked",
+          "Finish the interrupted file restore before selecting other files.",
+        );
+      const selected = value.changes.filter((change) =>
+        ids.includes(change.id),
+      );
+      const reason = await check({ ...value, changes: selected }, allowedRoots);
       if (reason) throw new AIError("revert_blocked", reason);
       // Validate every backup before touching any project file.
-      for (const change of value.changes) {
+      for (const change of selected) {
         await readBlob(change.before);
         await readBlob(change.after);
       }
       value.reverting = true;
+      value.revertingIds = ids;
       await save(id, value);
-      for (const change of value.changes) {
+      journalWritten = true;
+      for (const change of selected) {
         const entry = change.after || change.before;
         const current = await entryAt(entry.root, entry.relative);
         if (same(current, change.before)) continue;
@@ -594,8 +645,12 @@ function createChangeStore(
         written.push(change);
         await writeVersion(entry.root, entry.relative, change.before);
       }
-      value.revertedAt = new Date().toISOString();
+      const revertedAt = new Date().toISOString();
+      for (const change of selected) change.revertedAt = revertedAt;
+      if (value.changes.every((change) => change.revertedAt))
+        value.revertedAt = revertedAt;
       delete value.reverting;
+      delete value.revertingIds;
       await save(id, value);
       for (const item of [...createdDirectories(value)].sort(
         (a, b) => b.relative.length - a.relative.length,
@@ -603,7 +658,11 @@ function createChangeStore(
         await safeTarget(item.root, item.relative)
           .then((folder) => fs.rmdir(folder))
           .catch(() => {});
-      return { files: value.changes.length, revertedAt: value.revertedAt };
+      return {
+        files: selected.length,
+        revertedAt: value.revertedAt,
+        revertedFiles: value.changes.filter((c) => c.revertedAt).length,
+      };
     } catch (error) {
       let recovered = true;
       for (const change of written.reverse()) {
@@ -620,12 +679,10 @@ function createChangeStore(
           recovered = false;
         }
       }
-      if (value && recovered && written.length) {
-        if (wasReverting) value.reverting = true;
-        else delete value.reverting;
-        delete value.revertedAt;
-        await save(id, value).catch(() => {});
-      }
+      if (original && recovered && journalWritten)
+        await save(id, original).catch(() => {
+          recovered = false;
+        });
       if (!recovered)
         throw new AIError(
           "revert_incomplete",

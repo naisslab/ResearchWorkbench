@@ -19,6 +19,7 @@ export interface PdfRect extends PdfPoint {
   height: number;
 }
 export interface PdfAnnotation {
+  resolved?: boolean;
   id: string;
   kind: "highlight" | "note" | "ink";
   page: number;

@@ -118,8 +118,9 @@ await smoke("ai-review", async (root) => {
                 (item) => item.id === file,
               )
             : store.file(id, file),
-        "ai:revert": async () => {
-          const result = await store.revert(id, [folder]);
+        "ai:revert": async (_project, _message, fileIds) => {
+          const result = await store.revert(id, [folder], fileIds);
+          conversation.messages[1].review.revertedFiles = result.revertedFiles;
           conversation.messages[1].review.revertedAt = result.revertedAt;
           emit();
           return conversation;
@@ -233,6 +234,30 @@ await smoke("ai-review", async (root) => {
   await assert.rejects(fs.access(path.join(folder, "removed.tex")), {
     code: "ENOENT",
   });
+  await files
+    .getByRole("checkbox", {
+      name: "Select removed.tex for revert",
+      exact: true,
+    })
+    .check();
+  await dialog
+    .getByRole("button", { name: "Revert selected (1)", exact: true })
+    .click();
+  await files
+    .getByRole("checkbox", {
+      name: "Select removed.tex for revert",
+      exact: true,
+    })
+    .waitFor();
+  await files.getByRole("button", { name: /removed.tex.*Reverted/ }).waitFor();
+  assert.equal(
+    await fs.readFile(path.join(folder, "removed.tex"), "utf8"),
+    "Deleted by the agent\n",
+  );
+  assert.equal(
+    await fs.readFile(path.join(folder, "main.tex"), "utf8"),
+    "User's newer unsaved edit\n",
+  );
   await page.screenshot({ path: "output/playwright/ai-review-newer-edit.png" });
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await replaceSource("Revised manuscript\nUpdated second line\n");

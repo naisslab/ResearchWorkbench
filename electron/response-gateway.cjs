@@ -2,7 +2,13 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const { Readable } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
-const { AIError, publicError, RESOURCE } = require("./chatgpt.cjs");
+const { setTimeout: delay } = require("node:timers/promises");
+const {
+  AIError,
+  publicError,
+  networkError,
+  RESOURCE,
+} = require("./chatgpt.cjs");
 
 const routes = new Set(["/v1/responses", "/v1/responses/compact"]);
 const hopHeaders = new Set([
@@ -29,13 +35,15 @@ async function readBody(stream, limit) {
 
 // Codex's custom provider reads ACCESS_TOKEN once from its environment. Keep
 // that process (and its active turn) alive by renewing OAuth at the HTTP boundary.
-// Only a rejected, expired-token request is replayed, before any output streams.
+// Renew rejected expired tokens, and retry a transient transport failure at most
+// twice before headers arrive. Never replay a response after streaming starts.
 async function createResponseGateway({ accessToken, fetcher = fetch }) {
   const token = crypto.randomBytes(32).toString("hex");
   const authorization = Buffer.from(`Bearer ${token}`);
   const active = new Map();
   let closed = false,
-    closing;
+    closing,
+    lastError;
   const server = http.createServer(async (request, response) => {
     const supplied = Buffer.from(request.headers.authorization || "");
     if (
@@ -54,6 +62,7 @@ async function createResponseGateway({ accessToken, fetcher = fetch }) {
       return;
     }
     const controller = new AbortController();
+    lastError = undefined;
     let finish;
     active.set(
       controller,
@@ -77,22 +86,40 @@ async function createResponseGateway({ accessToken, fetcher = fetch }) {
         "content-length",
         "accept-encoding",
       ]);
+      // Chromium generates fetch metadata itself. Re-forwarding the native
+      // caller's browser metadata can make net.fetch fail with ERR_INVALID_ARGUMENT.
       for (const [name, value] of Object.entries(request.headers))
-        if (!excluded.has(name) && typeof value === "string")
+        if (
+          !excluded.has(name) &&
+          !name.startsWith("sec-fetch-") &&
+          typeof value === "string"
+        )
           headers.set(name, value);
       headers.set("accept-encoding", "identity");
       let credential = await accessToken();
-      const forward = () => {
-        controller.signal.throwIfAborted();
-        headers.set("authorization", `Bearer ${credential}`);
-        return fetcher(`${RESOURCE}${request.url.slice(3)}`, {
-          method: "POST",
-          headers,
-          body,
-          redirect: "error",
-          credentials: "omit",
-          signal: controller.signal,
-        });
+      let retries = 0;
+      const forward = async () => {
+        for (;;) {
+          controller.signal.throwIfAborted();
+          headers.set("authorization", `Bearer ${credential}`);
+          try {
+            return await fetcher(`${RESOURCE}${request.url.slice(3)}`, {
+              method: "POST",
+              headers,
+              body,
+              redirect: "error",
+              credentials: "omit",
+              signal: controller.signal,
+            });
+          } catch (error) {
+            controller.signal.throwIfAborted();
+            const failure = networkError(error);
+            if (!failure.retryable || retries >= 2) throw failure;
+            await delay([500, 1500][retries++], undefined, {
+              signal: controller.signal,
+            });
+          }
+        }
       };
       let upstream = await forward();
       let rejectedBody;
@@ -130,16 +157,11 @@ async function createResponseGateway({ accessToken, fetcher = fetch }) {
         });
       else response.end();
     } catch (error) {
+      if (!controller.signal.aborted)
+        lastError = error instanceof AIError ? error : networkError(error);
       if (controller.signal.aborted || response.headersSent) response.destroy();
       else {
-        const detail = publicError(
-          error instanceof AIError
-            ? error
-            : new AIError(
-                "network_error",
-                "Could not reach ChatGPT. Check your connection and try again.",
-              ),
-        );
+        const detail = publicError(lastError);
         const status =
           error.code === "request_too_large"
             ? 413
@@ -165,6 +187,11 @@ async function createResponseGateway({ accessToken, fetcher = fetch }) {
   server.unref();
   return {
     token,
+    takeError: () => {
+      const error = lastError;
+      lastError = undefined;
+      return error;
+    },
     baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
     close: () => {
       if (closing) return closing;

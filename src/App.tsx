@@ -1,3 +1,4 @@
+import { applyWritingCapture } from "./writing-capture";
 import {
   lazy,
   Suspense,
@@ -198,6 +199,28 @@ export default function App() {
       return true;
     },
     [commit, show],
+  );
+  useEffect(
+    () =>
+      window.research?.onWritingCapture((request) => {
+        void (async () => {
+          let saved = false;
+          try {
+            saved = await commitWithUndo(
+              "Saved writing items in Project details",
+              (state) =>
+                applyWritingCapture(state, request.projectId, request.capture),
+            );
+          } catch (error) {
+            report((error as Error).message);
+          } finally {
+            await window
+              .research!.completeWritingCapture(request.id, { saved })
+              .catch(() => {});
+          }
+        })();
+      }),
+    [commitWithUndo, report],
   );
   const updateProject = useCallback<UpdateProject>(
     (id, changes, undo) => {
