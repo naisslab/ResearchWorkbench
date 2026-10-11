@@ -216,6 +216,13 @@ export interface ReferenceCandidate {
   year: string;
   venue: string;
 }
+export interface AgentRunEvent {
+  projectId: string;
+  running: boolean;
+  status?: AIMessage["status"];
+  /** A queued request starts next, so the agent is not done yet. */
+  continues?: boolean;
+}
 export interface AgentToolRequest {
   id: string;
   projectId: string;
@@ -399,6 +406,8 @@ export interface ResearchAPI {
     }) => void,
   ): () => void;
   /** The running message while the agent works; other messages are unchanged. */
+  /** An agent started or finished a request in a project. */
+  onAIActivity(fn: (event: AgentRunEvent) => void): () => void;
   onAIMessage(
     fn: (event: {
       projectId: string;
@@ -594,6 +603,8 @@ export interface AIState extends AISession {
     lastUsedAt?: string;
   };
   runtime: { available: boolean; version?: string; error?: AIErrorInfo };
+  /** Projects whose agent is running a request. */
+  runningProjects: string[];
 }
 export interface AIContext {
   kind: "file" | "selection" | "pdf";

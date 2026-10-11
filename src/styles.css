@@ -304,10 +304,26 @@ a {
   font-size: var(--text-xs);
   text-align: left;
 }
-.area-projects button span:last-child {
+.area-projects .project-name {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+.area-projects .project-agent {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--accent);
+}
+.project-agent-done {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.project-agent-done.failed {
+  background: var(--danger);
 }
 .area-projects button.selected {
   background: var(--selection);

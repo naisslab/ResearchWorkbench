@@ -331,6 +331,66 @@ export default function App() {
     [navigate],
   );
   const newProject = useCallback(() => setNewProjectArea(""), []);
+  // Projects whose agent is working, or finished while the user was
+  // elsewhere; the sidebar marks them until the project is opened.
+  const [agentRuns, setAgentRuns] = useState<
+    Record<string, "running" | "done" | "failed">
+  >({});
+  const looking = useRef({ view, selected, navigate });
+  looking.current = { view, selected, navigate };
+  useEffect(() => {
+    if (!window.research) return;
+    void window.research.aiState().then((result) => {
+      if (result.ok)
+        setAgentRuns((current) => ({
+          ...current,
+          ...Object.fromEntries(
+            result.value.runningProjects.map((id) => [id, "running" as const]),
+          ),
+        }));
+    });
+    return window.research.onAIActivity((event) => {
+      const { view, selected, navigate } = looking.current;
+      const seen =
+        view === "workbench" &&
+        selected === event.projectId &&
+        document.hasFocus();
+      const failed = ["failed", "interrupted"].includes(event.status || "");
+      const outcome =
+        event.running || event.continues
+          ? "running"
+          : seen || event.status === "cancelled"
+            ? undefined
+            : failed
+              ? "failed"
+              : "done";
+      setAgentRuns(({ [event.projectId]: _, ...rest }) =>
+        outcome ? { ...rest, [event.projectId]: outcome } : rest,
+      );
+      if (outcome !== "done" && outcome !== "failed") return;
+      const name =
+        stateRef.current?.projects.find((p) => p.id === event.projectId)
+          ?.name || "a project";
+      show({
+        tone: failed ? "danger" : "success",
+        message: failed
+          ? `The agent stopped with an error in ${name}`
+          : `The agent finished in ${name}`,
+        action: {
+          label: "Open",
+          run: () => navigate("workbench", { projectId: event.projectId }),
+        },
+      });
+    });
+  }, [show]);
+  useEffect(() => {
+    if (
+      view === "workbench" &&
+      agentRuns[selected] &&
+      agentRuns[selected] !== "running"
+    )
+      setAgentRuns(({ [selected]: _, ...rest }) => rest);
+  }, [view, selected, agentRuns]);
 
   const rail = layout.sidebarCollapsed;
   useEffect(() => {
@@ -524,6 +584,7 @@ export default function App() {
           area={areaFilter}
           rail={rail}
           dueThisWeek={dueSoon(items, 7, now).length}
+          agentRuns={agentRuns}
           navigate={navigate}
           addProject={setNewProjectArea}
         />

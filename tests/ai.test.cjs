@@ -1369,6 +1369,36 @@ test("workbench tools follow the permission mode, and document text keeps the ch
   assert.match(turns[0].instructions.join("\n"), /compile_manuscript/);
 });
 
+test("each request reports when its project's agent starts and finishes, and whether a queued request follows", async (t) => {
+  const f = await clientFixture(t);
+  await f.client.send({
+    projectId: "one",
+    message: "Revise the introduction",
+    model: "fixture-model",
+  });
+  await waitFor(
+    async () =>
+      (await f.client.conversation("one")).messages.at(-1)?.status ===
+      "completed",
+  );
+  await waitFor(() =>
+    f.events.some((e) => e.channel === "activity" && !e.value.running),
+  );
+  assert.deepEqual(
+    f.events.filter((e) => e.channel === "activity").map((e) => e.value),
+    [
+      { projectId: "one", running: true },
+      {
+        projectId: "one",
+        running: false,
+        status: "completed",
+        continues: false,
+      },
+    ],
+  );
+  assert.deepEqual((await f.client.getState()).runningProjects, []);
+});
+
 test("exhausted connection retries preserve completed work and show the upstream diagnostic without a loopback URL", async (t) => {
   let attempts = 0;
   const f = await clientFixture(t, async () => {

@@ -165,6 +165,29 @@ await smoke("writing-agent", async () => {
     /No to-do has id missing/,
   );
   await page.screenshot({ path: "output/playwright/writing-dictation.png" });
+  // The sidebar marks a project while its agent works, and a notice offers
+  // to open it when the agent finishes while the user is elsewhere.
+  const activity = (event) =>
+    app.evaluate(
+      ({ BrowserWindow }, event) =>
+        BrowserWindow.getAllWindows()[0].webContents.send("ai:activity", event),
+      { projectId: id, ...event },
+    );
+  const row = page
+    .locator(".area-projects")
+    .getByRole("button", { name: /Writing capture/ });
+  await activity({ running: true });
+  await row.getByLabel("Agent working").waitFor();
+  await page
+    .locator(".main-nav")
+    .getByRole("button", { name: "Overview", exact: true })
+    .click();
+  await activity({ running: false, status: "completed", continues: false });
+  await row.getByLabel("Agent finished").waitFor();
+  await page.getByText("The agent finished in Writing capture").waitFor();
+  await page.getByRole("button", { name: "Open", exact: true }).click();
+  await page.getByLabel("Message the AI agent", { exact: true }).waitFor();
+  await row.getByLabel("Agent finished").waitFor({ state: "detached" });
   await closeApp();
   ({ app, page } = await launchApp());
   assert.deepEqual(

@@ -5,6 +5,7 @@ import {
   ChevronRight,
   House,
   Library,
+  LoaderCircle,
   Plus,
   Settings2,
   SquareKanban,
@@ -28,6 +29,7 @@ export default memo(function Sidebar({
   area,
   rail,
   dueThisWeek,
+  agentRuns,
   navigate,
   addProject,
 }: {
@@ -38,6 +40,7 @@ export default memo(function Sidebar({
   area: string;
   rail: boolean;
   dueThisWeek: number;
+  agentRuns: Record<string, "running" | "done" | "failed">;
   navigate: Navigate;
   addProject(areaId: string): void;
 }) {
@@ -152,7 +155,28 @@ export default memo(function Sidebar({
                         title={p.name}
                       >
                         <span className="project-dot" data-stage={p.stage} />
-                        <span>{p.name}</span>
+                        <span className="project-name">{p.name}</span>
+                        {agentRuns[p.id] === "running" ? (
+                          <LoaderCircle
+                            size={12}
+                            className="spin project-agent"
+                            aria-label="Agent working"
+                          />
+                        ) : agentRuns[p.id] ? (
+                          <i
+                            className={`project-agent-done ${agentRuns[p.id]}`}
+                            aria-label={
+                              agentRuns[p.id] === "failed"
+                                ? "Agent stopped with an error"
+                                : "Agent finished"
+                            }
+                            title={
+                              agentRuns[p.id] === "failed"
+                                ? "Agent stopped with an error"
+                                : "Agent finished"
+                            }
+                          />
+                        ) : null}
                       </button>
                     );
                   })}

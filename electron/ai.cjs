@@ -153,6 +153,9 @@ function createAI({
       modelError:
         modelProfileId === session.activeProfileId ? modelError : undefined,
       usage: usage[session.activeProfileId] || blankUsage(),
+      runningProjects: [
+        ...new Set([...running.values()].map((j) => j.projectId)),
+      ],
       runtime: (() => {
         try {
           codexExecutable();
@@ -696,6 +699,8 @@ function createAI({
       throw error;
     }
     publishConversation(value);
+    // The sidebar shows which projects have an agent at work.
+    emit("activity", { projectId: value.projectId, running: true });
     job.done = generate(
       value,
       assistant,
@@ -719,9 +724,16 @@ function createAI({
             value.queueError = publicError(error);
           }
           publishConversation(value);
+          const continues =
+            !disposed && !value.queuePaused && value.queue?.length > 0;
+          emit("activity", {
+            projectId: value.projectId,
+            running: false,
+            status: assistant.status,
+            continues,
+          });
           // The active job finishes independently of the next queued turn.
-          if (!disposed && !value.queuePaused && value.queue?.length)
-            void drain(value);
+          if (continues) void drain(value);
         }),
       );
     return publicConversation(value);

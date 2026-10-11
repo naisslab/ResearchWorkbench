@@ -81,7 +81,7 @@ Agent 还可以直接使用工作台的功能，设计说明见 [Agent native �
 - `search_workspace` 在当前项目中搜索文件、PDF 正文、批注和历史对话。
 - `list_feedback` 列出 PDF 批注及状态，当前编译 PDF 上的批注附带 SyncTeX 源码行；`reply_to_feedback` 在批注上记录 Agent 的修改说明，列表显示 **Open · Agent replied**，只有用户能标为 Resolved。
 
-写入类工具在 Read only 下不可用。`search_workspace` 和 `list_feedback` 会返回 PDF 中的文字，因此在 Full access 下不可用；对话用过它们之后，之后的请求与附加过 PDF 摘录一样按 Default permissions 运行。每次工具调用都在 Work log 中记一行。Build log 有问题或投稿检查未通过时，**Ask Agent to fix** 把修复请求填入输入框，由用户发送。工具在对话创建时注册：新对话拥有全部工具，旧对话保留原生运行会话和创建时的工具，没有编译工具的对话仍按 latexmk 命令编译。
+写入类工具在 Read only 下不可用。`search_workspace` 和 `list_feedback` 会返回 PDF 中的文字，因此在 Full access 下不可用；对话用过它们之后，之后的请求与附加过 PDF 摘录一样按 Default permissions 运行。每次工具调用都在 Work log 中记一行。Agent 在某个项目中工作时，左侧栏该项目旁显示转动的进度图标；完成时如果你不在该项目的工作台，会出现提示条和 **Open** 按钮，项目旁留一个小圆点（出错时为红色），打开该项目后消失。Build log 有问题或投稿检查未通过时，**Ask Agent to fix** 把修复请求填入输入框，由用户发送。工具在对话创建时注册：新对话拥有全部工具，旧对话保留原生运行会话和创建时的工具，没有编译工具的对话仍按 latexmk 命令编译。
 
 **Usage** 显示本机记录的 Agent 次数及 token 用量，并通过 **Open ChatGPT Usage** 打开订阅额度页面。本机统计不代表剩余订阅额度。账户菜单支持重新授权、添加账户和退出；对话按账户与项目保存，**New AI chat** 新建对话并保留当前对话。
 
