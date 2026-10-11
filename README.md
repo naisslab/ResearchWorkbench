@@ -59,7 +59,11 @@ Project board 按研究时间线排列阶段：Idea Exploration → Experiments 
 
 输入框底部使用 Codex 风格的权限和模型菜单。**Default permissions** 允许在项目目录内工作，额外访问由用户审批；**Approve for me** 保留项目目录限制，由 Codex 自动审查额外访问请求；**Read only** 用于检查文件，修改或额外访问需审批；**Full access** 允许访问本机文件和网络，无需逐次审批。对话附加过 PDF 摘录后，即使选择 Full access 也按 Default permissions 运行，消息旁会注明；论文中的文字可能含有针对 Agent 的指令。Full access 下 Agent 自行打开的文件和网页仍被信任，处理来源不明的材料时请选择其他权限。模型菜单提供 **Reasoning Effort** 和 **Standard / Fast**，选项来自随应用打包的 Codex `model/list` 能力目录。推理强度只使用滑块，支持拖动、点击滑轨和键盘调整；重置按钮恢复模型默认值。菜单、选中标记和滑块具有过渡动画，并遵守系统减少动态效果设置。Fast 的速度和用量说明采用目录返回的文本；不支持 Fast 的模型仅显示 Standard。输入框仅在开启 Fast 时显示实心闪电，关闭后隐藏，可从模型菜单重新开启。权限按账户和项目保存，推理强度与速度再按模型保存，重启后恢复。运行期间可以调整下一条指令的设置。
 
-Agent 运行期间，按 Enter 或点击 **Queue message** 可继续提交指令，最多等待 20 条。队列按顺序执行；每条指令保留提交时的模型、权限、推理强度、速度、附件快照和 Skills。输入框上方显示等待队列，可调整顺序、删除或 **Pause / Resume**。Pause 让当前任务继续完成；Stop 中断当前任务并暂停队列。任务失败、切换账户、关闭窗口或退出应用后，等待指令会保留并暂停，点击 Resume 继续；关闭窗口同时停止当前任务，重新打开窗口后 Agent 照常可用。开始执行前会重新检查模型、项目目录和 Skills；不可用时暂停并显示原因。队列按账户和项目保存，新建或切换对话前需要等待当前任务结束，并暂停正在运行的队列；旧对话保留自己的等待指令，重新打开后需手动 Resume。
+Agent 运行期间，输入框默认选择 **Steer now**，按 Enter 即通过原生 `turn/steer` 修正正在执行的任务；继续使用当前任务的模型、权限和推理设置。若当前任务已结束，修正会保留在草稿中，避免误发到下一轮。Full access 任务中的图片或 PDF 摘录需要排入下一轮，以便应用 Default permissions。选择 **Queue next** 后，按 Enter 或点击 **Queue message** 将指令排入队列，最多等待 20 条。队列按顺序执行；每条指令保留提交时的模型、权限、推理强度、速度、附件快照和 Skills。输入框上方显示等待队列，可调整顺序、删除或 **Pause / Resume**。Pause 让当前任务继续完成；Stop 中断当前任务并暂停队列。任务失败、切换账户、关闭窗口或退出应用后，等待指令会保留并暂停，点击 Resume 继续；关闭窗口同时停止当前任务，重新打开窗口后 Agent 照常可用。开始执行前会重新检查模型、项目目录和 Skills；不可用时暂停并显示原因。队列按账户和项目保存，新建或切换对话前需要等待当前任务结束，并暂停正在运行的队列；旧对话保留自己的等待指令，重新打开后需手动 Resume。
+
+**Tools** 中的 **Code review** 调用 Codex 原生 reviewer，可检查未提交修改、相对指定分支的改动或一个 commit；结果写入当前对话，使用 Read only 权限。**Web search** 默认使用 Cached，可切换 Live 或 Off；可用性取决于模型、账户和工作区政策。
+
+**Tools → MCP connections** 可添加 HTTP endpoint 或本地命令、查看工具列表、登录 OAuth 服务，以及启用或禁用连接。配置按 ChatGPT 账户保存在 Workbench 独立的 Codex 目录中；修改前需等待所有 Agent 结束，下次任务恢复原有会话并读取新配置。MCP 表单和网页确认会在对话中等待用户处理。工具仍由 Codex 原生 MCP 执行，通过 function namespace 暴露，避免 token-sharing 接口不支持的 Responses `tool_search`。
 
 Agent 回复支持 Markdown、列表、表格和带复制按钮的代码块。文件链接在编辑器打开，可定位到行号；PDF 链接在预览区打开。**Work log** 收起执行过程，**Review changes** 展开完整 diff。在 **Source** 模式下打开 AI 时，AI 默认使用约半个工作区高度，与 Terminal 分别记忆大小；拖动面板顶部的横条调整，双击恢复默认。**Expand AI** 切换到完整对话视图，打开文件后恢复分栏。输入框自动增高，Enter 发送，Shift+Enter 换行，⌘Enter 也可发送。上翻阅读时停止自动跟随，**Jump to latest** 返回最新回复。
 
@@ -130,6 +134,7 @@ npm test
 npm run build
 npm run test:e2e
 npm run test:ai-ui
+npm run test:native-ui
 npm run test:review-ui
 npm run test:continuity-ui
 npm run test:writing-ui
@@ -177,7 +182,7 @@ Project Files 以可展开的目录树显示项目的 Manuscript、Code 和其�
 
 ## 连续研究工作与统一搜索
 
-**Chats** 按账户和项目管理多个对话。旧版单对话自动作为原有对话读取，新建、命名、归档或切换均保留历史修改审阅和还原记录。每个对话分别保存输入草稿；运行中的 Agent 或未暂停的队列会阻止切换。
+**Chats** 按账户和项目管理多个对话。旧版单对话自动作为原有对话读取，新建、命名、归档或切换均保留历史修改审阅和还原记录。每个对话分别保存输入草稿；运行中的 Agent 或未暂停的队列会阻止切换。 **Fork conversation** 通过原生 `thread/fork` 复制完整会话历史。分支对话共享项目文件；原有修改的还原记录保留在原对话，新对话只管理自己的后续修改。
 
 在 PDF 中选中文字后，点击 **Ask Agent about selection**，或在批注列表选择 **Ask Agent to address this**。输入框会附带原文、评论、PDF 版本和页码；存在可用 SyncTeX 数据时附带源码行。附件先放入输入框，由用户提交；现有 diff 审阅、编译和还原流程继续适用。
 

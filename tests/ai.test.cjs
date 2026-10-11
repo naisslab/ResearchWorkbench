@@ -65,6 +65,200 @@ async function clientFixture(t, inference) {
   await client.refreshModels();
   return { ...f, client, make, projectFolder, skillPath, launched, events };
 }
+test("live steering joins the active turn with captured inputs, preserves the queue, and rejects stale turns", async (t) => {
+  const f = await clientFixture(t);
+  const request = {
+    projectId: "one",
+    model: "fixture-model",
+    rootId: "primary",
+  };
+  await f.client.send({
+    ...request,
+    message: "wait-for-stop",
+    permissionMode: "default",
+  });
+  const active = await waitFor(
+    async () => (await f.client.conversation("one")).messages.at(-1)?.turnId,
+  );
+  await f.client.send({ ...request, message: "Next task", delivery: "queue" });
+  const steered = await f.client.send({
+    ...request,
+    message: "Keep the ICLR template",
+    delivery: "steer",
+    expectedTurnId: active,
+    model: "fixture-model-2",
+    permissionMode: "full-access",
+  });
+  assert.equal(steered.messages.length, 3);
+  assert.equal(steered.messages[1].steered, true);
+  assert.equal(steered.messages.at(-1).model, "fixture-model");
+  assert.equal(steered.messages.at(-1).permissionMode, "default");
+  assert.equal(steered.queue.length, 1);
+  const received = JSON.parse(
+    (
+      await fs.readFile(
+        path.join(f.projectFolder, "received-steers.jsonl"),
+        "utf8",
+      )
+    ).trim(),
+  );
+  assert.equal(received.expectedTurnId, active);
+  assert.match(received.input[0].text, /Keep the ICLR template/);
+  await assert.rejects(
+    f.client.send({
+      ...request,
+      message: "Stale",
+      delivery: "steer",
+      expectedTurnId: "old-turn",
+    }),
+    { code: "turn_expired" },
+  );
+  await assert.rejects(
+    f.client.nativeSettings("one", { action: "webSearch", value: "live" }),
+    { code: "agent_busy" },
+  );
+  await f.client.stop("one");
+  await assert.rejects(
+    f.client.send({
+      ...request,
+      message: "Too late",
+      delivery: "steer",
+      expectedTurnId: active,
+    }),
+    { code: "turn_expired" },
+  );
+  assert.equal((await f.client.conversation("one")).messages.length, 3);
+});
+
+test("steering cannot attach untrusted content to a Full access turn", async (t) => {
+  const f = await clientFixture(t);
+  const request = {
+    projectId: "one",
+    model: "fixture-model",
+    rootId: "primary",
+  };
+  await f.client.send({
+    ...request,
+    message: "wait-for-stop",
+    permissionMode: "full-access",
+  });
+  const active = await waitFor(
+    async () => (await f.client.conversation("one")).messages.at(-1)?.turnId,
+  );
+  await assert.rejects(
+    f.client.send({
+      ...request,
+      message: "Read this PDF",
+      delivery: "steer",
+      expectedTurnId: active,
+      context: {
+        kind: "pdf",
+        file: "paper.pdf",
+        rootId: "primary",
+        text: "PDF text",
+      },
+    }),
+    { code: "steering_permissions" },
+  );
+  assert.equal((await f.client.conversation("one")).messages.length, 2);
+});
+
+test("native settings survive runtime reloads and keep server commands out of public state", async (t) => {
+  const f = await clientFixture(t);
+  assert.equal((await f.client.nativeSettings("one")).webSearch, "cached");
+  await f.client.nativeSettings("one", { action: "webSearch", value: "live" });
+  assert.equal((await f.client.nativeSettings("one")).webSearch, "live");
+  const settings = await f.client.nativeSettings("one", {
+    action: "addServer",
+    name: "fixture",
+    command: process.execPath,
+    args: ["private-server-path"],
+  });
+  assert.equal(settings.servers[0].name, "fixture");
+  assert.equal(settings.servers[0].toolCount, 1);
+  assert.equal(JSON.stringify(settings).includes("private-server-path"), false);
+  await assert.rejects(
+    f.client.nativeSettings("one", {
+      action: "addServer",
+      name: "fixture",
+      url: "https://example.test/mcp",
+    }),
+    { code: "duplicate_server" },
+  );
+  await f.client.nativeSettings("one", {
+    action: "toggleServer",
+    name: "fixture",
+    enabled: false,
+  });
+  assert.equal(
+    (await f.client.nativeSettings("one")).servers[0].enabled,
+    false,
+  );
+  await f.client.send({
+    projectId: "one",
+    model: "fixture-model",
+    message: "Continue after settings reload",
+    rootId: "primary",
+  });
+  await waitFor(() => !f.client.isRunning("one"));
+  assert.equal(
+    (await f.client.conversation("one")).messages.at(-1).status,
+    "completed",
+  );
+});
+
+test("native review uses the selected target and read-only settings, then forks without sharing revert records", async (t) => {
+  const f = await clientFixture(t);
+  const request = {
+    projectId: "one",
+    model: "fixture-model",
+    rootId: "primary",
+  };
+  await f.client.send({ ...request, message: "Make fixture changes" });
+  await waitFor(async () => !f.client.isRunning("one"));
+  const original = await f.client.conversation("one");
+  const originalAssistant = original.messages.at(-1);
+  assert.ok(originalAssistant.review.files > 0);
+  const fork = await f.client.manageChat("one", "fork", original.chatId);
+  assert.notEqual(fork.chatId, original.chatId);
+  assert.notEqual(fork.threadId, original.threadId);
+  assert.equal(fork.messages.length, original.messages.length);
+  assert.equal(fork.messages.at(-1).inherited, true);
+  assert.notEqual(fork.messages.at(-1).id, originalAssistant.id);
+  assert.equal(fork.messages.at(-1).review, undefined);
+  assert.equal(fork.queue.length, 0);
+  for (const reviewTarget of [
+    { type: "uncommittedChanges" },
+    { type: "baseBranch", branch: "main" },
+    { type: "commit", sha: "aabbccdd" },
+  ]) {
+    await f.client.send({
+      ...request,
+      message: "Review requested changes",
+      permissionMode: "full-access",
+      reviewTarget,
+    });
+    await waitFor(async () => !f.client.isRunning("one"));
+    const reviewed = await f.client.conversation("one");
+    assert.equal(
+      reviewed.messages.at(-1).text,
+      "No regressions found in fixture changes.",
+    );
+    const native = JSON.parse(
+      await fs.readFile(
+        path.join(f.projectFolder, "received-review.json"),
+        "utf8",
+      ),
+    );
+    assert.deepEqual(native.target, reviewTarget);
+    assert.equal(native.delivery, "inline");
+    assert.equal(native.threadSettings.sandbox, "read-only");
+    assert.equal(native.threadId, fork.threadId);
+  }
+  await f.client.manageChat("one", "select", original.chatId);
+  await f.client.manageChat("one", "delete", fork.chatId);
+  assert.ok((await f.client.review("one", originalAssistant.id)).files.length);
+});
 test("a mid-turn expired token recovers transparently and preserves review, history, and queued work in the same agent", async (t) => {
   const requests = [];
   const f = await clientFixture(t, async (_fixture, _url, options) => {

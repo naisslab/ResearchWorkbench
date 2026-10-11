@@ -373,9 +373,16 @@ export interface ResearchAPI {
     messageId: string,
     fileIds?: string[],
   ): Promise<AIResult<AIConversation>>;
+  aiNativeSettings(
+    projectId: string,
+    request?: AINativeSettingsAction,
+  ): Promise<AIResult<AINativeSettings>>;
   aiSend(request: {
     projectId: string;
     message: string;
+    delivery?: "steer" | "queue";
+    expectedTurnId?: string;
+    reviewTarget?: AINativeReviewTarget;
     model: string;
     permissionMode?: AIPermissionMode;
     reasoningEffort?: string;
@@ -397,6 +404,7 @@ export interface ResearchAPI {
     id: string;
     decision: "accept" | "decline" | "cancel" | "answer";
     answers?: Record<string, { answers: string[] }>;
+    content?: Record<string, unknown>;
   }): Promise<AIResult<void>>;
   aiStop(projectId: string): Promise<AIResult<AIConversation>>;
   aiClear(projectId: string): Promise<AIResult<AIConversation>>;
@@ -636,6 +644,10 @@ export interface AISkillCatalog {
   warnings: number;
 }
 export interface AIMessage {
+  turnId?: string;
+  steered?: boolean;
+  inherited?: boolean;
+  reviewTarget?: AINativeReviewTarget;
   id: string;
   role: "user" | "assistant";
   text: string;
@@ -725,9 +737,63 @@ export interface AIActivity {
   text?: string;
   changes?: { path: string; kind: unknown; diff: string }[];
 }
+export type AINativeReviewTarget =
+  | { type: "uncommittedChanges" }
+  | { type: "baseBranch"; branch: string }
+  | { type: "commit"; sha: string };
+export interface AINativeSettings {
+  webSearch: "disabled" | "cached" | "live";
+  servers: {
+    name: string;
+    enabled: boolean;
+    authStatus?: string;
+    toolCount: number;
+    tools: string[];
+    origin?: string;
+    state?: string;
+    error?: string;
+  }[];
+}
+export type AINativeSettingsAction =
+  | { action: "read" }
+  | { action: "webSearch"; value: AINativeSettings["webSearch"] }
+  | {
+      action: "addServer";
+      name: string;
+      url?: string;
+      command?: string;
+      args?: string[];
+    }
+  | { action: "toggleServer"; name: string; enabled: boolean }
+  | { action: "login"; name: string };
+export interface AIMcpField {
+  type: string;
+  title?: string;
+  description?: string;
+  default?: unknown;
+  enum?: string[];
+  enumNames?: string[];
+  oneOf?: { const: string; title?: string }[];
+  items?: { enum?: string[]; anyOf?: { const: string; title?: string }[] };
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  minItems?: number;
+  maxItems?: number;
+  format?: string;
+}
 export interface AIApproval {
   id: string;
-  kind: "command" | "file" | "question" | "permissions";
+  kind: "command" | "file" | "question" | "permissions" | "mcp";
+  serverName?: string;
+  mode?: string;
+  url?: string;
+  requestedSchema?: {
+    type: string;
+    required?: string[];
+    properties: Record<string, AIMcpField>;
+  };
   itemId?: string;
   reason?: string;
   command?: string;
@@ -766,7 +832,7 @@ export interface AIApproval {
   }[];
 }
 export type AIChatAction =
-  "new" | "select" | "rename" | "archive" | "unarchive" | "delete";
+  "new" | "select" | "rename" | "archive" | "unarchive" | "delete" | "fork";
 export interface AIChatSummary {
   id: string;
   title: string;

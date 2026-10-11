@@ -1,6 +1,8 @@
 import Dictation from "./Dictation";
 import { useDraft } from "./useDraft";
 import AIChats from "./AIChats";
+import AINativeTools from "./AINativeTools";
+import AIMcpApproval from "./AIMcpApproval";
 import {
   memo,
   useCallback,
@@ -82,6 +84,7 @@ function Approval({
   answer(
     decision: "accept" | "decline" | "answer",
     answers?: Record<string, { answers: string[] }>,
+    content?: Record<string, unknown>,
   ): void;
 }) {
   const [values, setValues] = useState<Record<string, string>>({});
@@ -270,6 +273,7 @@ const Message = memo(function Message({
     request: AIApproval,
     decision: "accept" | "decline" | "answer",
     answers?: Record<string, { answers: string[] }>,
+    content?: Record<string, unknown>,
   ): void;
   openReference(reference: string, action?: "open" | "reveal"): void;
   review(messageId: string): void;
@@ -334,14 +338,34 @@ const Message = memo(function Message({
         changedFileCount={changedFiles.length}
         openReference={openReference}
       />
-      {message.approvals?.map((request) => (
-        <Approval
-          key={request.id}
-          request={request}
-          busy={answering}
-          answer={(decision, answers) => answer(request, decision, answers)}
-        />
-      ))}
+      {message.approvals?.map((request) =>
+        request.kind === "mcp" ? (
+          <AIMcpApproval
+            key={request.id}
+            request={request}
+            busy={answering}
+            answer={(decision, content) =>
+              answer(request, decision, undefined, content)
+            }
+          />
+        ) : (
+          <Approval
+            key={request.id}
+            request={request}
+            busy={answering}
+            answer={(decision, answers) => answer(request, decision, answers)}
+          />
+        ),
+      )}
+      {message.steered && !message.inherited && (
+        <small className="muted">Sent to the active turn</small>
+      )}
+      {message.inherited && (
+        <small className="muted">From the original chat</small>
+      )}
+      {message.reviewTarget && (
+        <small className="muted">Codex code review</small>
+      )}
       {message.text &&
         (message.role === "assistant" ? (
           <AIMarkdown text={message.text} openReference={openReference} />
@@ -557,6 +581,10 @@ export default memo(function AIPanel({
   const running = conversation.messages.some(
     (message) => message.status === "running",
   );
+  const activeTurn = conversation.messages.at(-1);
+  const canSteer = running && !!activeTurn?.turnId && !activeTurn.reviewTarget;
+  const [delivery, setDelivery] = useState<"steer" | "queue">("steer");
+  const steering = canSteer && delivery === "steer";
   const queued = conversation.queue || [];
   const busy =
     running ||
@@ -564,7 +592,9 @@ export default memo(function AIPanel({
     operation === "revert" ||
     (!!queued.length && !conversation.queuePaused);
   const profile = state?.profiles.find((p) => p.id === state.activeProfileId);
-  const selectedModel = state?.models.find((m) => m.slug === model);
+  const selectedModel = state?.models.find(
+    (m) => m.slug === (steering ? activeTurn?.model : model),
+  );
   async function addImages(files: File[]) {
     const key = draftKey;
     if (!key || !files.length || submitting.current) return;
@@ -977,6 +1007,7 @@ export default memo(function AIPanel({
       request: AIApproval,
       decision: "accept" | "decline" | "answer",
       answers?: Record<string, { answers: string[] }>,
+      content?: Record<string, unknown>,
     ) => {
       void perform("answer", () =>
         unwrap(
@@ -985,6 +1016,7 @@ export default memo(function AIPanel({
             id: request.id,
             decision,
             answers,
+            content,
           }),
         ),
       );
@@ -1038,6 +1070,8 @@ export default memo(function AIPanel({
           window.research!.aiSend({
             projectId: project.id,
             message,
+            delivery: steering ? "steer" : "queue",
+            expectedTurnId: steering ? activeTurn?.turnId : undefined,
             model,
             ...agentSettings,
             rootId: agentRoot,
@@ -1204,6 +1238,36 @@ export default memo(function AIPanel({
           <span>{profile?.label || "ChatGPT"}</span>
           <ChevronDown size={11} />
         </button>
+        <AINativeTools
+          key={`${project.id}.${state?.activeProfileId}`}
+          projectId={project.id}
+          disabled={actionDisabled || !state?.sharing}
+          running={busy || !!state?.runningProjects?.length}
+          report={setError}
+          review={async (reviewTarget) => {
+            if (!model || busy) return;
+            await prepare();
+            const message =
+              reviewTarget.type === "uncommittedChanges"
+                ? "Review uncommitted changes"
+                : reviewTarget.type === "baseBranch"
+                  ? `Review changes against ${reviewTarget.branch}`
+                  : `Review commit ${reviewTarget.sha}`;
+            setConversation(
+              await unwrap(
+                window.research!.aiSend({
+                  projectId: project.id,
+                  message,
+                  model,
+                  ...agentSettings,
+                  permissionMode: "read-only",
+                  rootId: agentRoot,
+                  reviewTarget,
+                }),
+              ),
+            );
+          }}
+        />
         <AIChats
           projectId={project.id}
           conversation={conversation}
@@ -1910,9 +1974,19 @@ export default memo(function AIPanel({
               key={`${state?.activeProfileId}.${project.id}`}
               models={state?.models || []}
               model={selectedModel}
-              settings={agentSettings}
+              settings={
+                steering
+                  ? {
+                      permissionMode: activeTurn?.permissionMode || "default",
+                      reasoningEffort: activeTurn?.reasoningEffort,
+                      serviceTier: activeTurn?.serviceTier || "default",
+                    }
+                  : agentSettings
+              }
               update={updateAgentSettings}
-              disabled={actionDisabled || !state?.sharing || !visible}
+              disabled={
+                actionDisabled || !state?.sharing || !visible || steering
+              }
               selectModel={(slug) => {
                 setModel(slug);
                 try {
@@ -1926,6 +2000,20 @@ export default memo(function AIPanel({
               }}
             />
             <div className="ai-send-actions">
+              {canSteer && (
+                <select
+                  className="ai-delivery"
+                  aria-label="Message delivery"
+                  value={delivery}
+                  onChange={(event) =>
+                    setDelivery(event.target.value as typeof delivery)
+                  }
+                  disabled={actionDisabled}
+                >
+                  <option value="steer">Steer now</option>
+                  <option value="queue">Queue next</option>
+                </select>
+              )}
               {busy && (
                 <button
                   className="ai-send ai-stop"
@@ -1971,12 +2059,18 @@ export default memo(function AIPanel({
                 className="ai-send"
                 type="submit"
                 title={
-                  busy || queued.length
-                    ? "Queue message (Enter)"
-                    : "Send message (Enter)"
+                  steering
+                    ? "Steer active turn (Enter)"
+                    : busy || queued.length
+                      ? "Queue message (Enter)"
+                      : "Send message (Enter)"
                 }
                 aria-label={
-                  busy || queued.length ? "Queue message" : "Run AI agent"
+                  steering
+                    ? "Steer active turn"
+                    : busy || queued.length
+                      ? "Queue message"
+                      : "Run AI agent"
                 }
                 disabled={
                   dictating ||
@@ -1990,7 +2084,7 @@ export default memo(function AIPanel({
                   !state.runtime.available
                 }
               >
-                {busy || queued.length ? (
+                {!steering && (busy || queued.length) ? (
                   <ListPlus size={16} />
                 ) : (
                   <ArrowUp size={20} />
@@ -2000,9 +2094,11 @@ export default memo(function AIPanel({
           </div>
           <div className="ai-composer-hint">
             <span>
-              {busy || queued.length
-                ? "Enter to queue · / for skills · Shift+Enter for a new line"
-                : "Enter to send · / for skills · Shift+Enter for a new line"}
+              {steering
+                ? "Enter to steer · Uses the active turn’s settings"
+                : busy || queued.length
+                  ? "Enter to queue · / for skills · Shift+Enter for a new line"
+                  : "Enter to send · / for skills · Shift+Enter for a new line"}
             </span>
           </div>
         </div>

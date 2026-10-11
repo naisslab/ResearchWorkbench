@@ -1317,6 +1317,7 @@ app
       "ai:revert": (id, messageId, fileIds) =>
         ai.revert(id, messageId, fileIds),
       "ai:send": (request) => ai.send(request),
+      "ai:native-settings": (id, request) => ai.nativeSettings(id, request),
       "ai:queue": (request) => ai.queue(request),
       "ai:stop": (id) => ai.stop(id),
       "ai:clear": (id) => ai.clear(id),

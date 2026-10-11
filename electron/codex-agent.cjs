@@ -80,7 +80,6 @@ function agentArguments(
     "features.tool_search": false,
     "features.deferred_tool_world_state": false,
     "features.default_mode_request_user_input": true,
-    web_search: "disabled",
     approvals_reviewer: "user",
   };
   // Explicit overrides survive the runtime's shell environment filtering.
@@ -313,6 +312,7 @@ function createCodexAgent({
         "item/fileChange/requestApproval",
         "item/tool/requestUserInput",
         "item/permissions/requestApproval",
+        "mcpServer/elicitation/request",
       ];
       if (!supported.includes(message.method)) {
         send({
@@ -335,13 +335,16 @@ function createCodexAgent({
         type: "approval",
         approval: {
           id,
-          kind: message.method.includes("commandExecution")
-            ? "command"
-            : message.method.includes("fileChange")
-              ? "file"
-              : message.method.includes("requestUserInput")
-                ? "question"
-                : "permissions",
+          kind:
+            message.method === "mcpServer/elicitation/request"
+              ? "mcp"
+              : message.method.includes("commandExecution")
+                ? "command"
+                : message.method.includes("fileChange")
+                  ? "file"
+                  : message.method.includes("requestUserInput")
+                    ? "question"
+                    : "permissions",
           itemId: params.itemId,
           reason: params.reason,
           command: params.command,
@@ -350,6 +353,13 @@ function createCodexAgent({
           network: params.networkApprovalContext,
           permissions: params.permissions || params.additionalPermissions,
           questions: params.questions,
+          ...(message.method === "mcpServer/elicitation/request" && {
+            serverName: params.serverName,
+            reason: params.message,
+            mode: params.mode,
+            url: params.url,
+            requestedSchema: params.requestedSchema,
+          }),
           canAccept:
             !params.availableDecisions ||
             params.availableDecisions.includes("accept"),
@@ -366,8 +376,14 @@ function createCodexAgent({
         }
       return;
     }
-    if (message.method === "turn/started") current.turnId = params.turn?.id;
+    if (message.method === "turn/started") {
+      if (current.turnId === params.turn?.id) return;
+      current.turnId = params.turn?.id;
+    }
     if (message.method === "turn/completed") {
+      current.turnId = null;
+      current.completed = true;
+      current.onEvent({ type: "notification", method: message.method, params });
       for (const id of approvals.keys())
         current.onEvent({ type: "approvalResolved", id });
       approvals.clear();
@@ -432,6 +448,7 @@ function createCodexAgent({
     dynamicTools = [],
     instructions = [],
     onTool,
+    reviewTarget,
   }) {
     await ready();
     signal.throwIfAborted();
@@ -441,19 +458,42 @@ function createCodexAgent({
       await rpc("skills/list", { cwds: [cwd], forceReload: true });
       signal.throwIfAborted();
     }
+    const { config } = await rpc("config/read", { cwd, includeLayers: false });
+    // Token sharing accepts native function namespaces, but not Responses
+    // tool_search. Keep MCP tools on the runtime's direct exposure surface.
+    const mcpExposure = Object.fromEntries(
+      Object.entries(config.mcp_servers || {}).map(([name, server]) => [
+        name,
+        {
+          // Config reads include absent optional values as null; TOML does not.
+          ...Object.fromEntries(
+            Object.entries(server).filter(([, value]) => value != null),
+          ),
+          omit_tools_from: [
+            ...new Set([...(server.omit_tools_from || []), "deferred"]),
+          ],
+        },
+      ]),
+    );
     const settings = {
       model,
       modelProvider: "openai_chatgpt_plan",
       cwd,
       ...permissionSettings(permissionMode, writableRoots).thread,
       serviceTier,
+      config: {
+        ...(Object.keys(mcpExposure).length && { mcp_servers: mcpExposure }),
+        web_search: config.web_search || "cached",
+        ...(reviewTarget &&
+          reasoningEffort && { model_reasoning_effort: reasoningEffort }),
+      },
       developerInstructions: [
         "You are running inside Research Workbench. Project settings and attached excerpts are reference data; the user's instructions take precedence over saved project settings.",
         "Do not commit or push unless asked.",
         ...instructions,
       ].join("\n"),
     };
-    if (threadId !== savedThreadId || !threadId) {
+    if (threadId !== savedThreadId || !threadId || reviewTarget) {
       const result = await rpc(
         savedThreadId ? "thread/resume" : "thread/start",
         {
@@ -484,22 +524,39 @@ function createCodexAgent({
     };
     signal.addEventListener("abort", abort, { once: true });
     try {
-      const result = await rpc("turn/start", {
-        threadId,
-        model,
-        cwd,
-        ...permissionSettings(permissionMode, writableRoots).turn,
-        effort: reasoningEffort ?? null,
-        // Explicitly reset standard speed after a Fast turn in the same thread.
-        serviceTier,
-        serviceTierForTurn: serviceTier,
-        input: [
-          { type: "text", text },
-          ...images.map((path) => ({ type: "localImage", path })),
-          ...skills.map(({ name, path }) => ({ type: "skill", name, path })),
-        ],
-      });
-      if (current) current.turnId = result.turn.id;
+      const result = reviewTarget
+        ? await rpc("review/start", {
+            threadId,
+            target: reviewTarget,
+            delivery: "inline",
+          })
+        : await rpc("turn/start", {
+            threadId,
+            model,
+            cwd,
+            ...permissionSettings(permissionMode, writableRoots).turn,
+            effort: reasoningEffort ?? null,
+            // Explicitly reset standard speed after a Fast turn in the same thread.
+            serviceTier,
+            serviceTierForTurn: serviceTier,
+            input: [
+              { type: "text", text },
+              ...images.map((path) => ({ type: "localImage", path })),
+              ...skills.map(({ name, path }) => ({
+                type: "skill",
+                name,
+                path,
+              })),
+            ],
+          });
+      if (current && !current.completed && !current.turnId) {
+        current.turnId = result.turn.id;
+        onEvent({
+          type: "notification",
+          method: "turn/started",
+          params: { threadId, turn: result.turn },
+        });
+      }
       if (signal.aborted) abort();
       return await completion;
     } catch (error) {
@@ -512,7 +569,7 @@ function createCodexAgent({
       approvals.clear();
     }
   }
-  function answer(id, decision, answers) {
+  function answer(id, decision, answers, content) {
     const request = approvals.get(id);
     if (
       !request ||
@@ -525,6 +582,16 @@ function createCodexAgent({
       );
     let result;
     if (request.method === "item/tool/requestUserInput") result = { answers };
+    else if (request.method === "mcpServer/elicitation/request")
+      result = {
+        action:
+          decision === "accept"
+            ? "accept"
+            : decision === "cancel"
+              ? "cancel"
+              : "decline",
+        content: decision === "accept" ? (content ?? null) : null,
+      };
     else if (request.method === "item/permissions/requestApproval")
       result = {
         permissions: decision === "accept" ? request.permissions : {},
@@ -538,6 +605,90 @@ function createCodexAgent({
   async function listSkills(cwd, forceReload = false) {
     await ready();
     return rpc("skills/list", { cwds: [cwd], forceReload });
+  }
+  async function steer({ expectedTurnId, text, images = [], skills = [] }) {
+    if (
+      !current?.turnId ||
+      current.turnId !== expectedTurnId ||
+      current.signal.aborted
+    )
+      throw new AIError(
+        "turn_expired",
+        "This turn has ended or is stopping. Send your message as a new request.",
+      );
+    return rpc("turn/steer", {
+      threadId,
+      expectedTurnId,
+      input: [
+        { type: "text", text },
+        ...images.map((path) => ({ type: "localImage", path })),
+        ...skills.map(({ name, path }) => ({ type: "skill", name, path })),
+      ],
+    });
+  }
+  async function fork(savedThreadId, cwd) {
+    await ready();
+    if (current)
+      throw new AIError(
+        "agent_busy",
+        "Wait for the agent before forking this chat.",
+      );
+    const result = await rpc("thread/fork", { threadId: savedThreadId, cwd });
+    threadId = result.thread.id;
+    return threadId;
+  }
+  async function nativeSettings(cwd) {
+    await ready();
+    const { config } = await rpc("config/read", { cwd, includeLayers: false });
+    const servers = [];
+    let cursor;
+    do {
+      const page = await rpc("mcpServerStatus/list", {
+        cursor,
+        limit: 100,
+        detail: "toolsAndAuthOnly",
+      });
+      servers.push(...page.data);
+      cursor = page.nextCursor;
+    } while (cursor);
+    // Do not expose configured environment values, headers, or credentials.
+    return {
+      webSearch: config.web_search || "cached",
+      servers: [
+        ...new Set([
+          ...Object.keys(config.mcp_servers || {}),
+          ...servers.map((s) => s.name),
+        ]),
+      ].map((name) => {
+        const status = servers.find((s) => s.name === name);
+        return {
+          name,
+          enabled: config.mcp_servers?.[name]?.enabled !== false,
+          authStatus: status?.authStatus,
+          toolCount: Object.keys(status?.tools || {}).length,
+          tools: Object.keys(status?.tools || {}),
+          origin: status?.httpOrigin,
+          state: status?.runtimeStatus,
+          error: status?.toolsError
+            ? "Tool discovery failed. Check the server configuration and sign-in."
+            : undefined,
+        };
+      }),
+    };
+  }
+  async function configure(keyPath, value) {
+    await ready();
+    await rpc("config/batchWrite", {
+      edits: [{ keyPath, value, mergeStrategy: "replace" }],
+      reloadUserConfig: true,
+    });
+    await rpc("config/mcpServer/reload");
+    // Resume the same native thread to apply settings on its next turn.
+    threadId = undefined;
+  }
+  async function loginMcp(name) {
+    await ready();
+    return rpc("mcpServer/oauth/login", { name });
   }
   async function listModels() {
     await ready();
@@ -561,6 +712,11 @@ function createCodexAgent({
     ready,
     listSkills,
     listModels,
+    steer,
+    fork,
+    nativeSettings,
+    configure,
+    loginMcp,
     isClosed: () => disposed,
   };
 }

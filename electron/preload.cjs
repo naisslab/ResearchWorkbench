@@ -109,6 +109,7 @@ contextBridge.exposeInMainWorld("research", {
   aiReviewFile: invoke("ai:review-file"),
   aiRevert: invoke("ai:revert"),
   aiSend: invoke("ai:send"),
+  aiNativeSettings: invoke("ai:native-settings"),
   aiQueue: invoke("ai:queue"),
   aiStop: invoke("ai:stop"),
   aiClear: invoke("ai:clear"),

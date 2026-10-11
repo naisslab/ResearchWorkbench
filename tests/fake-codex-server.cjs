@@ -12,6 +12,14 @@ let threadId = "fixture-thread",
   pending;
 let skillRoots = [];
 let threadSettings;
+let config = { web_search: "cached", mcp_servers: {} };
+const configFile = path.join(process.env.CODEX_HOME, "fixture-config.json");
+const configReady = fs
+  .readFile(configFile, "utf8")
+  .then((text) => {
+    config = JSON.parse(text);
+  })
+  .catch(() => {});
 async function work(params) {
   const current = `fixture-turn-${turnId}`;
   const notification = (method, data) =>
@@ -187,6 +195,7 @@ async function work(params) {
 }
 readline.createInterface({ input: process.stdin }).on("line", async (line) => {
   const message = JSON.parse(line);
+  await configReady;
   if (message.id === "fixture-permissions" && message.result) {
     await fs.writeFile(
       path.join(pending.params.cwd, "permission-decision.json"),
@@ -229,7 +238,79 @@ readline.createInterface({ input: process.stdin }).on("line", async (line) => {
   }
   if (message.method === "initialize")
     send({ id: message.id, result: { userAgent: "fixture" } });
-  else if (message.method === "model/list") {
+  else if (message.method === "config/read")
+    send({ id: message.id, result: { config } });
+  else if (message.method === "config/batchWrite") {
+    for (const edit of message.params.edits) {
+      if (edit.keyPath === "web_search") config.web_search = edit.value;
+      else {
+        const [, name, property] = edit.keyPath.split(".");
+        if (property) config.mcp_servers[name][property] = edit.value;
+        else config.mcp_servers[name] = edit.value;
+      }
+    }
+    await fs.writeFile(configFile, JSON.stringify(config));
+    send({ id: message.id, result: {} });
+  } else if (message.method === "config/mcpServer/reload")
+    send({ id: message.id, result: {} });
+  else if (message.method === "mcpServerStatus/list")
+    send({
+      id: message.id,
+      result: {
+        data: Object.entries(config.mcp_servers).map(([name, server]) => ({
+          name,
+          tools: server.enabled === false ? {} : { echo: {} },
+          authStatus: "unsupported",
+        })),
+      },
+    });
+  else if (message.method === "thread/fork") {
+    threadId = "fork-" + message.params.threadId;
+    send({ id: message.id, result: { thread: { id: threadId } } });
+  } else if (message.method === "turn/steer") {
+    if (!pending || message.params.expectedTurnId !== pending.current) {
+      send({ id: message.id, error: { code: -32602, message: "Turn ended" } });
+      return;
+    }
+    await fs.appendFile(
+      path.join(pending.params.cwd, "received-steers.jsonl"),
+      JSON.stringify(message.params) + "\n",
+    );
+    send({ id: message.id, result: { turnId: pending.current } });
+  } else if (message.method === "review/start") {
+    turnId++;
+    await fs.writeFile(
+      path.join(threadSettings.cwd, "received-review.json"),
+      JSON.stringify({ ...message.params, threadSettings }),
+    );
+    send({
+      id: message.id,
+      result: {
+        reviewThreadId: threadId,
+        turn: { id: `fixture-turn-${turnId}`, status: "inProgress" },
+      },
+    });
+    setTimeout(() => {
+      send({
+        method: "item/completed",
+        params: {
+          threadId,
+          item: {
+            id: "review",
+            type: "exitedReviewMode",
+            review: "No regressions found in fixture changes.",
+          },
+        },
+      });
+      send({
+        method: "turn/completed",
+        params: {
+          threadId,
+          turn: { id: `fixture-turn-${turnId}`, status: "completed" },
+        },
+      });
+    }, 10);
+  } else if (message.method === "model/list") {
     send({
       id: message.id,
       result: {

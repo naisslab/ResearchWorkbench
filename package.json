@@ -18,6 +18,7 @@
     "test:pdf-ui": "node scripts/pdf-annotations-smoke.mjs",
     "test:synctex-ui": "node scripts/synctex-smoke.mjs",
     "test:ai-ui": "node scripts/ai-agent-smoke.mjs",
+    "test:native-ui": "node scripts/ai-native-smoke.mjs",
     "test:images-ui": "node scripts/ai-images-smoke.mjs",
     "test:review-ui": "node scripts/ai-review-smoke.mjs",
     "test:layout-ui": "node scripts/layout-smoke.mjs",

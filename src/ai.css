@@ -1750,3 +1750,54 @@
   width: 96px;
   height: 96px;
 }
+.ai-native-tools {
+  display: grid;
+  gap: 24px;
+}
+.ai-native-tools form,
+.ai-native-tools label {
+  display: grid;
+  gap: 8px;
+}
+.ai-native-tools form {
+  gap: 12px;
+}
+.ai-native-tools input,
+.ai-native-tools select {
+  width: 100%;
+}
+.ai-panel .ai-native-tools select {
+  max-width: none;
+  width: 100%;
+}
+.ai-native-tools section,
+.ai-native-tools form {
+  min-width: 0;
+}
+.ai-native-tools p {
+  margin: 8px 0;
+}
+.ai-native-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ai-native-server {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.ai-native-server small {
+  overflow-wrap: anywhere;
+}
+.ai-native-server ul {
+  max-height: 180px;
+  overflow: auto;
+}
+.ai-delivery {
+  max-width: 104px;
+  font-size: 11px;
+  padding: 4px;
+}

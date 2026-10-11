@@ -19,6 +19,10 @@ const {
   RESOURCE,
   USAGE_URL,
 } = require("./chatgpt.cjs");
+const {
+  validateElicitation,
+  serverConfig,
+} = require("./native-agent-settings.cjs");
 const { createCodexAgent, codexExecutable } = require("./codex-agent.cjs");
 const { createResponseGateway } = require("./response-gateway.cjs");
 const { createTaskQueue } = require("./task-queue.cjs");
@@ -59,7 +63,8 @@ function createAI({
   const conversations = new Map(),
     running = new Map(),
     loads = new Map(),
-    agents = new Map();
+    agents = new Map(),
+    agentLoads = new Map();
   const changes = createChangeStore(path.join(directory, "changes"));
   void changes.collect().catch(() => {});
   const restoring = new Map();
@@ -200,6 +205,7 @@ function createAI({
     );
   }
   async function closeAgents() {
+    await Promise.allSettled([...agentLoads.values()]);
     await Promise.allSettled([...agents.values()].map(closeAgent));
     agents.clear();
   }
@@ -499,9 +505,37 @@ function createAI({
       rootId,
       skillIds = [],
       images = [],
+      reviewTarget: reviewRequest,
     },
     expectedProfileId,
   ) {
+    if (reviewRequest) {
+      const ref =
+        reviewRequest.type === "baseBranch"
+          ? reviewRequest.branch
+          : reviewRequest.sha;
+      if (
+        !["uncommittedChanges", "baseBranch", "commit"].includes(
+          reviewRequest.type,
+        ) ||
+        (reviewRequest.type !== "uncommittedChanges" &&
+          (typeof ref !== "string" ||
+            !ref.trim() ||
+            ref.startsWith("-") ||
+            ref.length > 256))
+      )
+        throw new AIError(
+          "invalid_review",
+          "Choose uncommitted changes, a base branch, or a commit to review.",
+        );
+      reviewRequest =
+        reviewRequest.type === "uncommittedChanges"
+          ? { type: "uncommittedChanges" }
+          : reviewRequest.type === "baseBranch"
+            ? { type: "baseBranch", branch: ref.trim() }
+            : { type: "commit", sha: ref.trim() };
+      permissionMode = "read-only";
+    }
     const session = await auth.getSession();
     if (
       disposed ||
@@ -665,6 +699,7 @@ function createAI({
     };
     const assistant = {
       id: requestId,
+      reviewTarget: reviewRequest,
       role: "assistant",
       text: "",
       model,
@@ -697,6 +732,7 @@ function createAI({
       projectScope,
       request: {
         projectId,
+        reviewTarget: reviewRequest,
         message: message.trim(),
         model,
         permissionMode,
@@ -712,9 +748,61 @@ function createAI({
   async function send(request) {
     const { activeProfileId } = await auth.getSession();
     return mutate(key(activeProfileId, request.projectId), async () => {
-      const prepared = await prepareRequest(request, activeProfileId);
+      const existing = await conversation(request.projectId);
+      const active = existing.messages.at(-1);
+      const steering = request.delivery === "steer";
+      if (
+        steering &&
+        (!running.has(key(activeProfileId, request.projectId)) ||
+          !active?.turnId ||
+          active.turnId !== request.expectedTurnId ||
+          active.reviewTarget)
+      )
+        throw new AIError(
+          "turn_expired",
+          "This turn cannot receive steering. Send your message as a new request.",
+        );
+      const prepared = await prepareRequest(
+        steering
+          ? {
+              ...request,
+              model: active.model,
+              permissionMode: active.permissionMode,
+              reasoningEffort: active.reasoningEffort,
+              serviceTier: active.serviceTier,
+              reviewTarget: undefined,
+            }
+          : request,
+        activeProfileId,
+      );
       const { value, user, assistant } = prepared;
       const id = key(value.profileId, value.projectId);
+      if (steering) {
+        if (assistant.permissionMode !== active.permissionMode)
+          throw new AIError(
+            "steering_permissions",
+            "Queue images or PDF text for the next turn so Default permissions can be applied.",
+          );
+        const entry = agents.get(id);
+        if (!entry)
+          throw new AIError("turn_expired", "The agent is no longer running.");
+        await entry.agent.steer({
+          expectedTurnId: request.expectedTurnId,
+          text: user.inputText,
+          images: user.images.map(({ file }) => imagePath(file)),
+          skills: user.skills,
+        });
+        user.steered = true;
+        value.messages.splice(value.messages.indexOf(active), 0, user);
+        // A successful native steer must not look retryable if saving fails.
+        try {
+          await saveConversation(value);
+        } catch (error) {
+          value.queueError = publicError(error);
+        }
+        publishConversation(value);
+        return publicConversation(value);
+      }
       if (running.has(id) || value.queue?.length) {
         if (value.queue?.length >= 20)
           throw new AIError(
@@ -769,6 +857,13 @@ function createAI({
         "Wait for the agent or restore in these project folders to finish.",
       );
     const controller = new AbortController();
+    // review/start inherits session settings instead of accepting turn settings.
+    // Reopen the existing thread so its selected model and read-only sandbox apply.
+    if (assistant.reviewTarget) {
+      const entry = agents.get(id);
+      if (entry) await closeAgent(entry);
+      agents.delete(id);
+    }
     if (queuedItem) {
       value.queue.shift();
       assistant.id = queuedItem.id;
@@ -915,8 +1010,136 @@ function createAI({
     if (action === "resume") void drain(result.value);
     return result.snapshot;
   }
-  async function generate(value, assistant, model, projectScope, signal) {
+  async function nativeSettings(projectId, request = { action: "read" }) {
+    // Serialize account-wide settings with profile switches and project mutations.
+    return (request.action === "read" ? accountQueue : queuedAccount)(
+      async () => {
+        const value = await conversation(projectId);
+        if (!value.profileId)
+          throw new AIError(
+            "sign_in_required",
+            "Sign in to configure the agent.",
+          );
+        const projectScope = await scope(projectId, value.agentRootId);
+        return mutate(key(value.profileId, projectId), async () => {
+          if (request.action !== "read" && running.size)
+            throw new AIError(
+              "agent_busy",
+              "Wait for active agents to finish before changing connections or web search.",
+            );
+          const entry = await projectAgent(value);
+          if (request.action === "webSearch") {
+            if (!["disabled", "cached", "live"].includes(request.value))
+              throw new AIError(
+                "invalid_setting",
+                "Choose Off, Cached, or Live web search.",
+              );
+            await entry.agent.configure("web_search", request.value);
+          } else if (request.action === "addServer") {
+            const { name, config } = serverConfig(request);
+            const current = await entry.agent.nativeSettings(projectScope.cwd);
+            if (current.servers.some((server) => server.name === name))
+              throw new AIError(
+                "duplicate_server",
+                "A connection already uses this name.",
+              );
+            await entry.agent.configure(`mcp_servers.${name}`, config);
+          } else if (
+            request.action === "toggleServer" ||
+            request.action === "login"
+          ) {
+            const current = await entry.agent.nativeSettings(projectScope.cwd);
+            if (
+              !current.servers.some((server) => server.name === request.name) ||
+              !/^[a-zA-Z0-9_-]+$/.test(request.name)
+            )
+              throw new AIError(
+                "invalid_server",
+                "Choose a configured connection.",
+              );
+            if (request.action === "login") {
+              const { authorizationUrl } = await entry.agent.loginMcp(
+                request.name,
+              );
+              const url = new URL(authorizationUrl);
+              if (
+                url.protocol !== "https:" &&
+                !(
+                  url.protocol === "http:" &&
+                  ["localhost", "127.0.0.1"].includes(url.hostname)
+                )
+              )
+                throw new AIError(
+                  "invalid_url",
+                  "The connection returned an unsupported sign-in URL.",
+                );
+              await openBrowser(authorizationUrl);
+            } else {
+              if (typeof request.enabled !== "boolean")
+                throw new AIError(
+                  "invalid_setting",
+                  "Choose whether the connection is enabled.",
+                );
+              await entry.agent.configure(
+                `mcp_servers.${request.name}.enabled`,
+                request.enabled,
+              );
+            }
+          } else if (request.action !== "read")
+            throw new AIError("invalid_setting", "Unknown agent setting.");
+          try {
+            return await entry.agent.nativeSettings(projectScope.cwd);
+          } finally {
+            // Reload idle runtimes, keeping their persisted native thread IDs.
+            if (!["read", "login"].includes(request.action))
+              await closeAgents();
+          }
+        });
+      },
+    );
+  }
+  async function projectAgent(value) {
     const id = key(value.profileId, value.projectId);
+    if (!agentLoads.has(id))
+      agentLoads.set(
+        id,
+        (async () => {
+          let entry = agents.get(id);
+          if (!entry || entry.agent.isClosed()) {
+            if (entry) await closeAgent(entry);
+            const gateway = await createResponseGateway({
+              accessToken: (options) =>
+                auth.accessToken(value.profileId, options),
+              fetcher,
+            });
+            try {
+              if (disposed)
+                throw new AIError(
+                  "agent_stopped",
+                  "The application is closing.",
+                );
+              entry = {
+                gateway,
+                agent: agentFactory({
+                  accessToken: gateway.token,
+                  baseUrl: gateway.baseUrl,
+                  home: path.join(directory, "codex", value.profileId),
+                  environment: await createGitEnvironment(environment),
+                  skillRoots,
+                }),
+              };
+            } catch (error) {
+              await gateway.close();
+              throw error;
+            }
+            agents.set(id, entry);
+          }
+          return entry;
+        })().finally(() => agentLoads.delete(id)),
+      );
+    return agentLoads.get(id);
+  }
+  async function generate(value, assistant, model, projectScope, signal) {
     const textItems = new Map();
     let lastCheckpoint = Date.now();
     let totalUsage;
@@ -963,6 +1186,15 @@ function createAI({
         return;
       }
       const { method, params } = event;
+      if (method === "turn/started") {
+        assistant.turnId = params.turn?.id;
+        updated();
+        publishMessage();
+      } else if (method === "turn/completed") {
+        delete assistant.turnId;
+        updated();
+        publishMessage();
+      }
       if (method === "item/agentMessage/delta") {
         const previous = textItems.get(params.itemId);
         const separator =
@@ -981,7 +1213,14 @@ function createAI({
         }
       } else if (method === "item/started" || method === "item/completed") {
         const item = params.item;
-        if (item?.type === "agentMessage") {
+        if (
+          item?.type === "exitedReviewMode" &&
+          typeof item.review === "string"
+        ) {
+          textItems.set(item.id, item.review);
+          assistant.text = [...textItems.values()].join("\n\n");
+          updated();
+        } else if (item?.type === "agentMessage") {
           if (typeof item.text === "string" && item.text) {
             textItems.set(item.id, item.text);
             assistant.text = [...textItems.values()].join("\n\n");
@@ -1012,7 +1251,14 @@ function createAI({
                 ? safeText(item.aggregatedOutput)
                 : activity.output || "",
             exitCode: item.exitCode,
-            text: safeText(item.text, 20000),
+            text: safeText(
+              item.type === "webSearch"
+                ? `Web search: ${item.query || item.action?.query || item.action?.url || ""}`
+                : item.type === "mcpToolCall"
+                  ? `${item.server} · ${item.tool}`
+                  : item.text,
+              20000,
+            ),
             changes: item.changes?.map((c) => ({
               path: safeText(c.path, 4000),
               kind: c.kind,
@@ -1098,31 +1344,8 @@ function createAI({
       signal.throwIfAborted();
       const token = await auth.accessToken(value.profileId);
       signal.throwIfAborted();
-      let entry = agents.get(id);
-      if (!entry || entry.agent.isClosed()) {
-        if (entry) await closeAgent(entry);
-        const gateway = await createResponseGateway({
-          accessToken: (options) => auth.accessToken(value.profileId, options),
-          fetcher,
-        });
-        try {
-          signal.throwIfAborted();
-          entry = {
-            gateway,
-            agent: agentFactory({
-              accessToken: gateway.token,
-              baseUrl: gateway.baseUrl,
-              home: path.join(directory, "codex", value.profileId),
-              environment: await createGitEnvironment(environment),
-              skillRoots,
-            }),
-          };
-        } catch (error) {
-          await gateway.close();
-          throw error;
-        }
-        agents.set(id, entry);
-      }
+      const entry = await projectAgent(value);
+      signal.throwIfAborted();
       value.agentCwd = projectScope.cwd;
       entry.gateway.takeError();
       // Dynamic tools are fixed when a thread is created in this runtime.
@@ -1136,6 +1359,7 @@ function createAI({
       const tools = TOOLS.filter((tool) => toolNames.includes(tool.name));
       const turn = await entry.agent.run({
         savedThreadId: value.threadId,
+        reviewTarget: assistant.reviewTarget,
         model,
         permissionMode: assistant.permissionMode,
         reasoningEffort: assistant.reasoningEffort,
@@ -1229,6 +1453,7 @@ function createAI({
       // The finished conversation is published in full after this.
       clearTimeout(publishTimer);
       assistant.approvals = [];
+      delete assistant.turnId;
       if (snapshotStarted) {
         try {
           assistant.review = await changes.finish(snapshotId);
@@ -1363,9 +1588,15 @@ function createAI({
           "Pause the queue and wait for the agent before switching conversations.",
         );
       if (
-        !["new", "select", "rename", "archive", "unarchive", "delete"].includes(
-          action,
-        )
+        ![
+          "new",
+          "select",
+          "rename",
+          "archive",
+          "unarchive",
+          "delete",
+          "fork",
+        ].includes(action)
       )
         throw new AIError("invalid_chat", "Unknown conversation action.");
       // An untouched chat is reused by New and not kept when left.
@@ -1393,6 +1624,49 @@ function createAI({
             "invalid_chat",
             "Conversation does not belong to this account and project.",
           );
+      }
+      if (action === "fork") {
+        if (!target.threadId || target.restoredHistory)
+          throw new AIError(
+            "fork_unavailable",
+            "Send a message in this chat before forking its native history.",
+          );
+        const projectScope = await scope(projectId, target.agentRootId);
+        if (target.agentCwd && target.agentCwd !== projectScope.cwd)
+          throw new AIError(
+            "agent_folder_changed",
+            "The original project folder must be attached to fork this chat.",
+          );
+        const entry = await projectAgent(value);
+        const threadId = await entry.agent.fork(
+          target.threadId,
+          projectScope.cwd,
+        );
+        const next = {
+          ...structuredClone(target),
+          chatId: crypto.randomUUID(),
+          threadId,
+          title: `${chatTitle(target).slice(0, 110)} (fork)`,
+          archived: false,
+          queue: [],
+          queuePaused: false,
+          createdAt: new Date().toISOString(),
+          messages: target.messages.map((message) => {
+            const { review, diff, approvals, turnId, ...rest } =
+              structuredClone(message);
+            return { ...rest, id: crypto.randomUUID(), inherited: true };
+          }),
+        };
+        delete next.queueError;
+        if (!untouched)
+          await protectedWrite(
+            chatFile(value, value.chatId),
+            JSON.stringify(value),
+          );
+        await saveConversation(next);
+        conversations.set(id, next);
+        publishConversation(next);
+        return publicConversation(next);
       }
       if (action === "delete") {
         if (target === value)
@@ -1625,7 +1899,8 @@ function createAI({
     refreshModels,
     skills: async (projectId, rootId, forceReload) =>
       publicSkills(await availableSkills(projectId, rootId, forceReload)),
-    answer: async ({ projectId, id, decision, answers }) => {
+    nativeSettings,
+    answer: async ({ projectId, id, decision, answers, content }) => {
       if (!["accept", "decline", "cancel", "answer"].includes(decision))
         throw new AIError("invalid_decision", "Choose an approval decision.");
       const value = await conversation(projectId);
@@ -1668,7 +1943,13 @@ function createAI({
           "agent_stopped",
           "This project agent is no longer running.",
         );
-      agent.answer(id, decision, answers);
+      if (
+        request.kind === "mcp" &&
+        decision === "accept" &&
+        request.mode !== "url"
+      )
+        validateElicitation(request.requestedSchema, content);
+      agent.answer(id, decision, answers, content);
     },
     conversation: async (projectId) =>
       publicConversation(await conversation(projectId)),
@@ -1706,6 +1987,7 @@ function createAI({
       for (const job of running.values()) job.controller.abort();
       return Promise.allSettled([
         ...[...running.values()].map((job) => job.done),
+        ...[...agentLoads.values()].map((pending) => pending.then(closeAgent)),
         ...[...agents.values()].map(closeAgent),
         ...(skillAgent ? [skillAgent.close()] : []),
       ]);

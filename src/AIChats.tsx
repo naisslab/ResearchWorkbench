@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { History, Plus, Archive, ArchiveRestore, Trash2 } from "lucide-react";
+import {
+  History,
+  Plus,
+  Archive,
+  ArchiveRestore,
+  Trash2,
+  GitFork,
+} from "lucide-react";
 import type { AIChatAction, AIChatSummary, AIConversation } from "./types";
 import { unwrap } from "./ai-result";
 import Modal from "./Modal";
@@ -44,7 +51,8 @@ export default function AIChats({
       );
       await refresh();
       setDeleting("");
-      if (action === "new" || action === "select") setOpen(false);
+      if (action === "new" || action === "select" || action === "fork")
+        setOpen(false);
     } catch (e) {
       report((e as Error).message);
     } finally {
@@ -79,7 +87,7 @@ export default function AIChats({
           <p className="muted">
             Keep writing, experiments, and reviews in separate conversations.
             Archived chats keep their change backups; deleting a chat removes
-            them.
+            them. Forked conversations preserve history and share project files.
           </p>
           <input
             aria-label="Search conversations"
@@ -128,6 +136,14 @@ export default function AIChats({
                     {c.active ? "Current · " : ""}
                     {c.updatedAt && new Date(c.updatedAt).toLocaleString()}
                   </small>
+                </button>
+                <button
+                  className="icon-button"
+                  title="Fork conversation"
+                  disabled={disabled || busy}
+                  onClick={() => void act("fork", c.id)}
+                >
+                  <GitFork size={15} />
                 </button>
                 <button
                   className="icon-button"
