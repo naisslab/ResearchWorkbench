@@ -23,6 +23,8 @@ npm run package
 
 ## 使用
 
+右上角 **Search, ask, or manage…**（`⌘K`）打开统一的工作区输入栏。输入时显示简洁的搜索预览；点击输入框旁的 **Search** 或 **Browse results**，在同一个面板展开完整搜索。可以按项目与笔记、文件、PDF、对话筛选，也可以限定当前项目。搜索中的 Enter 只打开结果；点击 **Ask** 才将输入发给 Agent。**Back to conversation** 返回原有对话并保留输入。在对话界面，没有选中搜索结果时 Enter 发送请求，可以获取跨项目答案或管理待办、里程碑、截止日期、项目资料、阶段和研究方向。`>` 保留命令搜索。每次发送会带上当前项目和本地时间；工作区对话独立于各项目的对话，关闭面板或重启后仍可继续。修改通过工作区的保存流程执行，并显示 **Undo**。回答中的来源链接可以打开对应项目文件或 PDF。可用 `npm run test:workspace-agent-ui` 验证统一输入、键盘选择、中文输入、保存、撤销、切换项目、后台完成和重启恢复。
+
 1. 在 Overview 点击 **New project**，选择研究方向和当前阶段。工作区预设 ML Systems、Security and Privacy 和 Cyber-Physical Systems，也支持自定义方向。
 2. 在项目详情中添加下一步任务、研究笔记和目标会议。在 **Workbench setup** 选择本地项目目录、LaTeX 入口文件和编译引擎。
 3. 点击 **Open workbench**。左侧选择 `.tex`、`.bib` 或笔记文件，中间编辑，右侧查看 PDF。`⌘S` 保存文件，**Compile**（`⌘↵`）保存当前编辑文件并执行 `latexmk`，编译中可点 **Stop** 停止。Build log 把 `file:line` 错误和未定义的引用列为 Problems，点击跳到对应行。`⇧⌘J` 或 **Show in PDF** 在 PDF 中定位光标所在行；双击 PDF，或启用 **Jump to source** 后单击，跳回源码对应行。`.tex` 文件显示字数和 Outline，`\cite{`、`\ref{`、`\begin{` 提供补全。文件在外部被修改时，未编辑的内容自动重新载入，有未保存编辑时提示 **Reload** 或 **Keep mine**；切换文件前会询问是否保存；切换项目或离开工作台会保留编辑状态。
@@ -59,7 +61,7 @@ Project board 按研究时间线排列阶段：Idea Exploration → Experiments 
 
 输入框底部使用 Codex 风格的权限和模型菜单。**Default permissions** 允许在项目目录内工作，额外访问由用户审批；**Approve for me** 保留项目目录限制，由 Codex 自动审查额外访问请求；**Read only** 用于检查文件，修改或额外访问需审批；**Full access** 允许访问本机文件和网络，无需逐次审批。对话附加过 PDF 摘录后，即使选择 Full access 也按 Default permissions 运行，消息旁会注明；论文中的文字可能含有针对 Agent 的指令。Full access 下 Agent 自行打开的文件和网页仍被信任，处理来源不明的材料时请选择其他权限。模型菜单提供 **Reasoning Effort** 和 **Standard / Fast**，选项来自随应用打包的 Codex `model/list` 能力目录。推理强度只使用滑块，支持拖动、点击滑轨和键盘调整；重置按钮恢复模型默认值。菜单、选中标记和滑块具有过渡动画，并遵守系统减少动态效果设置。Fast 的速度和用量说明采用目录返回的文本；不支持 Fast 的模型仅显示 Standard。输入框仅在开启 Fast 时显示实心闪电，关闭后隐藏，可从模型菜单重新开启。权限按账户和项目保存，推理强度与速度再按模型保存，重启后恢复。运行期间可以调整下一条指令的设置。
 
-Agent 运行期间，输入框默认选择 **Steer now**，按 Enter 即通过原生 `turn/steer` 修正正在执行的任务；继续使用当前任务的模型、权限和推理设置。若当前任务已结束，修正会保留在草稿中，避免误发到下一轮。Full access 任务中的图片或 PDF 摘录需要排入下一轮，以便应用 Default permissions。选择 **Queue next** 后，按 Enter 或点击 **Queue message** 将指令排入队列，最多等待 20 条。队列按顺序执行；每条指令保留提交时的模型、权限、推理强度、速度、附件快照和 Skills。输入框上方显示等待队列，可调整顺序、删除或 **Pause / Resume**。Pause 让当前任务继续完成；Stop 中断当前任务并暂停队列。任务失败、切换账户、关闭窗口或退出应用后，等待指令会保留并暂停，点击 Resume 继续；关闭窗口同时停止当前任务，重新打开窗口后 Agent 照常可用。开始执行前会重新检查模型、项目目录和 Skills；不可用时暂停并显示原因。队列按账户和项目保存，新建或切换对话前需要等待当前任务结束，并暂停正在运行的队列；旧对话保留自己的等待指令，重新打开后需手动 Resume。
+Agent 运行期间，发送按钮默认显示 **Steer**，按 Enter 即通过原生 `turn/steer` 修正正在执行的任务；继续使用当前任务的模型、权限和推理设置。若当前任务已结束，修正会保留在草稿中，避免误发到下一轮。Full access 任务中的图片或 PDF 摘录需要排入下一轮，以便应用 Default permissions。从发送按钮旁的菜单选择 **Queue next** 后，按 Enter 或点击 **Queue message** 将指令排入队列，最多等待 20 条。队列按顺序执行；每条指令保留提交时的模型、权限、推理强度、速度、附件快照和 Skills。输入框上方将等待队列收成一行，展开后可调整顺序、删除或 **Pause / Resume**。Pause 让当前任务继续完成；Stop 中断当前任务并暂停队列。任务失败、切换账户、关闭窗口或退出应用后，等待指令会保留并暂停，点击 Resume 继续；关闭窗口同时停止当前任务，重新打开窗口后 Agent 照常可用。开始执行前会重新检查模型、项目目录和 Skills；不可用时暂停并显示原因。队列按账户和项目保存，新建或切换对话前需要等待当前任务结束，并暂停正在运行的队列；旧对话保留自己的等待指令，重新打开后需手动 Resume。
 
 **Tools** 中的 **Code review** 调用 Codex 原生 reviewer，可检查未提交修改、相对指定分支的改动或一个 commit；结果写入当前对话，使用 Read only 权限。**Web search** 默认使用 Cached，可切换 Live 或 Off；可用性取决于模型、账户和工作区政策。
 
@@ -144,7 +146,7 @@ npm run test:writing-ui
 
 `test:writing-ui` 在合成稿件上验证跨文件 Outline 与字数、`\ref` 和 `\cite` 补全、悬停卡片、无需编译的参考文献检查、Add reference、真实编译后的投稿检查、latexdiff、拼写检查以及 ⌘K 和菜单命令。
 
-`test:synctex-ui` 使用真实 LaTeX 与 SyncTeX 验证双击和单击源码定位、子文件、缩放、旋转、布局切换、未保存修改保护，以及缺少源码映射或预览过期时的提示。
+`test:synctex-ui` 使用真实 LaTeX 与 SyncTeX 验证双击和单击源码定位、子文件、缩放、旋转、布局切换、未保存修改保护，以及缺少源码映射或预览过期时的提示。缺少映射的旧 PDF 会在 Compile 时强制重建，测试也覆盖修复后的应用重启、切换项目和刷新窗口。
 
 AI 测试验证签名身份、PKCE 回调、加密凭据、刷新令牌恢复、账户隔离、Agent JSON-RPC、真实样例文件修改、脚本执行和审批。AI 界面测试使用隔离的模拟账户，不调用真实模型或消耗订阅；真实登录需在系统浏览器完成。
 

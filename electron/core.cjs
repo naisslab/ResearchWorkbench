@@ -686,9 +686,17 @@ async function compile(
       }
     }
     started = true;
+    // latexmk can call the PDF up to date even when its SyncTeX map is absent.
+    // Re-run TeX in that case, including PDFs built before SyncTeX was enabled.
+    const repairSourceMap = hasBackup && !sourceMaps.some((map) => map.saved);
     const result = await runLatexmk(
       "./" + path.basename(main),
-      [...options.args, "-synctex=1", `-outdir=${output}`],
+      [
+        ...options.args,
+        ...(repairSourceMap ? ["-g"] : []),
+        "-synctex=1",
+        `-outdir=${output}`,
+      ],
       { cwd: path.dirname(main), env, signal, onOutput, log: options.summary },
     );
     const ok = result.ok && (await exists(pdf));

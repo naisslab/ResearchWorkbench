@@ -973,3 +973,120 @@
 .spelling-toggle:hover {
   color: var(--text);
 }
+
+.recent-files-trigger {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+  height: 28px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.recent-files-trigger:hover,
+.recent-files-trigger[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--hover);
+}
+.recent-files-trigger > svg:last-child {
+  transition: transform 150ms ease;
+}
+.recent-files-trigger[aria-expanded="true"] > svg:last-child {
+  transform: rotate(180deg);
+}
+.recent-files-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.recent-files-menu {
+  position: fixed;
+  inset: auto;
+  width: 340px;
+  max-width: calc(100vw - 16px);
+  margin: 0;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-popover);
+  overflow: hidden;
+}
+.recent-files-menu:popover-open {
+  display: flex;
+  flex-direction: column;
+}
+.recent-files-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding: 7px 10px 9px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.recent-files-list {
+  overflow: auto;
+  min-height: 0;
+}
+.recent-files-list > button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  text-align: left;
+}
+.recent-files-list > button:hover,
+.recent-files-list > button:focus-visible {
+  background: var(--hover);
+  color: var(--text);
+  outline: none;
+}
+.recent-files-list > button > svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.recent-files-list > button > span {
+  flex: 1;
+  min-width: 0;
+}
+.recent-files-list strong,
+.recent-files-list small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-files-list strong {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+.recent-files-list small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.recent-files-list .recent-file-current {
+  color: var(--accent);
+}
+@media (max-width: 1150px) {
+  .recent-files-trigger {
+    gap: 4px;
+    padding: 0 5px;
+    font-size: 10px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .recent-files-trigger > svg:last-child {
+    transition: none;
+  }
+}

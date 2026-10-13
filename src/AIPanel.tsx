@@ -1,3 +1,5 @@
+import AIMessageDelivery from "./AIMessageDelivery";
+import { useProjectSearch } from "./components/ProjectSearch";
 import Dictation from "./Dictation";
 import { useDraft } from "./useDraft";
 import AIChats from "./AIChats";
@@ -15,6 +17,7 @@ import {
 } from "react";
 import {
   Sparkles,
+  Search,
   ArrowUp,
   Square,
   RefreshCw,
@@ -47,6 +50,7 @@ import type {
   AISkill,
   AISkillCatalog,
   Project,
+  SearchHit,
 } from "./types";
 import AIMarkdown, { CopyAction } from "./AIMarkdown";
 import AIActivityLog from "./AIActivityLog";
@@ -459,10 +463,24 @@ export default memo(function AIPanel({
   visible,
   request,
   searchTarget,
+  workspaceContext,
+  workspaceSearch,
 }: {
+  workspaceContext?: { projectId?: string; projectName?: string };
+  workspaceSearch?: {
+    projects: Project[];
+    open(id: string): void;
+    openResult(hit: SearchHit): void;
+    close(): void;
+  };
   searchTarget?: import("./types").SearchHit;
   /** A request to place in the composer for the user to send. */
-  request?: { context?: AIContext; draft: string; nonce: number };
+  request?: {
+    context?: AIContext;
+    draft: string;
+    nonce: number;
+    append?: boolean;
+  };
   project: Project;
   file: string;
   rootId: string;
@@ -566,7 +584,7 @@ export default memo(function AIPanel({
       }),
     );
   }
-  const [draft, saveDraft] = useDraft(
+  const [savedDraft, saveDraft] = useDraft(
     draftKey,
     conversation.chatId === "legacy"
       ? `research-workbench.ai-draft.${state?.activeProfileId}.${project.id}`
@@ -578,6 +596,32 @@ export default memo(function AIPanel({
       setReviewMessage(undefined);
     },
   );
+  const [commandDraft, setCommandDraft] = useState<string | null>(null);
+  const draft = commandDraft ?? savedDraft;
+  const [searchFocused, setSearchFocused] = useState(false);
+  function focusSearch() {
+    closeSkillCommands();
+    setSearchFocused(true);
+    input.current?.focus();
+  }
+  function leaveSearch() {
+    setSearchFocused(false);
+    input.current?.focus();
+  }
+  const search = useProjectSearch({
+    query: draft,
+    expanded: searchFocused,
+    currentProjectId: workspaceContext?.projectId,
+    expand: focusSearch,
+    collapse: leaveSearch,
+    projects: workspaceSearch?.projects || [],
+    enabled: !!workspaceSearch && visible && !skillCommand,
+    open: workspaceSearch?.open || (() => {}),
+    openResult: workspaceSearch?.openResult || (() => {}),
+    close: workspaceSearch?.close || (() => {}),
+  });
+  const [queueExpanded, setQueueExpanded] = useState(false);
+  const queueId = useId();
   const running = conversation.messages.some(
     (message) => message.status === "running",
   );
@@ -834,10 +878,20 @@ export default memo(function AIPanel({
   }, [project.id, state?.activeProfileId]);
   useEffect(() => {
     if (!request) return;
+    if (workspaceSearch && request.draft.startsWith(">")) {
+      setCommandDraft(request.draft);
+      input.current?.focus();
+      return;
+    }
     if (request.context) setContext(request.context);
     if (!draft.trim()) updateDraft(request.draft);
+    else if (request.append)
+      updateDraft(`${draft.trimEnd()}\n\n${request.draft}`);
     input.current?.focus();
   }, [request?.nonce]);
+  useEffect(() => {
+    if (workspaceContext && visible && state?.sharing) input.current?.focus();
+  }, [visible, state?.sharing]);
   useEffect(() => {
     if (
       searchTarget?.kind !== "chat" ||
@@ -857,7 +911,8 @@ export default memo(function AIPanel({
     }
   }, [searchTarget?.id, conversation.chatId, conversation.messages.length]);
   function updateDraft(value: string) {
-    saveDraft(value);
+    if (commandDraft !== null) setCommandDraft(value);
+    else saveDraft(value);
     setSkillCommand(null);
     dismissedSkillCommand.current = "";
   }
@@ -1046,7 +1101,7 @@ export default memo(function AIPanel({
     });
   }
   async function send() {
-    if (dictating) return;
+    if (dictating || (workspaceSearch && draft.trim().startsWith(">"))) return;
     if (
       (!draft.trim() && !images.length) ||
       readingImages ||
@@ -1060,6 +1115,7 @@ export default memo(function AIPanel({
     )
       return;
     submitting.current = true;
+    setSearchFocused(false);
     const message = draft;
     const sentImages = images;
     stickToBottom.current = true;
@@ -1069,6 +1125,7 @@ export default memo(function AIPanel({
         const next = await unwrap(
           window.research!.aiSend({
             projectId: project.id,
+            workspaceContextProjectId: workspaceContext?.projectId,
             message,
             delivery: steering ? "steer" : "queue",
             expectedTurnId: steering ? activeTurn?.turnId : undefined,
@@ -1140,6 +1197,7 @@ export default memo(function AIPanel({
   function inspectSkillCommand(node: HTMLTextAreaElement) {
     if (
       composing.current ||
+      searchFocused ||
       actionDisabled ||
       !root ||
       skillsOpen ||
@@ -1194,11 +1252,14 @@ export default memo(function AIPanel({
     (e) => e?.status === 429 || e?.code.includes("usage_limit"),
   );
   return (
-    <section className="ai-panel" aria-label="Project AI agent">
+    <section
+      className={`ai-panel ${workspaceSearch ? "ai-panel-unified" : ""} ${searchFocused ? "ai-panel-searching" : ""}`}
+      aria-label={workspaceContext ? "Workspace AI agent" : "Project AI agent"}
+    >
       <div className="ai-toolbar">
         <div className="ai-agent-label">
           <Sparkles size={13} />
-          <strong>Agent</strong>
+          <strong>{workspaceContext ? "Workspace agent" : "Agent"}</strong>
         </div>
         <button
           className="icon-button"
@@ -1526,13 +1587,31 @@ export default memo(function AIPanel({
               <div className="ai-empty ai-ready">
                 <Sparkles size={18} />
                 <div>
-                  <h3>What should we work on?</h3>
+                  <h3>
+                    {workspaceContext
+                      ? "What would you like to work on?"
+                      : "What should we work on?"}
+                  </h3>
                   <p>
-                    The agent can edit files and run commands in your attached
-                    project folders.
+                    {workspaceContext
+                      ? "Search across your projects, or ask for an answer and make a change. Start typing above."
+                      : "The agent can edit files and run commands in your attached project folders."}
                   </p>
                   <div className="ai-starters">
-                    {Object.entries(starterRequests).map(([label, request]) => (
+                    {Object.entries(
+                      workspaceContext
+                        ? {
+                            "What is due next?":
+                              "What deadlines and open to-dos should I focus on next? Check my workspace and cite the relevant projects.",
+                            "Add a to-do": workspaceContext.projectName
+                              ? `Add a to-do to ${workspaceContext.projectName}: `
+                              : "Add a to-do to ",
+                            "Add a deadline": workspaceContext.projectName
+                              ? `Add a deadline for ${workspaceContext.projectName}: `
+                              : "Add a deadline: ",
+                          }
+                        : starterRequests,
+                    ).map(([label, request]) => (
                       <button key={label} onClick={() => updateDraft(request)}>
                         {label}
                       </button>
@@ -1584,13 +1663,24 @@ export default memo(function AIPanel({
           {!!queued.length && (
             <section className="ai-request-queue" aria-label="Queued requests">
               <div className="ai-queue-heading">
-                <ListPlus size={13} />
-                <strong>{queued.length} queued</strong>
-                <span role="status">
-                  {conversation.queuePaused
-                    ? "Paused"
-                    : "Runs after the current request"}
-                </span>
+                <button
+                  type="button"
+                  className="ai-queue-toggle"
+                  aria-expanded={queueExpanded}
+                  aria-controls={queueId}
+                  onClick={() => setQueueExpanded((value) => !value)}
+                >
+                  <ChevronRight
+                    size={13}
+                    className={queueExpanded ? "expanded" : ""}
+                  />
+                  <strong>{queued.length} queued</strong>
+                  <span className="ai-queue-preview">
+                    {conversation.queuePaused
+                      ? "Paused"
+                      : `Next: ${queued[0]?.text || "Image request"}`}
+                  </span>
+                </button>
                 <button
                   type="button"
                   disabled={actionDisabled}
@@ -1616,7 +1706,7 @@ export default memo(function AIPanel({
                   {conversation.queueError.message}
                 </p>
               )}
-              <ol>
+              <ol id={queueId} hidden={!queueExpanded}>
                 {queued.map((item, index) => (
                   <li key={item.id}>
                     <span className="ai-queue-number">{index + 1}</span>
@@ -1697,43 +1787,55 @@ export default memo(function AIPanel({
               }
               onClick={() => imagePicker.current?.click()}
             >
-              <ImagePlus size={11} /> Images
+              <ImagePlus size={11} />
+              <span>Images</span>
             </button>
-            <Folder size={11} />
-            <select
-              aria-label="Agent working folder"
-              value={agentRoot}
-              disabled={
-                busy || !!conversation.messages.length || !!queued.length
-              }
-              title={root?.folder}
-              onChange={(event) => setAgentRoot(event.target.value)}
-            >
-              {!roots.length && (
-                <option value="primary">Attach a project folder</option>
-              )}
-              {roots.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.label}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              title="Attach a snapshot of the current file"
-              disabled={actionDisabled || !file || !hasText}
-              onClick={() => attach("file")}
-            >
-              <FileText size={11} /> Current file
-            </button>
-            <button
-              type="button"
-              title="Attach selected text from the editor"
-              disabled={actionDisabled || !file || !hasSelection}
-              onClick={() => attach("selection")}
-            >
-              <TextSelect size={11} /> Selection
-            </button>
+            {workspaceContext ? (
+              <span className="workspace-context-label">
+                All projects
+                {workspaceContext.projectName
+                  ? ` · Current: ${workspaceContext.projectName}`
+                  : ""}
+              </span>
+            ) : (
+              <>
+                <Folder size={11} />
+                <select
+                  aria-label="Agent working folder"
+                  value={agentRoot}
+                  disabled={
+                    busy || !!conversation.messages.length || !!queued.length
+                  }
+                  title={root?.folder}
+                  onChange={(event) => setAgentRoot(event.target.value)}
+                >
+                  {!roots.length && (
+                    <option value="primary">Attach a project folder</option>
+                  )}
+                  {roots.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  title="Attach a snapshot of the current file"
+                  disabled={actionDisabled || !file || !hasText}
+                  onClick={() => attach("file")}
+                >
+                  <FileText size={11} /> Current file
+                </button>
+                <button
+                  type="button"
+                  title="Attach selected text from the editor"
+                  disabled={actionDisabled || !file || !hasSelection}
+                  onClick={() => attach("selection")}
+                >
+                  <TextSelect size={11} /> Selection
+                </button>
+              </>
+            )}
             {context && (
               <span className="ai-context-chip" title="Attached text snapshot">
                 <FileText size={10} />
@@ -1868,24 +1970,48 @@ export default memo(function AIPanel({
             )}
             <textarea
               ref={input}
-              aria-label="Message the AI agent"
+              aria-label={
+                workspaceSearch
+                  ? "Search or ask your workspace"
+                  : "Message the AI agent"
+              }
+              data-autofocus={workspaceSearch ? true : undefined}
               aria-autocomplete="list"
               aria-haspopup="listbox"
-              aria-expanded={!!skillCommand}
-              aria-controls={skillCommand ? suggestionsId : undefined}
+              aria-expanded={
+                !!skillCommand ||
+                (!!workspaceSearch && (search.hasQuery || searchFocused))
+              }
+              aria-controls={
+                skillCommand
+                  ? suggestionsId
+                  : workspaceSearch && (search.hasQuery || searchFocused)
+                    ? search.listId
+                    : undefined
+              }
               aria-activedescendant={
                 skillCommand && activeSkill
                   ? `${suggestionsId}-${activeSkill.id}`
-                  : undefined
+                  : workspaceSearch
+                    ? search.activeId
+                    : undefined
               }
               value={draft}
               readOnly={operation === "send" || dictating}
               placeholder={
-                busy
-                  ? "Send another request to add it to the queue…"
-                  : state?.sharing
-                    ? "Ask the agent, paste a screenshot, or drop a figure…"
-                    : "Connect ChatGPT, then tell the agent what to work on…"
+                searchFocused
+                  ? "Search projects, files, PDFs, notes, conversations…"
+                  : workspaceSearch
+                    ? "Search anything, ask a question, or make a change…"
+                    : busy
+                      ? steering
+                        ? "Add direction to the current response…"
+                        : "What should the agent do next?"
+                      : state?.sharing
+                        ? workspaceContext
+                          ? "Ask a question or tell me what to change…"
+                          : "Ask the agent, paste a screenshot, or drop a figure…"
+                        : "Connect ChatGPT, then tell the agent what to work on…"
               }
               rows={1}
               onChange={(event) => {
@@ -1959,6 +2085,12 @@ export default memo(function AIPanel({
                   }
                   if (event.key === "Tab") closeSkillCommands();
                 }
+                if (
+                  workspaceSearch &&
+                  !skillCommand &&
+                  search.handleKeyDown(event)
+                )
+                  return;
                 if (event.key === "$" && !draft && !actionDisabled && root) {
                   event.preventDefault();
                   setSkillsOpen(true);
@@ -1966,7 +2098,7 @@ export default memo(function AIPanel({
                 }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
-                  void send();
+                  if (!searchFocused) void send();
                 }
               }}
             />
@@ -2000,20 +2132,6 @@ export default memo(function AIPanel({
               }}
             />
             <div className="ai-send-actions">
-              {canSteer && (
-                <select
-                  className="ai-delivery"
-                  aria-label="Message delivery"
-                  value={delivery}
-                  onChange={(event) =>
-                    setDelivery(event.target.value as typeof delivery)
-                  }
-                  disabled={actionDisabled}
-                >
-                  <option value="steer">Steer now</option>
-                  <option value="queue">Queue next</option>
-                </select>
-              )}
               {busy && (
                 <button
                   className="ai-send ai-stop"
@@ -2055,54 +2173,93 @@ export default memo(function AIPanel({
                   });
                 }}
               />
-              <button
-                className="ai-send"
-                type="submit"
-                title={
-                  steering
-                    ? "Steer active turn (Enter)"
-                    : busy || queued.length
-                      ? "Queue message (Enter)"
-                      : "Send message (Enter)"
-                }
-                aria-label={
-                  steering
-                    ? "Steer active turn"
-                    : busy || queued.length
-                      ? "Queue message"
-                      : "Run AI agent"
-                }
-                disabled={
-                  dictating ||
-                  (!draft.trim() && !images.length) ||
-                  readingImages ||
-                  !!skillCommand ||
-                  !model ||
-                  !state?.sharing ||
-                  !root ||
-                  actionDisabled ||
-                  !state.runtime.available
-                }
+              {workspaceSearch && (
+                <button
+                  type="button"
+                  className="workspace-search-action"
+                  aria-label="Search workspace"
+                  aria-pressed={searchFocused}
+                  onClick={focusSearch}
+                >
+                  <Search size={14} /> Search
+                </button>
+              )}
+              <div
+                className={`ai-submit-group ${busy || queued.length ? "has-delivery" : ""} ${workspaceSearch ? "workspace-ask-action" : ""}`}
               >
-                {!steering && (busy || queued.length) ? (
-                  <ListPlus size={16} />
-                ) : (
-                  <ArrowUp size={20} />
+                <button
+                  className="ai-send"
+                  type="submit"
+                  title={
+                    searchFocused
+                      ? "Ask the agent about this query"
+                      : steering
+                        ? "Steer active turn (Enter)"
+                        : busy || queued.length
+                          ? "Queue message (Enter)"
+                          : "Send message (Enter)"
+                  }
+                  aria-label={
+                    steering
+                      ? "Steer active turn"
+                      : busy || queued.length
+                        ? "Queue message"
+                        : "Run AI agent"
+                  }
+                  disabled={
+                    dictating ||
+                    (!!workspaceSearch && draft.trim().startsWith(">")) ||
+                    (!draft.trim() && !images.length) ||
+                    readingImages ||
+                    !!skillCommand ||
+                    !model ||
+                    !state?.sharing ||
+                    !root ||
+                    actionDisabled ||
+                    !state.runtime.available
+                  }
+                >
+                  {!steering && (busy || queued.length) ? (
+                    <ListPlus size={16} />
+                  ) : (
+                    <ArrowUp size={busy || queued.length ? 16 : 20} />
+                  )}
+                  {busy || !!queued.length ? (
+                    <span>{steering ? "Steer" : "Queue"}</span>
+                  ) : workspaceSearch ? (
+                    <span>Ask</span>
+                  ) : null}
+                </button>
+                {canSteer && (
+                  <AIMessageDelivery
+                    value={delivery}
+                    onChange={setDelivery}
+                    disabled={actionDisabled}
+                  />
                 )}
-              </button>
+              </div>
             </div>
           </div>
           <div className="ai-composer-hint">
             <span>
-              {steering
-                ? "Enter to steer · Uses the active turn’s settings"
-                : busy || queued.length
-                  ? "Enter to queue · / for skills · Shift+Enter for a new line"
-                  : "Enter to send · / for skills · Shift+Enter for a new line"}
+              {searchFocused
+                ? "Enter to open a result · Ask for an answer from the agent"
+                : workspaceSearch
+                  ? search.activeId
+                    ? "Enter to open · Esc to return to your request"
+                    : draft.trim().startsWith(">")
+                      ? "Enter to run command"
+                      : "Enter to ask · ↑ ↓ to choose a result · Shift+Enter for a new line"
+                  : steering
+                    ? "Adds to the current response · Shift+Enter for a new line"
+                    : busy || queued.length
+                      ? "Runs next · Shift+Enter for a new line"
+                      : "Enter to send · / for skills · Shift+Enter for a new line"}
             </span>
           </div>
         </div>
       </form>
+      {workspaceSearch && search.content}
       {reviewMessage && (
         <AIChangeReview
           key={reviewMessage}

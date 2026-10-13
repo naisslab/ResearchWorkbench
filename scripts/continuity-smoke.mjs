@@ -39,11 +39,12 @@ await smoke("continuity", async (root) => {
   await page.locator(".sidebar").waitFor();
   await page.keyboard.press("Meta+k");
   await page
-    .getByRole("combobox", { name: "Search workspace" })
+    .getByLabel("Search or ask your workspace", { exact: true })
     .fill("solar sail");
   const pdfHit = page
     .getByRole("option")
-    .filter({ hasText: "paper.pdf · p. 3" });
+    .filter({ hasText: "paper.pdf" })
+    .filter({ hasText: "Page 3" });
   await pdfHit.waitFor({ timeout: 60000 });
   await pdfHit.click();
   await page

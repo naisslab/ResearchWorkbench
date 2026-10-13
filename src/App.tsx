@@ -23,7 +23,7 @@ import {
   LoaderCircle,
   Moon,
   Plus,
-  Search,
+  Sparkles,
   Sun,
   TerminalSquare,
   X,
@@ -55,7 +55,12 @@ import { ResearchMark } from "./ResearchIcons";
 import { sortProjects } from "./project-order";
 import { applyOrder, moveId } from "./reorder";
 import Sidebar from "./components/Sidebar";
-import ProjectSearch from "./components/ProjectSearch";
+import WorkspaceAgentBar from "./components/WorkspaceAgentBar";
+import {
+  applyWorkspaceMutation,
+  WORKSPACE_AGENT_ID,
+  type WorkspaceMutation,
+} from "./workspace-agent";
 import SaveStatus, {
   setManuscriptStatus,
   setSaveStatus,
@@ -145,6 +150,7 @@ export default function App() {
   });
   const revision = useRef(0);
   const pointer = useRef<{ start: number; held: number } | null>(null);
+  const workspaceNavigate = useRef<Navigate>(() => {});
 
   const show = useCallback(
     (next: Omit<Toast, "id">) => setToast({ ...next, id: ++toastId }),
@@ -232,6 +238,37 @@ export default function App() {
   // with an Undo, and it is told the outcome only once they are saved.
   const runWindowTool = useCallback(
     async ({ tool, projectId, input }: AgentToolRequest) => {
+      if (tool === "manage_workspace" || tool === "open_workspace_view") {
+        if (projectId !== WORKSPACE_AGENT_ID)
+          throw new Error("Use the workspace agent for this action.");
+        if (tool === "open_workspace_view") {
+          const target = input as { view: View; projectId: string };
+          if (
+            target.projectId &&
+            !stateRef.current?.projects.some((p) => p.id === target.projectId)
+          )
+            throw new Error("The project no longer exists.");
+          workspaceNavigate.current(target.view, {
+            projectId: target.projectId,
+            then: () => setSearchOpen(false),
+          });
+          return { requested: true };
+        }
+        let result = {};
+        const done = await commitWithUndo(
+          "Agent updated the workspace",
+          (state) => {
+            const next = applyWorkspaceMutation(
+              state,
+              input as WorkspaceMutation,
+            );
+            result = next.result;
+            return next.state;
+          },
+        );
+        if (!done) throw new Error("The workspace change could not be saved.");
+        return { saved: true, ...result };
+      }
       if (tool === "check_submission") {
         const project = stateRef.current?.projects.find(
           (p) => p.id === projectId,
@@ -331,14 +368,30 @@ export default function App() {
     (id: string) => navigate("details", { projectId: id }),
     [navigate],
   );
+  workspaceNavigate.current = navigate;
+  useEffect(() => {
+    if (
+      state &&
+      selected &&
+      (view === "details" || view === "workbench") &&
+      !state.projects.some((project) => project.id === selected)
+    )
+      navigate("overview", { projectId: "" });
+    if (
+      state &&
+      areaFilter !== "all" &&
+      !state.areas.some((area) => area.id === areaFilter)
+    )
+      setAreaFilter("all");
+  }, [state, selected, view, areaFilter, navigate]);
   const newProject = useCallback(() => setNewProjectArea(""), []);
   // Projects whose agent is working, or finished while the user was
   // elsewhere; the sidebar marks them until the project is opened.
   const [agentRuns, setAgentRuns] = useState<
     Record<string, "running" | "done" | "failed">
   >({});
-  const looking = useRef({ view, selected, navigate });
-  looking.current = { view, selected, navigate };
+  const looking = useRef({ view, selected, navigate, searchOpen });
+  looking.current = { view, selected, navigate, searchOpen };
   useEffect(() => {
     if (!window.research) return;
     void window.research.aiState().then((result) => {
@@ -354,10 +407,12 @@ export default function App() {
         }));
     });
     return window.research.onAIActivity((event) => {
-      const { view, selected, navigate } = looking.current;
+      const { view, selected, navigate, searchOpen } = looking.current;
+      const workspace = event.projectId === WORKSPACE_AGENT_ID;
       const seen =
-        view === "workbench" &&
-        selected === event.projectId &&
+        (workspace
+          ? searchOpen
+          : view === "workbench" && selected === event.projectId) &&
         document.hasFocus();
       const failed = ["failed", "interrupted"].includes(event.status || "");
       const outcome =
@@ -372,9 +427,10 @@ export default function App() {
         outcome ? { ...rest, [event.projectId]: outcome } : rest,
       );
       if (outcome !== "done" && outcome !== "failed") return;
-      const name =
-        stateRef.current?.projects.find((p) => p.id === event.projectId)
-          ?.name || "a project";
+      const name = workspace
+        ? "the workspace"
+        : stateRef.current?.projects.find((p) => p.id === event.projectId)
+            ?.name || "a project";
       show({
         tone: failed ? "danger" : "success",
         message: failed
@@ -382,7 +438,10 @@ export default function App() {
           : `The agent finished in ${name}`,
         action: {
           label: "Open",
-          run: () => navigate("workbench", { projectId: event.projectId }),
+          run: () =>
+            workspace
+              ? setSearchOpen(true)
+              : navigate("workbench", { projectId: event.projectId }),
         },
       });
     });
@@ -395,6 +454,14 @@ export default function App() {
     )
       setAgentRuns(({ [selected]: _, ...rest }) => rest);
   }, [view, selected, agentRuns]);
+  useEffect(() => {
+    if (
+      searchOpen &&
+      agentRuns[WORKSPACE_AGENT_ID] &&
+      agentRuns[WORKSPACE_AGENT_ID] !== "running"
+    )
+      setAgentRuns(({ [WORKSPACE_AGENT_ID]: _, ...rest }) => rest);
+  }, [searchOpen, agentRuns]);
 
   const rail = layout.sidebarCollapsed;
   useEffect(() => {
@@ -707,9 +774,19 @@ export default function App() {
               <span className="crumb">{title}</span>
             )}
           </nav>
-          <button className="global-search" onClick={() => setSearchOpen(true)}>
-            <Search size={14} />
-            <span>Search projects, files, PDFs…</span>
+          <button
+            className="global-search"
+            aria-label="Open workspace agent"
+            onClick={() => setSearchOpen(true)}
+          >
+            <Sparkles size={14} />
+            <span>Search, ask, or manage…</span>
+            {agentRuns[WORKSPACE_AGENT_ID] && (
+              <span
+                className="agent-bar-badge"
+                aria-label={`Workspace agent ${agentRuns[WORKSPACE_AGENT_ID]}`}
+              />
+            )}
             <kbd>⌘ K</kbd>
           </button>
           <button
@@ -932,9 +1009,12 @@ export default function App() {
         />
       )}
       {searchOpen && (
-        <ProjectSearch
+        <WorkspaceAgentBar
           key={searchStart}
           projects={ordered}
+          currentProject={
+            view === "workbench" || view === "details" ? project : undefined
+          }
           initialQuery={searchStart}
           openResult={(hit) => {
             setSearchOpen(false);

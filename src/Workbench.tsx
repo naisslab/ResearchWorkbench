@@ -73,6 +73,7 @@ import {
 import type { Project, ProjectFileRoot } from "./types";
 import GitPanel from "./GitPanel";
 import PdfReader from "./PdfReader";
+import RecentFilesMenu from "./RecentFilesMenu";
 import ProjectFiles, { type FileAction } from "./ProjectFiles";
 import TerminalPanel from "./TerminalPanel";
 import AIPanel from "./AIPanel";
@@ -1314,23 +1315,13 @@ function Workbench({
     >
       <div className="workbench-header">
         {!!session.recent?.length && (
-          <select
-            aria-label="Recent files"
-            value=""
-            onChange={(event) => {
-              const item = session.recent?.[Number(event.target.value)];
-              if (item) openFile(item.file, item.rootId);
-            }}
-          >
-            <option value="" disabled>
-              Recent files
-            </option>
-            {session.recent.map((item, index) => (
-              <option key={`${item.rootId}:${item.file}`} value={index}>
-                {item.file}
-              </option>
-            ))}
-          </select>
+          <RecentFilesMenu
+            items={session.recent!}
+            roots={roots}
+            activeFile={active}
+            activeRoot={activeRoot}
+            openFile={openFile}
+          />
         )}
         <div
           className="workbench-mode-switch"

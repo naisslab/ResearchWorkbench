@@ -1545,7 +1545,6 @@ await smoke("ai", async (root) => {
     name: "Queued requests",
     exact: true,
   });
-  await queue.getByText("First queued request", { exact: true }).waitFor();
   await page.waitForFunction(() => {
     const node = document.querySelector(".ai-composer textarea");
     return (
@@ -1556,6 +1555,8 @@ await smoke("ai", async (root) => {
     );
   });
   assert.equal(await composer.inputValue(), "");
+  await queue.getByRole("button", { name: /1 queued/ }).click();
+  await queue.getByText("First queued request", { exact: true }).waitFor();
   assert.deepEqual(
     await desktop.evaluate(
       () => globalThis.__workbenchAITest.lastQueuedRequest.skillIds,
@@ -1623,6 +1624,10 @@ await smoke("ai", async (root) => {
   await page
     .locator(".area-projects")
     .getByRole("button", { name: "Agent Integration", exact: true })
+    .click();
+  await queue
+    .getByRole("button", { name: /queued/ })
+    .filter({ has: page.locator(".ai-queue-preview") })
     .click();
   await queue.getByText("Second queued request", { exact: true }).waitFor();
   await queue

@@ -237,6 +237,58 @@ test("LaTeX compilation creates a real PDF, maps lines with SyncTeX and reports 
   );
 });
 
+test("recompiling an unchanged PDF repairs a missing SyncTeX map", async (t) => {
+  for (const legacy of [true, false]) {
+    await t.test(
+      legacy ? "built without SyncTeX" : "map removed",
+      async (t) => {
+        const root = await temporary(t);
+        const state = await manuscriptWorkspace(root);
+        const p = state.projects[0];
+        const map = path.join(p.folder, ".research-build", "main.synctex.gz");
+        if (legacy) {
+          const execFile = require("node:util").promisify(
+            require("node:child_process").execFile,
+          );
+          await execFile(
+            "latexmk",
+            ["-pdf", "-synctex=0", "-outdir=.research-build", "./main.tex"],
+            { cwd: p.folder, env },
+          );
+        } else {
+          const initial = await core.compile(p, undefined, env);
+          assert.equal(initial.ok, true, initial.log);
+          await fs.rm(map);
+        }
+        const result = await core.compile(p, undefined, env);
+        assert.equal(result.ok, true, result.log);
+        assert.ok(
+          (await fs.stat(map)).size > 0,
+          "Recompile must recreate the map.",
+        );
+        const target = await core.synctexForward(
+          p,
+          "main.tex",
+          4,
+          "primary",
+          env,
+        );
+        assert.ok(
+          target,
+          "The repaired map must locate the source in the PDF.",
+        );
+        assert.deepEqual(
+          await core.synctexInverse(p, target.page, target.x, target.y, env),
+          { file: "main.tex", rootId: "primary", line: 4 },
+        );
+        const unchanged = await core.compile(p, undefined, env);
+        assert.equal(unchanged.ok, true, unchanged.log);
+        assert.match(unchanged.log, /Nothing to do/);
+      },
+    );
+  }
+});
+
 test("the entry file's TeX program comment selects XeLaTeX and keeps SyncTeX", async (t) => {
   const folder = await temporary(t);
   await fs.writeFile(

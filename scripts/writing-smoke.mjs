@@ -272,7 +272,9 @@ await smoke("writing", async (root) => {
     .waitFor();
   // ⌘K runs commands; ">" lists only commands.
   await page.keyboard.press("Meta+k");
-  const palette = page.getByRole("combobox", { name: "Search workspace" });
+  const palette = page.getByLabel("Search or ask your workspace", {
+    exact: true,
+  });
   await palette.fill(">layout both");
   await page.getByRole("option", { name: /Both/ }).waitFor();
   await palette.press("Enter");

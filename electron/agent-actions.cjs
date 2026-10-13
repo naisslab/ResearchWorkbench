@@ -121,10 +121,28 @@ async function sourceOf(p, item, box, environment) {
 function searchResults(packet) {
   return {
     results: packet.results.slice(0, 30).map((hit) => ({
+      projectId: hit.projectId,
+      projectName: hit.projectName,
+      reference: `workspace/${encodeURIComponent(hit.projectId)}?${new URLSearchParams(
+        Object.entries({
+          kind: hit.kind,
+          file: hit.file,
+          rootId: hit.rootId,
+          line: hit.line,
+          page: hit.page,
+          documentKey: hit.documentKey,
+          version: hit.version,
+          chatId: hit.chatId,
+          messageId: hit.messageId,
+        })
+          .filter(([, value]) => value !== undefined)
+          .map(([key, value]) => [key, String(value)]),
+      )}`,
       kind: hit.kind,
       title: clip(hit.title, 200),
       snippet: clip(hit.snippet, 400),
       ...(hit.file && { file: hit.file }),
+      ...(hit.rootId && { rootId: hit.rootId }),
       ...(hit.line && { line: hit.line }),
       ...(hit.page && { page: hit.page }),
     })),

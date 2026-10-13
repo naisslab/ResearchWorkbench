@@ -51,6 +51,11 @@ app.on("before-quit", () => dictation.cancel());
 const { createWindowTools } = require("./window-tools.cjs");
 const windowTools = createWindowTools((request) => send("agent:tool", request));
 const { TOOLS } = require("./agent-tools.cjs");
+const {
+  WORKSPACE_AGENT_ID,
+  workspaceProject,
+  WORKSPACE_TOOLS,
+} = require("./workspace-tools.cjs");
 const agentActions = require("./agent-actions.cjs");
 let win;
 let ai;
@@ -153,6 +158,8 @@ function project(id) {
   if (!p) throw new Error("Project no longer exists.");
   return p;
 }
+const agentProject = (id) =>
+  id === WORKSPACE_AGENT_ID ? workspaceProject : project(id);
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
@@ -680,6 +687,7 @@ app
       if (
         builds.size ||
         gitOperations.size ||
+        ai?.isRunning(WORKSPACE_AGENT_ID) ||
         state.projects.some((p) => ai?.isRunning(p.id))
       )
         throw new Error(
@@ -1150,8 +1158,56 @@ app
       openBrowser: (url) => shell.openExternal(url),
       // Use Chromium networking so OAuth follows the desktop's proxy and TLS settings.
       fetcher: (url, options) => net.fetch(url, options),
-      project,
+      project: agentProject,
       runTool: async (name, id, input, signal) => {
+        if (id === WORKSPACE_AGENT_ID) {
+          const tool = WORKSPACE_TOOLS.find((tool) => tool.name === name);
+          if (!tool) throw new Error("This workspace tool is not available.");
+          if (name === "manage_workspace") {
+            for (const operation of input.operations) {
+              if (
+                operation.entity === "project" &&
+                operation.action === "remove"
+              ) {
+                project(operation.id);
+                if (
+                  builds.has(operation.id) ||
+                  ai.isRunning(operation.id) ||
+                  gitOperations.size
+                )
+                  throw new Error(
+                    "Wait for the project's agent, build and Git operations to finish before removing it.",
+                  );
+              }
+            }
+          }
+          if (tool.window) return windowTools.request(id, name, input, signal);
+          if (name === "get_workspace")
+            return {
+              ...state,
+              localTime: new Date().toString(),
+              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            };
+          if (name === "search_all_projects") {
+            if (input.projectId) project(input.projectId);
+            const search = createSearch({
+              directory: app.getPath("userData"),
+              workspace: () =>
+                input.projectId
+                  ? { ...state, projects: [project(input.projectId)] }
+                  : state,
+              ai: () => ai,
+              emit: () => {},
+            });
+            try {
+              return agentActions.searchResults(
+                await search.search(input.query, crypto.randomUUID()),
+              );
+            } finally {
+              void search.dispose();
+            }
+          }
+        }
         const p = project(id);
         if (TOOLS.find((tool) => tool.name === name)?.window)
           return windowTools.request(
@@ -1221,7 +1277,7 @@ app
             "project_git_running",
             "Wait for the current Git operation to finish before starting the agent or restoring files.",
           );
-        const p = project(id);
+        const p = agentProject(id);
         const folder =
           (!rootId || rootId === "primary") && !p.folder
             ? ""

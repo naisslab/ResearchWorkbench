@@ -757,7 +757,7 @@ h1 {
   grid-template-columns: 1fr 1fr;
   gap: 16px;
 }
-:is(.detail-card, .modal) label {
+:is(.detail-card, .modal):not(:where(.workspace-agent-modal)) label {
   display: block;
   margin-bottom: 16px;
   color: var(--text-secondary);
@@ -765,13 +765,14 @@ h1 {
   font-weight: 500;
   line-height: 1.4;
 }
-:is(.detail-card, .modal) label.checkbox-field {
+:is(.detail-card, .modal):not(:where(.workspace-agent-modal))
+  label.checkbox-field {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 /* Kept at low specificity so specific fields below can restyle their inputs. */
-:where(.detail-card, .modal)
+:where(.detail-card, .modal:not(.workspace-agent-modal))
   :is(input:not([type="color"], [type="checkbox"]), textarea, select) {
   display: block;
   width: 100%;

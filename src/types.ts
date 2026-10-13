@@ -230,7 +230,12 @@ export interface AgentRunEvent {
 export interface AgentToolRequest {
   id: string;
   projectId: string;
-  tool: "record_writing_items" | "update_project" | "check_submission";
+  tool:
+    | "record_writing_items"
+    | "update_project"
+    | "check_submission"
+    | "manage_workspace"
+    | "open_workspace_view";
   input: unknown;
 }
 export interface DictationEvent {
@@ -379,6 +384,7 @@ export interface ResearchAPI {
   ): Promise<AIResult<AINativeSettings>>;
   aiSend(request: {
     projectId: string;
+    workspaceContextProjectId?: string;
     message: string;
     delivery?: "steer" | "queue";
     expectedTurnId?: string;

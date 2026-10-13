@@ -226,7 +226,7 @@ await smoke("ai-native", async (root) => {
   const composer = page.getByLabel("Message the AI agent", { exact: true });
   await composer.fill("Start working");
   await page.getByRole("button", { name: "Run AI agent", exact: true }).click();
-  await page.getByLabel("Message delivery").waitFor();
+  await page.getByLabel("Message delivery", { exact: true }).waitFor();
   await composer.fill("Keep the ICLR template");
   await page
     .getByRole("button", { name: "Steer active turn", exact: true })
@@ -251,11 +251,31 @@ await smoke("ai-native", async (root) => {
   await app.evaluate(() => {
     globalThis.__nativeFixture.failSteer = false;
   });
-  await page.getByLabel("Message delivery").selectOption("queue");
+  await page.getByLabel("Message delivery", { exact: true }).click();
+  await page.getByRole("menu", { name: "Message delivery options" }).waitFor();
+  await page.screenshot({ path: "output/playwright/ai-delivery-menu.png" });
+  await page
+    .getByRole("menuitemradio", { name: /Steer now/ })
+    .press("ArrowDown");
+  assert.equal(
+    await page
+      .getByRole("menuitemradio", { name: /Queue next/ })
+      .evaluate((node) => node === document.activeElement),
+    true,
+  );
+  await page.getByRole("menuitemradio", { name: /Queue next/ }).press("Escape");
+  await page
+    .getByRole("menu", { name: "Message delivery options" })
+    .waitFor({ state: "hidden" });
+  assert.equal(await composer.inputValue(), "Keep my failed draft");
+  await page.getByLabel("Message delivery", { exact: true }).click();
+  await page.getByRole("menuitemradio", { name: /Queue next/ }).click();
   await composer.fill("Handle this after the current task");
   await page
     .getByRole("button", { name: "Queue message", exact: true })
     .click();
+  await page.screenshot({ path: "output/playwright/ai-queue-collapsed.png" });
+  await page.getByRole("button", { name: /1 queued/ }).click();
   await page
     .getByText("Handle this after the current task", { exact: true })
     .waitFor();

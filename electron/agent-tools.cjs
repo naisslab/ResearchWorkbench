@@ -280,13 +280,18 @@ const TOOLS = [
   },
 ];
 const TOOL_NAMES = TOOLS.map((tool) => tool.name);
+const { WORKSPACE_TOOLS } = require("./workspace-tools.cjs");
+const ALL_TOOL_NAMES = [
+  ...TOOL_NAMES,
+  ...WORKSPACE_TOOLS.map((tool) => tool.name),
+];
 // Chats created before compile_manuscript compile through the shell.
 const MANUAL_COMPILE =
   "Use latexmk -pdf -interaction=nonstopmode -halt-on-error -no-shell-escape -outdir=.research-build for manuscript compilation; use -pdfxe or -pdflua instead of -pdf when the selected engine or entry file specifies XeLaTeX or LuaLaTeX.";
 // Threads created before this registry had only the writing tool, if any.
 const threadTools = (value) =>
   Array.isArray(value.tools)
-    ? value.tools.filter((name) => TOOL_NAMES.includes(name))
+    ? value.tools.filter((name) => ALL_TOOL_NAMES.includes(name))
     : value.writingTools
       ? ["record_writing_items"]
       : [];
@@ -298,7 +303,9 @@ const toolSpec = ({ name, description, inputSchema }) => ({
 });
 // Developer instructions for a thread with these tools.
 const toolInstructions = (tools) => [
-  ...(tools.some((tool) => tool.name === "compile_manuscript")
+  ...(tools.some((tool) =>
+    ["compile_manuscript", "get_workspace"].includes(tool.name),
+  )
     ? []
     : [MANUAL_COMPILE]),
   ...tools.map((tool) => tool.instruction).filter(Boolean),

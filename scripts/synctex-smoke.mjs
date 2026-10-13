@@ -4,6 +4,7 @@ import path from "node:path";
 import { PDFDocument, degrees } from "pdf-lib";
 import {
   launchApp,
+  closeApp,
   resizeWindow,
   smoke,
   stubDialogs,
@@ -30,7 +31,9 @@ async function ready(page, number) {
   );
   try {
     await page
-      .locator(`.pdf-page[data-page-number="${number}"][data-rendered="true"]`)
+      .locator(
+        `.project-workbench:not([hidden]) .pdf-page[data-page-number="${number}"][data-rendered="true"]`,
+      )
       .waitFor({ timeout: 30000 });
   } catch (error) {
     console.error(
@@ -60,13 +63,16 @@ async function ready(page, number) {
   }
 }
 async function goTo(page, number) {
-  await page.getByLabel("PDF page number").fill(String(number));
-  await page.getByLabel("PDF page number").press("Enter");
+  const reader = page.locator(".project-workbench:not([hidden])");
+  await reader.getByLabel("PDF page number").fill(String(number));
+  await reader.getByLabel("PDF page number").press("Enter");
   await ready(page, number);
 }
 async function clickText(page, number, phrase, options = {}) {
   const text = page
-    .locator(`.pdf-page[data-page-number="${number}"] .textLayer span`)
+    .locator(
+      `.project-workbench:not([hidden]) .pdf-page[data-page-number="${number}"] .textLayer span`,
+    )
     .filter({ hasText: phrase })
     .first();
   await text.waitFor();
@@ -85,9 +91,12 @@ async function atSource(page, file, line, phrase) {
   try {
     await page.waitForFunction(
       ({ file, line, phrase }) => {
-        const tab = document.querySelector(".editor-file-tab");
-        const content = document.querySelector(".cm-activeLine");
-        const gutter = document.querySelector(".cm-activeLineGutter");
+        const workbench = document.querySelector(
+          ".project-workbench:not([hidden])",
+        );
+        const tab = workbench?.querySelector(".editor-file-tab");
+        const content = workbench?.querySelector(".cm-activeLine");
+        const gutter = workbench?.querySelector(".cm-activeLineGutter");
         return (
           tab?.textContent.includes(file) &&
           content?.textContent.includes(phrase) &&
@@ -117,7 +126,7 @@ await smoke("synctex", async (root) => {
   await fs.mkdir(path.join(folder, "sections"), { recursive: true });
   await fs.writeFile(path.join(folder, "main.tex"), mainText);
   await fs.writeFile(path.join(folder, "sections", "details.tex"), detailsText);
-  const { app, page } = await launchApp();
+  let { app, page } = await launchApp();
   const id = await useProject(page, "PDF Source Lookup", folder);
   const result = await page.evaluate((id) => window.research.compile(id), id);
   assert.equal(result.ok, true, result.log);
@@ -251,7 +260,6 @@ await smoke("synctex", async (root) => {
   // A missing map shows actionable feedback without moving the source cursor.
   const pdfFile = path.join(folder, ".research-build", "main.pdf");
   const mapFile = pdfFile.replace(/\.pdf$/, ".synctex.gz");
-  const sourceMap = await fs.readFile(mapFile);
   await fs.rm(mapFile);
   await goTo(page, 1);
   await clickText(page, 1, "Overview sentence", { clickCount: 2 });
@@ -263,8 +271,62 @@ await smoke("synctex", async (root) => {
     await page.locator(".editor-file-tab").innerText(),
     /sections\/details.tex/,
   );
-  await fs.writeFile(mapFile, sourceMap);
   await page.getByLabel("Dismiss source lookup error").click();
+  // Compile must repair the missing map even though the source is unchanged.
+  await page.getByRole("button", { name: "Compile", exact: true }).click();
+  await page.getByRole("button", { name: "Compile", exact: true }).waitFor();
+  assert.ok((await fs.stat(mapFile)).size > 0);
+  await ready(page, 1);
+  await clickText(page, 1, "Overview sentence", { clickCount: 2 });
+  await atSource(page, "main.tex", 4, "Overview sentence");
+
+  // The repaired map survives renderer reloads, application sessions and project switches.
+  const secondFolder = path.join(root, "second paper");
+  await fs.mkdir(secondFolder);
+  await fs.writeFile(
+    path.join(secondFolder, "main.tex"),
+    "\\documentclass{article}\n\\begin{document}\nSecond project has its own source.\n\\end{document}\n",
+  );
+  await page.evaluate(
+    async ({ id, folder }) => {
+      const state = await window.research.load();
+      const original = state.projects.find((p) => p.id === id);
+      state.projects.push({
+        ...original,
+        id: "synctex-second",
+        name: "Second PDF project",
+        folder,
+      });
+      await window.research.save(state);
+      const result = await window.research.compile("synctex-second");
+      if (!result.ok) throw new Error(result.log);
+    },
+    { id, folder: secondFolder },
+  );
+  await closeApp();
+  ({ app, page } = await launchApp());
+  await page
+    .getByRole("button", { name: "PDF Source Lookup", exact: true })
+    .click();
+  await goTo(page, 2);
+  await clickText(page, 2, "Distinct included sentence", { clickCount: 2 });
+  await atSource(page, "sections/details.tex", 3, "Distinct included sentence");
+  await page
+    .getByRole("button", { name: "Second PDF project", exact: true })
+    .click();
+  await ready(page, 1);
+  await clickText(page, 1, "Second project has", { clickCount: 2 });
+  await atSource(page, "main.tex", 3, "Second project has");
+  await page
+    .getByRole("button", { name: "PDF Source Lookup", exact: true })
+    .click();
+  await goTo(page, 1);
+  await clickText(page, 1, "Overview sentence", { clickCount: 2 });
+  await atSource(page, "main.tex", 4, "Overview sentence");
+  await page.reload();
+  await ready(page, 1);
+  await clickText(page, 1, "Overview sentence", { clickCount: 2 });
+  await atSource(page, "main.tex", 4, "Overview sentence");
 
   // Refuse stale PDF sessions, then map rotated pages with their actual viewport.
   const oldUrl = await page.locator(".pdf-reader").getAttribute("data-pdf-url");
@@ -306,5 +368,5 @@ await smoke("synctex", async (root) => {
     .waitFor();
   assert.match(await page.locator(".editor-file-tab").innerText(), /main.tex/);
 
-  return "PDF source lookup UI passed: double-click, source tool, modifier-click, included files, page two, zoom, resize, expanded/Agent layouts, cursor focus, unsaved edits, failed builds, missing maps, stale sessions, rotation and unrelated PDFs.";
+  return "PDF source lookup UI passed: missing-map repair, application restart, project switches, renderer reload, double-click, source tool, modifier-click, included files, page two, zoom, resize, expanded/Agent layouts, cursor focus, unsaved edits, failed builds, stale sessions, rotation and unrelated PDFs.";
 });
