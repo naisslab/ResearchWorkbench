@@ -36,7 +36,7 @@ async function status(folder) {
       ]),
       run(folder, ["remote", "-v"]),
       // An unborn HEAD has no log.
-      run(folder, ["log", "-8", "--format=%h%x00%s%x00%an%x00%aI"]).catch(
+      run(folder, ["log", "-8", "--format=%H%x00%s%x00%an%x00%aI"]).catch(
         () => "",
       ),
     ]);
@@ -86,7 +86,18 @@ async function status(folder) {
     tracking ||
     (remotes.has("origin") ? "origin" : [...remotes.keys()][0]) ||
     "";
-  const remoteBranch = tracking ? upstream.slice(tracking.length + 1) : branch;
+  const defaultRef = remoteName
+    ? await run(folder, [
+        "symbolic-ref",
+        "--quiet",
+        `refs/remotes/${remoteName}/HEAD`,
+      ]).catch(() => "")
+    : "";
+  const remoteBranch = tracking
+    ? upstream.slice(tracking.length + 1)
+    : defaultRef.startsWith(`refs/remotes/${remoteName}/`)
+      ? defaultRef.slice(`refs/remotes/${remoteName}/`.length)
+      : branch;
   let ahead = 0,
     behind = 0,
     hasRemoteBranch = false;
@@ -193,7 +204,7 @@ async function diff(folder, file) {
     truncated: lines.length > 1200,
   };
 }
-async function connect(folder, url) {
+function validateRemote(url) {
   if (
     typeof url !== "string" ||
     !url.trim() ||
@@ -202,14 +213,86 @@ async function connect(folder, url) {
     !/^(https?:\/\/|ssh:\/\/|git@|\/)/.test(url)
   )
     throw new Error("Enter an HTTPS or SSH Git repository URL.");
+  url = url.trim();
+  if (/^(?:https?|ssh):\/\//i.test(url)) {
+    const parsed = new URL(url);
+    if (parsed.password || (parsed.protocol !== "ssh:" && parsed.username))
+      throw new Error(
+        "Keep credentials out of repository URLs. Use a Git credential manager or the Overleaf connection dialog.",
+      );
+    if (parsed.hash || parsed.search)
+      throw new Error("Repository URLs cannot contain a query or fragment.");
+  }
+  return url;
+}
+async function discoverDefault(folder, remoteName) {
+  const output = await remote(folder, remoteName, [
+    "ls-remote",
+    "--symref",
+    remoteName,
+    "HEAD",
+  ]);
+  const name = /^ref: refs\/heads\/([^\t\r\n]+)\tHEAD$/m.exec(output)?.[1];
+  if (name) {
+    await run(folder, ["check-ref-format", `refs/heads/${name}`]);
+    await run(folder, [
+      "symbolic-ref",
+      `refs/remotes/${remoteName}/HEAD`,
+      `refs/remotes/${remoteName}/${name}`,
+    ]);
+  }
+  return name;
+}
+async function connect(folder, url) {
+  url = validateRemote(url);
   const current = await status(folder);
   if (current.remote)
     throw new Error(
       "A remote is already connected. Update it in the terminal if needed.",
     );
   if (!current.connected) await run(folder, ["init", "--initial-branch=main"]);
-  await run(folder, ["remote", "add", "origin", url.trim()]);
+  await run(folder, ["remote", "add", "origin", url]);
+  try {
+    await discoverDefault(folder, "origin");
+  } catch (error) {
+    await run(folder, ["remote", "remove", "origin"]);
+    throw error;
+  }
   return status(folder);
+}
+async function clone(url, destination) {
+  url = validateRemote(url);
+  if (typeof destination !== "string" || !path.isAbsolute(destination))
+    throw new Error("Choose an absolute destination folder.");
+  if (
+    await fs.lstat(destination).then(
+      () => true,
+      (e) => {
+        if (e.code !== "ENOENT") throw e;
+        return false;
+      },
+    )
+  )
+    throw new Error("Clone into a new folder to preserve existing files.");
+  const parent = await fs.realpath(path.dirname(destination));
+  const temporary = await fs.mkdtemp(path.join(parent, ".research-clone-"));
+  try {
+    await connect(temporary, url);
+    await sync(temporary, "pull");
+    const current = await status(temporary);
+    if (!current.history.length)
+      throw new Error("The remote repository has no commits.");
+    await run(temporary, [
+      "branch",
+      "--set-upstream-to",
+      `${current.remoteName}/${current.remoteBranch}`,
+    ]);
+    await fs.rename(temporary, destination);
+    return status(destination);
+  } catch (error) {
+    await fs.rm(temporary, { recursive: true, force: true });
+    throw error;
+  }
 }
 async function commit(folder, message, files) {
   if (typeof message !== "string" || !message.trim() || message.length > 1000)
@@ -267,10 +350,15 @@ async function commit(folder, message, files) {
 async function sync(folder, direction = "sync") {
   if (!["fetch", "pull", "push", "sync"].includes(direction))
     throw new Error("Invalid Git operation.");
-  const current = await status(folder);
+  let current = await status(folder);
   if (!current.remote) throw new Error("Connect a Git remote first.");
   if (direction === "fetch") {
-    await remote(folder, current.remoteName, ["fetch", current.remoteName]);
+    await remote(folder, current.remoteName, [
+      "fetch",
+      "--prune",
+      current.remoteName,
+    ]);
+    await discoverDefault(folder, current.remoteName);
     return status(folder);
   }
   if (current.changes.some((change) => conflicts.has(change.status)))
@@ -278,7 +366,13 @@ async function sync(folder, direction = "sync") {
   if (current.branch.startsWith("HEAD"))
     throw new Error("Check out a branch before syncing.");
   if (direction !== "push") {
-    await remote(folder, current.remoteName, ["fetch", current.remoteName]);
+    await remote(folder, current.remoteName, [
+      "fetch",
+      "--prune",
+      current.remoteName,
+    ]);
+    await discoverDefault(folder, current.remoteName);
+    current = await status(folder);
     if (
       await hasRef(
         folder,
@@ -290,6 +384,10 @@ async function sync(folder, direction = "sync") {
         "--ff-only",
         `refs/remotes/${current.remoteName}/${current.remoteBranch}`,
       ]);
+    else if (direction === "pull")
+      throw new Error(
+        `Remote branch ${current.remoteBranch} is unavailable. Check the remote and its default branch.`,
+      );
   }
   if (direction !== "pull")
     await remote(folder, current.remoteName, [
@@ -300,4 +398,15 @@ async function sync(folder, direction = "sync") {
     ]);
   return status(folder);
 }
-module.exports = { toplevel, status, init, diff, connect, commit, sync };
+module.exports = {
+  toplevel,
+  status,
+  init,
+  diff,
+  connect,
+  clone,
+  validateRemote,
+  discoverDefault,
+  commit,
+  sync,
+};

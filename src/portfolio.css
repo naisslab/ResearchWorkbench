@@ -1,0 +1,114 @@
+.review-revision-picker,
+.review-actions,
+.review-commit,
+.portfolio-heading,
+.portfolio-row-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.review-revision-picker select {
+  min-width: 0;
+  flex: 1;
+}
+.review-commit {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.review-commit code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.review-request-form {
+  margin-top: 20px;
+}
+.review-request-form label {
+  display: grid;
+  gap: 7px;
+}
+.review-actions {
+  flex-wrap: wrap;
+}
+.review-item {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+  margin-top: 14px;
+}
+.review-item > input,
+.review-item > textarea {
+  width: 100%;
+}
+.task-assignment {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.task-assignment label {
+  font-size: 11px;
+  flex: 1;
+  min-width: 125px;
+}
+.task-assignment input {
+  width: 100%;
+}
+.portfolio-inbox {
+  margin: 18px 0 24px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.portfolio-heading {
+  padding: 14px 16px;
+  justify-content: space-between;
+}
+.portfolio-heading h2 {
+  font-size: 14px;
+  margin: 0;
+}
+.portfolio-inbox > p {
+  padding: 0 16px 12px;
+}
+.portfolio-row {
+  width: 100%;
+  text-align: left;
+  padding: 13px 16px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  display: grid;
+  gap: 7px;
+  cursor: pointer;
+}
+.portfolio-row:hover {
+  background: var(--surface-hover, rgba(127, 127, 127, 0.06));
+}
+.portfolio-row-heading {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.portfolio-row-heading > span,
+.portfolio-meta,
+.portfolio-blocker {
+  font-size: 12px;
+}
+.portfolio-meta {
+  display: flex;
+  gap: 8px 20px;
+  flex-wrap: wrap;
+  color: var(--muted);
+}
+.portfolio-blocker {
+  overflow-wrap: anywhere;
+}
+.project-owner {
+  display: block;
+  margin: 9px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.project-sharing-actions {
+  display: grid;
+  gap: 8px;
+}

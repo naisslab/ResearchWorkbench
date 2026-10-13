@@ -19,7 +19,15 @@ import type {
   Workspace,
 } from "../types";
 import { stageName, stages } from "../types";
-import { countdown, dueSoon, type DatedItem } from "../dates";
+import {
+  countdown,
+  dueSoon,
+  localDate,
+  monthDay,
+  timeLabel,
+  type DatedItem,
+} from "../dates";
+import "../portfolio.css";
 import { DateBlock, Urgency } from "../ProjectMilestones";
 import { AreaIcon, ProjectIcon } from "../ResearchIcons";
 import {
@@ -87,6 +95,16 @@ export default memo(function OverviewView({
       .filter((task) => task.pinned && !task.done)
       .map((task) => ({ project, task })),
   );
+  const today = localDate(now);
+  const attention = areaProjects.filter(
+    (project) =>
+      project.reviewRequests?.some((review) => review.status !== "reviewed") ||
+      project.tasks.some(
+        (task) =>
+          !task.done &&
+          (task.blocked || (task.dueDate && task.dueDate <= today)),
+      ),
+  );
   return (
     <>
       <section className="today-card">
@@ -133,6 +151,83 @@ export default memo(function OverviewView({
         ) : (
           <p className="muted">
             Pin next steps in a project to choose what to focus on today.
+          </p>
+        )}
+      </section>
+      <section className="portfolio-inbox" aria-label="PI review inbox">
+        <div className="portfolio-heading">
+          <h2>Review inbox</h2>
+          <span className="quiet-label">
+            {attention.length} PROJECT{attention.length === 1 ? "" : "S"} NEED
+            ATTENTION
+          </span>
+        </div>
+        {attention.length ? (
+          attention.map((project) => {
+            const reviews = (project.reviewRequests || []).filter(
+              (review) => review.status !== "reviewed",
+            );
+            const blockers = project.tasks.filter(
+              (task) => !task.done && task.blocked,
+            );
+            const taskDue = project.tasks
+              .filter((task) => !task.done && task.dueDate)
+              .map((task) => task.dueDate!)
+              .sort()[0];
+            const next = items.find(
+              (item) => item.upcoming && item.projectIds.includes(project.id),
+            );
+            const updated = project.lastSubstantiveUpdate || project.updatedAt;
+            return (
+              <button
+                key={project.id}
+                className="portfolio-row"
+                onClick={() => navigate("details", { projectId: project.id })}
+              >
+                <div className="portfolio-row-heading">
+                  <strong>{project.name}</strong>
+                  <span>
+                    {reviews.length
+                      ? `${reviews.length} open review${reviews.length === 1 ? "" : "s"}`
+                      : "Follow-up needed"}
+                  </span>
+                </div>
+                <div className="portfolio-meta">
+                  <span>Owner: {project.owner || "Unassigned"}</span>
+                  <span>
+                    {taskDue
+                      ? `Next task: ${monthDay(taskDue)}`
+                      : next
+                        ? `Next date: ${monthDay(next.time)}`
+                        : "No next date"}
+                  </span>
+                  <span>
+                    {Number.isFinite(Date.parse(updated))
+                      ? `Updated ${timeLabel(updated)}`
+                      : "Update date unavailable"}
+                  </span>
+                </div>
+                {!!reviews.length && (
+                  <span className="portfolio-blocker">
+                    Review: {reviews[0].title} ·{" "}
+                    {reviews[0].revision.slice(0, 8)}
+                  </span>
+                )}
+                {!!blockers.length && (
+                  <span className="portfolio-blocker">
+                    Blocked:{" "}
+                    {blockers
+                      .map((task) => `${task.text}: ${task.blocked}`)
+                      .join("; ")}
+                  </span>
+                )}
+              </button>
+            );
+          })
+        ) : (
+          <p className="form-help">
+            No open review requests, blockers or tasks due today. Request a
+            review from a project’s details.
           </p>
         )}
       </section>
@@ -371,6 +466,7 @@ function ProjectCard({
           <h3>{p.name}</h3>
         </div>
         <p>{p.summary}</p>
+        <span className="project-owner">Owner: {p.owner || "Unassigned"}</span>
         <StageBadge stage={p.stage} />
       </button>
       <div className="project-card-footer">

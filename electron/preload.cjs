@@ -17,6 +17,16 @@ const listen = (channel) => (callback) => {
   return () => ipcRenderer.removeListener(channel, listener);
 };
 contextBridge.exposeInMainWorld("research", {
+  overleafStatus: invoke("overleaf:status"),
+  overleafConnect: invoke("overleaf:connect"),
+  overleafReconnect: invoke("overleaf:reconnect"),
+  overleafAction: invoke("overleaf:action"),
+  setupDiagnostics: invoke("setup:diagnostics"),
+  openResearchProject: invoke("project:open-local"),
+  exportProject: invoke("project:export-manifest"),
+  exportSubmission: invoke("project:export-submission"),
+  importProject: invoke("project:import-manifest"),
+  exportCalendar: invoke("calendar:export"),
   readDraft: invoke("file:draft-read"),
   writeDraft: invoke("file:draft-write"),
   onMenuCommand: listen("menu:command"),

@@ -17,7 +17,7 @@ A manuscript used only by automated tests.
   state.projects.push({
     id: "test-manuscript",
     name: "Test manuscript",
-    areaId: "ml",
+    areaId: state.areas[0].id,
     stage: "writing",
     summary: "",
     notes: "",

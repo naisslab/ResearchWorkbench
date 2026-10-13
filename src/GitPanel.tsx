@@ -481,7 +481,7 @@ export default memo(function GitPanel({
                           {commit.author} · {monthDay(commit.date)}
                         </small>
                       </span>
-                      <code>{commit.hash}</code>
+                      <code title={commit.hash}>{commit.hash.slice(0, 8)}</code>
                       {onCompare && rootId === "primary" && (
                         <button
                           className="git-compare"

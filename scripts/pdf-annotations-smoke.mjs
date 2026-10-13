@@ -250,8 +250,8 @@ await smoke("pdf-annotations", async (root) => {
     "检查实验结果，补充消融实验。",
   );
   assert.deepEqual(await fs.readFile(source), original);
-  await fs.mkdir("output/pdf", { recursive: true });
-  await fs.writeFile("output/pdf/annotation-review.pdf", exported);
+  await fs.mkdir("output/playwright", { recursive: true });
+  await fs.writeFile("output/playwright/annotation-review.pdf", exported);
   // A changed build at the same path starts a separate annotation version.
   const oldUrl = await page.locator(".pdf-reader").getAttribute("data-pdf-url");
   await fs.writeFile(source, await makePdf(true));

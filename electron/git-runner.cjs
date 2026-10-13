@@ -8,10 +8,13 @@ const execute = promisify(execFile);
 let binary;
 // /usr/bin/git is an xcrun shim; resolve the binary once per process.
 const gitBinary = () =>
-  (binary ??= execute("/usr/bin/xcrun", ["--find", "git"]).then(
-    (result) => result.stdout.trim() || "/usr/bin/git",
-    () => "/usr/bin/git",
-  ));
+  (binary ??=
+    process.platform !== "darwin"
+      ? Promise.resolve("git")
+      : execute("/usr/bin/xcrun", ["--find", "git"]).then(
+          (result) => result.stdout.trim() || "/usr/bin/git",
+          () => "/usr/bin/git",
+        ));
 
 const quote = (value) => `'${value.replace(/'/g, "'\\''")}'`;
 async function githubConfig(env) {
@@ -80,7 +83,7 @@ function createGitRunner(env = environment, resolveProxy) {
     GCM_INTERACTIVE: "never",
     GH_PROMPT_DISABLED: "1",
   };
-  async function run(folder, args, config = [], overrides = {}) {
+  async function run(folder, args, config = [], overrides = {}, options = {}) {
     try {
       const result = await execute(
         await gitBinary(),
@@ -89,14 +92,26 @@ function createGitRunner(env = environment, resolveProxy) {
           timeout: 60000,
           maxBuffer: 4 * 1024 * 1024,
           env: { ...gitEnv, ...overrides },
+          ...options,
         },
       );
-      return result.stdout.trimEnd();
+      return options.encoding === "buffer" || options.preserveOutput
+        ? result.stdout
+        : result.stdout.trimEnd();
     } catch (error) {
       const message = error.killed
         ? `Git ${args[0]} timed out. Check your network and Git authentication in the local terminal.`
-        : (error.stderr || error.message).trim();
-      throw new Error(message.replace(/(https?:\/\/)[^\s/@]+@/g, "$1"));
+        : String(error.stderr || error.message).trim();
+      const clean = message.replace(/(https?:\/\/)[^\s/@]+@/g, "$1");
+      const failure = new Error(
+        /Author identity unknown|empty ident|unable to auto-detect email/i.test(
+          clean,
+        )
+          ? `Git needs your author name and email. In this manuscript's terminal, run git config user.name "Your Name" and git config user.email "you@example.com", then try again.\n\n${clean}`
+          : clean,
+      );
+      failure.exitCode = error.code;
+      throw failure;
     }
   }
   async function credentialConfig(folder, remoteName, push = false) {

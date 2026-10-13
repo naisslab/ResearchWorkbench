@@ -1,0 +1,94 @@
+name: Prepare Mac Release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Build signed artifacts and create a draft GitHub release (requires a version tag and release secrets)"
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            arch: arm64
+          - runner: macos-26-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    environment: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish) && 'release' || 'development' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Verify release tag
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          node -e 'const v = require("./package.json").version; if (process.env.RELEASE_REF !== `refs/tags/v${v}`) throw new Error("Choose the tag matching package.json before preparing a public release");'
+      - name: Install TeX test tools
+        run: bash .github/scripts/install-tex.sh
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npm run test:e2e
+      - run: npm run test:release-ui
+      - run: npm run test:portfolio-ui
+      - name: Build unsigned development DMG
+        if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) && !inputs.publish }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          npm run dist
+          npm run check:release -- --artifacts --development
+      - name: Build, sign, notarize, and verify release
+        if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run dist:release
+      - name: Test a packaged fresh installation
+        run: npm run test:packaged-ui
+      - name: Record checksums
+        run: shasum -a 256 release/*.dmg > release/SHA256SUMS-${{ matrix.arch }}.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish) && 'signed' || 'development' }}-macos-${{ matrix.arch }}
+          path: |
+            release/*.dmg
+            release/SHA256SUMS-*.txt
+          if-no-files-found: error
+  draft:
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: signed-macos-*
+          path: artifacts
+          merge-multiple: true
+      - name: Create reviewable draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" artifacts/* --draft --verify-tag --title "Research Workbench $RELEASE_TAG" --generate-notes

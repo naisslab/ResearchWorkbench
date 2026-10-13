@@ -1,0 +1,126 @@
+.welcome-card {
+  margin-bottom: 24px;
+}
+.welcome-card h2 {
+  margin: 14px 0 8px;
+}
+.welcome-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 20px 0;
+}
+.setup-tools {
+  padding: 0;
+  list-style: none;
+}
+.setup-tools li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding: 14px 0;
+}
+.setup-tools li > svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.setup-tools li > div {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.setup-tools code {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.setup-tools small,
+.setup-tools span {
+  color: var(--muted);
+}
+.overleaf-dialog {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.overleaf-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.overleaf-dialog .inline-check {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+}
+.overleaf-dialog .inline-check input {
+  width: auto;
+  margin-top: 3px;
+}
+.overleaf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.overleaf-status {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+.overleaf-status dt {
+  color: var(--muted);
+}
+.overleaf-status dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.overleaf-diff {
+  max-height: 300px;
+  white-space: pre-wrap;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  background: var(--surface-subtle);
+}
+.overleaf-conflict {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+.overleaf-conflict-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.overleaf-conflict-columns pre {
+  max-height: 150px;
+  white-space: pre-wrap;
+  overflow: auto;
+  font-size: 11px;
+}
+.overleaf-conflict textarea {
+  min-height: 160px;
+  font-family: monospace;
+  font-size: 12px;
+}
+.overleaf-warning {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.overleaf-files {
+  max-height: 150px;
+  overflow: auto;
+  padding-left: 20px;
+  font-size: 12px;
+}

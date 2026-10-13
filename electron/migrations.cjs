@@ -83,8 +83,7 @@ function defaultToSystemAppearance(state) {
 
 // One-time workspace upgrades, in order. Each returns its input unchanged once
 // applied, and reads catalog, tracker or feed data only while it still applies.
-const migrations = [
-  migrateAreaLabels,
+const personalMigrations = [
   async (state, { catalog }) =>
     state.researchSetupVersion === 1
       ? state
@@ -107,16 +106,25 @@ const migrations = [
     state.submissionPlanVersion === 1
       ? state
       : applySubmissionPlans(state, await catalog()),
-  defaultToSystemAppearance,
 ];
 // `sources` supplies catalog(), tracker() and feed(); the catalog is read once.
-async function runMigrations(saved, sources) {
+async function runMigrations(
+  saved,
+  sources = {},
+  { includePersonalData = false } = {},
+) {
   let catalog;
   const context = {
     ...sources,
     catalog: () => (catalog ??= sources.catalog()),
   };
   let state = saved;
+  // Personal imports are explicitly requested. Existing records always survive.
+  const migrations = [
+    migrateAreaLabels,
+    ...(includePersonalData ? personalMigrations : []),
+    defaultToSystemAppearance,
+  ];
   for (const migrate of migrations) state = await migrate(state, context);
   return state === saved ? saved : validateState(state);
 }

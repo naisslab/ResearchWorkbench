@@ -100,3 +100,27 @@ test("reattaching a project preserves drafts for each directory, including legac
     "new draft",
   );
 });
+
+test("repository draft guards include other project aliases and ignore saved or unrelated drafts", async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "draft-guard-"));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const root = path.join(dir, "manuscript"),
+    other = path.join(dir, "other");
+  await fs.mkdir(root);
+  await fs.mkdir(other);
+  await fs.writeFile(path.join(root, "main.tex"), "saved");
+  const store = createDraftStore(path.join(dir, "drafts"));
+  await store.write("other-project-alias", "primary", "main.tex", root, {
+    text: "unsaved",
+    base: "saved",
+  });
+  await store.write("unrelated", "primary", "notes.tex", other, {
+    text: "unsaved",
+    base: "",
+  });
+  assert.deepEqual(await store.pendingIn(root), ["main.tex"]);
+  await fs.writeFile(path.join(root, "main.tex"), "unsaved");
+  assert.deepEqual(await store.pendingIn(root), []);
+  await store.write("other-project-alias", "primary", "main.tex", root, null);
+  assert.deepEqual(await store.pendingIn(root), []);
+});

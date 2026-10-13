@@ -73,6 +73,11 @@ import SettingsView from "./views/SettingsView";
 import { useTopDialog } from "./Modal";
 import { runCommand, useCommands } from "./commands";
 import { WorkbenchVisibility } from "./WorkbenchVisibility";
+import Welcome from "./Welcome";
+import OverleafDialog from "./OverleafDialog";
+import { retainedWorkbenches } from "./workbench-cache";
+import type { WorkbenchStatus } from "./Workbench";
+import "./release.css";
 
 const loadWorkbench = () => import("./Workbench");
 const Workbench = lazy(loadWorkbench);
@@ -114,12 +119,25 @@ export default function App() {
   const [view, setView] = useState<View>("overview");
   const [selected, setSelected] = useState("");
   const [openedProjects, setOpenedProjects] = useState<string[]>([]);
+  const [protectedProjects, setProtectedProjects] = useState<
+    Record<string, boolean>
+  >({});
+  const [overleafProject, setOverleafProject] = useState<string | null>(null);
   useEffect(() => {
     if (view === "workbench" && selected)
       setOpenedProjects((ids) =>
-        ids.includes(selected) ? ids : [...ids, selected],
+        ids.at(-1) === selected
+          ? ids
+          : [...ids.filter((id) => id !== selected), selected],
       );
   }, [view, selected]);
+  const workbenchStatus = useCallback((id: string, status: WorkbenchStatus) => {
+    if (status.visible) setManuscriptStatus(status);
+    const keep = status.dirty || status.busy;
+    setProtectedProjects((previous) =>
+      previous[id] === keep ? previous : { ...previous, [id]: keep },
+    );
+  }, []);
   const [areaFilter, setAreaFilter] = useState("all");
   // "" opens the form on the default area.
   const [newProjectArea, setNewProjectArea] = useState<string | null>(null);
@@ -322,15 +340,31 @@ export default function App() {
     (id, changes, undo) => {
       const patch = (s: Workspace) => ({
         ...s,
-        projects: s.projects.map((p) =>
-          p.id === id
-            ? {
-                ...p,
-                ...(typeof changes === "function" ? changes(p) : changes),
-                updatedAt: new Date().toISOString(),
-              }
-            : p,
-        ),
+        projects: s.projects.map((p) => {
+          if (p.id !== id) return p;
+          const changed = typeof changes === "function" ? changes(p) : changes;
+          const at = new Date().toISOString();
+          const meaningful = [
+            "summary",
+            "notes",
+            "stage",
+            "tasks",
+            "deadlines",
+            "reviewRequests",
+            "decisions",
+          ].some(
+            (key) =>
+              Object.hasOwn(changed, key) &&
+              JSON.stringify(changed[key as keyof Project]) !==
+                JSON.stringify(p[key as keyof Project]),
+          );
+          return {
+            ...p,
+            ...changed,
+            updatedAt: at,
+            ...(meaningful ? { lastSubstantiveUpdate: at } : {}),
+          };
+        }),
       });
       return undo ? commitWithUndo(undo, patch) : commit(patch);
     },
@@ -368,6 +402,23 @@ export default function App() {
     (id: string) => navigate("details", { projectId: id }),
     [navigate],
   );
+  const importedProject = useCallback(
+    (workspace: Workspace, projectId?: string) => {
+      replace(workspace);
+      if (projectId) navigate("details", { projectId, area: "all" });
+      else navigate("overview", { projectId: "", area: "all" });
+    },
+    [replace, navigate],
+  );
+  useEffect(() => {
+    const open = (event: Event) => {
+      const id = (event as CustomEvent<{ projectId?: string }>).detail
+        ?.projectId;
+      setOverleafProject(id || "");
+    };
+    window.addEventListener("research:open-overleaf", open);
+    return () => window.removeEventListener("research:open-overleaf", open);
+  }, []);
   workspaceNavigate.current = navigate;
   useEffect(() => {
     if (
@@ -390,6 +441,20 @@ export default function App() {
   const [agentRuns, setAgentRuns] = useState<
     Record<string, "running" | "done" | "failed">
   >({});
+  useEffect(() => {
+    const protectedIds = new Set([
+      ...Object.keys(protectedProjects).filter((id) => protectedProjects[id]),
+      ...Object.keys(agentRuns).filter((id) => agentRuns[id] === "running"),
+    ]);
+    setOpenedProjects((previous) => {
+      const next = retainedWorkbenches(
+        previous,
+        view === "workbench" ? selected : "",
+        protectedIds,
+      );
+      return next.length === previous.length ? previous : next;
+    });
+  }, [openedProjects, protectedProjects, agentRuns, selected, view]);
   const looking = useRef({ view, selected, navigate, searchOpen });
   looking.current = { view, selected, navigate, searchOpen };
   useEffect(() => {
@@ -834,7 +899,7 @@ export default function App() {
                       }}
                       report={report}
                       clearError={clearError}
-                      onStatus={setManuscriptStatus}
+                      onStatus={(status) => workbenchStatus(id, status)}
                     />
                   </Suspense>
                 </div>
@@ -870,18 +935,25 @@ export default function App() {
                   )}
                 </div>
               </div>
-              {view === "overview" && (
-                <OverviewView
-                  state={state}
-                  projects={ordered}
-                  items={items}
-                  now={now}
-                  area={areaFilter}
-                  navigate={navigate}
-                  newProject={newProject}
-                  update={updateProject}
-                />
-              )}
+              {view === "overview" &&
+                (state.projects.length === 0 ? (
+                  <Welcome
+                    imported={importedProject}
+                    connect={() => setOverleafProject("")}
+                    report={report}
+                  />
+                ) : (
+                  <OverviewView
+                    state={state}
+                    projects={ordered}
+                    items={items}
+                    now={now}
+                    area={areaFilter}
+                    navigate={navigate}
+                    newProject={newProject}
+                    update={updateProject}
+                  />
+                ))}
               {view === "board" && (
                 <BoardView
                   state={state}
@@ -972,6 +1044,14 @@ export default function App() {
             navigate("details", { projectId: p.id });
             return true;
           }}
+        />
+      )}
+      {overleafProject !== null && (
+        <OverleafDialog
+          key={overleafProject}
+          project={state.projects.find((item) => item.id === overleafProject)}
+          close={() => setOverleafProject(null)}
+          imported={importedProject}
         />
       )}
       {editedDate ? (

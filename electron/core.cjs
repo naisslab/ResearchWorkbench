@@ -49,6 +49,17 @@ const DEFAULT_AREAS = [
   },
 ];
 const text = (value) => typeof value === "string" && value.trim() !== "";
+const calendarDate = (value) =>
+  typeof value === "string" &&
+  /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+  Number.isFinite(Date.parse(value)) &&
+  new Date(value).toISOString().slice(0, 10) === value;
+const instant = (value) =>
+  typeof value === "string" &&
+  /Z$/.test(value) &&
+  Number.isFinite(Date.parse(value));
+const commitHash = (value) =>
+  typeof value === "string" && /^[a-f0-9]{7,64}$/i.test(value);
 const isHttpUrl = (value) =>
   typeof value === "string" && /^https?:\/\//.test(value);
 // Deadline links are optional, so "" also means no link.
@@ -173,6 +184,60 @@ function validateState(value) {
       typeof p.anonymousReview !== "boolean"
     )
       throw new Error("Invalid review setting.");
+    if (
+      p.owner !== undefined &&
+      (typeof p.owner !== "string" || p.owner.length > 300)
+    )
+      throw new Error("Invalid project owner.");
+    if (p.lastReviewedCommit !== undefined && !commitHash(p.lastReviewedCommit))
+      throw new Error("Invalid reviewed revision.");
+    if (
+      p.lastSubstantiveUpdate !== undefined &&
+      !instant(p.lastSubstantiveUpdate)
+    )
+      throw new Error("Invalid project update time.");
+    if (p.reviewRequests !== undefined) {
+      if (!Array.isArray(p.reviewRequests) || p.reviewRequests.length > 1000)
+        throw new Error("Invalid review requests.");
+      const reviewIds = new Set();
+      for (const review of p.reviewRequests) {
+        if (
+          !review ||
+          !text(review.id) ||
+          reviewIds.has(review.id) ||
+          !text(review.title) ||
+          review.title.length > 2000 ||
+          !instant(review.requestedAt) ||
+          !["requested", "in-review", "reviewed"].includes(review.status) ||
+          !commitHash(review.revision) ||
+          (review.reviewedAt !== undefined && !instant(review.reviewedAt)) ||
+          (review.reviewedRevision !== undefined &&
+            !commitHash(review.reviewedRevision)) ||
+          (review.status === "reviewed" &&
+            (!review.reviewedAt || !review.reviewedRevision))
+        )
+          throw new Error("Invalid review request.");
+        reviewIds.add(review.id);
+      }
+    }
+    if (p.decisions !== undefined) {
+      if (!Array.isArray(p.decisions) || p.decisions.length > 5000)
+        throw new Error("Invalid project decisions.");
+      const decisionIds = new Set();
+      for (const decision of p.decisions) {
+        if (
+          !decision ||
+          !text(decision.id) ||
+          decisionIds.has(decision.id) ||
+          !text(decision.text) ||
+          decision.text.length > 12000 ||
+          !instant(decision.createdAt) ||
+          (decision.revision !== undefined && !commitHash(decision.revision))
+        )
+          throw new Error("Invalid project decision.");
+        decisionIds.add(decision.id);
+      }
+    }
     if (p.localFolders !== undefined) {
       if (!Array.isArray(p.localFolders) || p.localFolders.length > 30)
         throw new Error("Invalid local folders.");
@@ -209,7 +274,10 @@ function validateState(value) {
         typeof task.done !== "boolean" ||
         (task.pinned !== undefined && typeof task.pinned !== "boolean") ||
         (task.blocked !== undefined &&
-          (typeof task.blocked !== "string" || task.blocked.length > 8000))
+          (typeof task.blocked !== "string" || task.blocked.length > 8000)) ||
+        (task.assignee !== undefined &&
+          (typeof task.assignee !== "string" || task.assignee.length > 300)) ||
+        (task.dueDate !== undefined && !calendarDate(task.dueDate))
       )
         throw new Error("Invalid task.");
     for (const d of p.deadlines) {
@@ -815,12 +883,22 @@ async function synctexInverse(project, page, x, y, env) {
   }
   return null;
 }
-function seedWorkspace() {
+function seedWorkspace({ personal = false } = {}) {
   return {
     version: 1,
     areaLabelVersion: 2,
-    areas: DEFAULT_AREAS,
+    areas: personal
+      ? DEFAULT_AREAS.map((area) => ({ ...area }))
+      : [
+          {
+            id: "research",
+            name: "Research",
+            color: "#087cba",
+            icon: "folder",
+          },
+        ],
     projects: [],
+    trackedDeadlines: [],
   };
 }
 // The copies saved before imports, migrations and restores, newest first.

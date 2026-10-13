@@ -344,6 +344,17 @@ await smoke("synctex", async (root) => {
     { id, url: oldUrl },
   );
   assert.match(stale, /PDF has changed on disk/);
+  const staleForward = await page.evaluate(
+    async ({ id, url }) => {
+      try {
+        await window.research.synctexForward(id, "main.tex", 4, "primary", url);
+      } catch (error) {
+        return error.message;
+      }
+    },
+    { id, url: oldUrl },
+  );
+  assert.match(staleForward, /PDF has changed on disk/);
   await page.reload();
   await page
     .getByRole("button", { name: "PDF Source Lookup", exact: true })

@@ -48,6 +48,7 @@ import {
   FileText,
   FolderOpen,
   FolderPlus,
+  Link2,
   TerminalSquare,
   FilePlus2,
   RefreshCw,
@@ -244,6 +245,12 @@ function latexSupport(
     citationHover(describe),
   ];
 }
+export type WorkbenchStatus = {
+  file: string;
+  dirty: boolean;
+  busy: boolean;
+  visible: boolean;
+};
 function Workbench({
   project,
   searchTarget,
@@ -259,7 +266,7 @@ function Workbench({
   update(changes: Partial<Project>): Promise<void>;
   report(message: string, source?: string): void;
   clearError(source: string): void;
-  onStatus(status: { file: string; dirty: boolean }): void;
+  onStatus(status: WorkbenchStatus): void;
   layout: WorkbenchLayout;
   changeLayout(changes: Partial<WorkbenchLayout>): void;
 }) {
@@ -310,6 +317,7 @@ function Workbench({
     PdfTarget & { nonce: number; url: string; query?: string }
   >();
   const [showPdf, setShowPdf] = useState(true);
+  const [pdfPending, setPdfPending] = useState(false);
   const agentMode = layout.workMode === "agent";
   const columnsMode = layout.workMode === "columns";
   const sideTools = agentMode || columnsMode;
@@ -369,6 +377,7 @@ function Workbench({
   const buildAfterSave = useRef(false);
   const view = useRef<EditorView | null>(null);
   const mtime = useRef(0);
+  const observedFile = useRef({ rootId: "", file: "", content: "" });
   const pdfOnly = agentMode || (expandedPdf && showPdf);
   const agentColumns = fitAgentColumns(workbenchSize.width, layout.agentWidth);
   const columns = fitThreeColumns(
@@ -484,6 +493,7 @@ function Workbench({
     setSupport(extension);
     setText(content);
     setSavedText(content);
+    observedFile.current = { rootId, file, content };
     setDiskConflict(false);
   }
   // A fresh editor per file keeps undo history separate between files.
@@ -563,15 +573,53 @@ function Workbench({
     };
   }, [project.id, project.folder, project.mainFile]);
   useEffect(() => {
-    // The editor paints first; the shell starts once the window is idle.
+    if (terminalReady || !visible || !showTerminal || bottomTab !== "terminal")
+      return;
+    // Start a shell only when its terminal is requested and visible.
     const id = requestIdleCallback(() => setTerminalReady(true), {
       timeout: 1000,
     });
     return () => cancelIdleCallback(id);
-  }, []);
+  }, [terminalReady, visible, showTerminal, bottomTab]);
   useEffect(() => {
-    if (visible) onStatus({ file: active, dirty });
-  }, [active, dirty, visible]);
+    onStatus({
+      file: active,
+      dirty,
+      busy:
+        loading ||
+        saving ||
+        busy ||
+        agentRunning ||
+        agentBuilding ||
+        pdfPending,
+      visible,
+    });
+  }, [
+    active,
+    dirty,
+    visible,
+    loading,
+    saving,
+    busy,
+    agentRunning,
+    agentBuilding,
+    pdfPending,
+  ]);
+  const recordSourceChange = useStableCallback(() => {
+    void update({ lastSubstantiveUpdate: new Date().toISOString() }).catch(
+      (error: Error) => report(error.message),
+    );
+  });
+  const observeExternalContent = (content: string) => {
+    const previous = observedFile.current;
+    if (
+      previous.rootId === activeRoot &&
+      previous.file === active &&
+      previous.content !== content
+    )
+      recordSourceChange();
+    observedFile.current = { rootId: activeRoot, file: active, content };
+  };
   // The agent's edits on disk win while it works; callers stop here too.
   async function save(manual = false) {
     if (!active) return;
@@ -596,6 +644,12 @@ function Workbench({
         mtime.current || undefined,
       );
       setSavedText(text);
+      observedFile.current = {
+        rootId: activeRoot,
+        file: active,
+        content: text,
+      };
+      if (dirty) recordSourceChange();
       await draft.saved(text);
       setDiskConflict(false);
       setFileRevision((revision) => revision + 1);
@@ -623,6 +677,7 @@ function Workbench({
       const api = window.research!;
       const time = await api.fileMtime(project.id, active, activeRoot);
       const content = await api.readFile(project.id, active, activeRoot);
+      observeExternalContent(content);
       mtime.current = time;
       const editor = view.current;
       if (editor?.dom.isConnected && editor.state.doc.toString() !== content) {
@@ -651,8 +706,13 @@ function Workbench({
       .research!.fileMtime(project.id, active, activeRoot)
       .catch(() => 0);
     if (!time || time === mtime.current) return;
-    if (dirty) setDiskConflict(true);
-    else {
+    if (dirty) {
+      const content = await window
+        .research!.readFile(project.id, active, activeRoot)
+        .catch(() => null);
+      if (content !== null) observeExternalContent(content);
+      setDiskConflict(true);
+    } else {
       await reloadActive();
       noteExternalChange();
     }
@@ -660,8 +720,13 @@ function Workbench({
   // Unsaved edits are never replaced: they get the Reload / Keep mine choice.
   const filesChanged = useStableCallback(async () => {
     await reload();
-    if (dirty) setDiskConflict(true);
-    else await reloadActive();
+    if (dirty) {
+      const content = await window
+        .research!.readFile(project.id, active, activeRoot)
+        .catch(() => null);
+      if (content !== null) observeExternalContent(content);
+      setDiskConflict(true);
+    } else await reloadActive();
     noteExternalChange();
   });
   const noteExternalChange = () => {
@@ -692,6 +757,18 @@ function Workbench({
       report((error as Error).message);
     }
   }, [filesChanged, project.id, report]);
+  useEffect(() => {
+    const refresh = (event: Event) => {
+      if (
+        (event as CustomEvent<{ projectId: string }>).detail?.projectId ===
+        project.id
+      )
+        void refreshAfterAgent();
+    };
+    window.addEventListener("research:repository-updated", refresh);
+    return () =>
+      window.removeEventListener("research:repository-updated", refresh);
+  }, [project.id, refreshAfterAgent]);
   const onWindowEvent = useStableCallback((event: Event) => {
     if (!visible && event.type !== "beforeunload") return;
     if (event.type === "focus") {
@@ -1359,6 +1436,18 @@ function Workbench({
         </div>
         <div className="toolbar-actions">
           <button
+            className="button small"
+            onClick={() =>
+              window.dispatchEvent(
+                new CustomEvent("research:open-overleaf", {
+                  detail: { projectId: project.id },
+                }),
+              )
+            }
+          >
+            <Link2 size={14} /> Overleaf
+          </button>
+          <button
             className="icon-button layout-reset"
             title="Reset panel layout"
             onClick={() => {
@@ -1693,6 +1782,7 @@ function Workbench({
           >
             {pdf ? (
               <PdfReader
+                onPendingChange={setPdfPending}
                 key={pdf.url}
                 projectId={project.id}
                 pdf={pdf}

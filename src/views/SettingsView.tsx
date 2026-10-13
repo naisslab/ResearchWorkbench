@@ -1,3 +1,4 @@
+import SetupDiagnostics from "../SetupDiagnostics";
 import BackupControls from "../BackupControls";
 import { useState } from "react";
 import {
@@ -51,6 +52,7 @@ export default function SettingsView({
   };
   return (
     <div className="settings-layout">
+      <SetupDiagnostics />
       <section className="detail-card">
         <div className="section-heading">
           <h2>
@@ -226,6 +228,15 @@ export default function SettingsView({
           >
             <ArrowUpFromLine size={16} /> Import workspace
           </button>
+        </div>
+        <div className="backup-actions">
+          <button className="button" onClick={() => run(() => exclusive(async () => {
+            const next = await window.research!.importProject();
+            if (next) { imported(next); notify("Project metadata imported. Attach its local manuscript folder to start writing."); }
+          }))}>Import project metadata</button>
+          <button className="button" onClick={() => run(async () => {
+            if (await window.research!.exportCalendar()) notify("Calendar exported.");
+          })}>Export calendar</button>
         </div>
         <p className="form-help">
           Exports contain metadata and local folder paths. Back up your project

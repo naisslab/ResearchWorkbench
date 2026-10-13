@@ -587,6 +587,7 @@ export default memo(function PdfReader({
   onInverseSearch,
   expanded,
   onExpand,
+  onPendingChange,
 }: {
   projectId: string;
   pdf: { url: string; name: string };
@@ -601,6 +602,8 @@ export default memo(function PdfReader({
   onInverseSearch(target: PdfTarget): Promise<void>;
   expanded: boolean;
   onExpand(): void;
+  /** Keeps an inactive workbench alive until its annotations are saved. */
+  onPendingChange?(pending: boolean): void;
 }) {
   const visible = useWorkbenchVisible();
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
@@ -793,7 +796,10 @@ export default memo(function PdfReader({
         value.items,
         value.pages,
       );
-      if (pending.current === value) pending.current = null;
+      if (pending.current === value) {
+        pending.current = null;
+        onPendingChange?.(false);
+      }
       setSavedAt(saved.updatedAt);
     } catch (error) {
       setError(`Annotations were not saved: ${(error as Error).message}`);
@@ -801,7 +807,7 @@ export default memo(function PdfReader({
     } finally {
       setSaving(false);
     }
-  }, [projectId, pdf.url]);
+  }, [projectId, pdf.url, onPendingChange]);
   useEffect(() => {
     let cancelled = false;
     const loading = window
@@ -925,6 +931,7 @@ export default memo(function PdfReader({
       }
       current.current = next;
       pending.current = { items: next, pages: pageCount };
+      onPendingChange?.(true);
       setItems(next);
       setError("");
       setExported(false);
@@ -934,7 +941,7 @@ export default memo(function PdfReader({
         400,
       );
     },
-    [pageCount, persist],
+    [pageCount, persist, onPendingChange],
   );
   const undo = useCallback(
     (redo = false) => {
@@ -948,6 +955,8 @@ export default memo(function PdfReader({
   );
   useEffect(() => {
     const flush = () => void persist().catch(() => {});
+    const flushForOperation = (event: Event) =>
+      (event as CustomEvent<Promise<void>[]>).detail.push(persist());
     const keydown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement;
       if (!target.closest(".pdf-reader")?.contains(scroller.current)) return;
@@ -968,9 +977,11 @@ export default memo(function PdfReader({
     };
     window.addEventListener("keydown", keydown, true);
     window.addEventListener("pagehide", flush);
+    window.addEventListener("research:flush-drafts", flushForOperation);
     return () => {
       window.removeEventListener("keydown", keydown, true);
       window.removeEventListener("pagehide", flush);
+      window.removeEventListener("research:flush-drafts", flushForOperation);
     };
   }, [persist, undo]);
   const add = useCallback(

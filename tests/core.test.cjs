@@ -18,7 +18,7 @@ test("new workspace has research areas without placeholder projects or files", a
   assert.deepEqual(state.projects, []);
   assert.deepEqual(
     state.areas.map((a) => a.name),
-    ["ML Systems", "Security and Privacy", "Cyber-Physical Systems"],
+    ["Research"],
   );
   core.validateState(state);
   const file = path.join(root, "workspace.json");

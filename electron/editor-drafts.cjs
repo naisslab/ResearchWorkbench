@@ -75,6 +75,32 @@ function createDraftStore(directory) {
         await protectedWrite(location, JSON.stringify({ drafts: items }));
       else await fs.rm(location, { force: true });
     });
-  return { read, write, flush: queue.settled };
+  const pendingIn = (folder) =>
+    queue(async () => {
+      const root = await fs.realpath(folder);
+      const names = await fs.readdir(directory).catch((error) => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      });
+      const pending = [];
+      for (const name of names.filter((name) => name.endsWith(".json"))) {
+        for (const draft of await versions(path.join(directory, name))) {
+          if (draft.text === draft.base) continue;
+          const draftRoot = await fs
+            .realpath(draft.root)
+            .catch(() => path.resolve(draft.root));
+          const relative = path.relative(root, draftRoot);
+          if (relative.startsWith("..") || path.isAbsolute(relative)) continue;
+          const file = path.resolve(draftRoot, draft.file || "");
+          const within = path.relative(draftRoot, file);
+          if (!within || within.startsWith("..") || path.isAbsolute(within))
+            continue;
+          const saved = await fs.readFile(file, "utf8").catch(() => null);
+          if (saved !== draft.text) pending.push(draft.file);
+        }
+      }
+      return [...new Set(pending)];
+    });
+  return { read, write, pendingIn, flush: queue.settled };
 }
 module.exports = { createDraftStore };

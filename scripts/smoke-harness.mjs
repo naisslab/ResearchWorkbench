@@ -14,13 +14,16 @@ const errors = [];
 
 export async function launchApp({
   dataDirectory = path.join(root, "user-data"),
+  demoData = true,
+  entry = ".",
 } = {}) {
   app = await electron.launch({
     executablePath: process.env.RESEARCH_APP_PATH || undefined,
-    args: process.env.RESEARCH_APP_PATH ? [] : ["."],
+    args: process.env.RESEARCH_APP_PATH ? [] : [entry],
     cwd: process.cwd(),
     env: {
       ...process.env,
+      RESEARCH_DEMO_DATA: demoData ? "1" : "",
       RESEARCH_TEST_DATA: dataDirectory,
       RESEARCH_DEV_URL: "",
       RESEARCH_MAC_DDL_DIR: macDdlDir,

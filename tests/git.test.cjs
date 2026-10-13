@@ -240,3 +240,45 @@ test("Fetch checks remote changes without altering dirty files or requiring an u
   assert.equal(divergent.ahead, 1);
   assert.equal(divergent.behind, 1);
 });
+
+test("Connecting and cloning discover a legacy master default instead of reporting an empty successful pull", async (t) => {
+  const root = await fs.mkdtemp(
+    path.join(os.tmpdir(), "research-git-default-"),
+  );
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const remote = path.join(root, "remote.git"),
+    source = path.join(root, "source"),
+    local = path.join(root, "local");
+  await fs.mkdir(remote);
+  await fs.mkdir(source);
+  await fs.mkdir(local);
+  await command(remote, ["init", "--bare", "--initial-branch=master"]);
+  await command(source, ["init", "--initial-branch=master"]);
+  await command(source, ["config", "user.name", "Default Test"]);
+  await command(source, ["config", "user.email", "default@example.test"]);
+  await fs.writeFile(path.join(source, "paper.tex"), "Shared manuscript\n");
+  await command(source, ["add", "."]);
+  await command(source, ["commit", "-m", "First revision"]);
+  await command(source, ["remote", "add", "origin", remote]);
+  await command(source, ["push", "origin", "master"]);
+  await git.connect(local, remote);
+  assert.equal((await git.sync(local, "pull")).remoteBranch, "master");
+  assert.equal(
+    await fs.readFile(path.join(local, "paper.tex"), "utf8"),
+    "Shared manuscript\n",
+  );
+  const cloned = path.join(root, "cloned");
+  const result = await git.clone(remote, cloned);
+  assert.equal(result.remoteBranch, "master");
+  assert.match(result.history[0].hash, /^[a-f\d]{40}$/);
+  await assert.rejects(git.clone(remote, cloned), /new folder/);
+  await assert.rejects(
+    git.connect(local, "https://git:secret@git.overleaf.com/project"),
+    /credentials out/,
+  );
+  await command(local, ["branch", "--set-upstream-to=origin/master"]);
+  await command(remote, ["config", "receive.denyDeleteCurrent", "ignore"]);
+  await command(source, ["push", "origin", "--delete", "master"]);
+  await command(local, ["fetch", "--prune"]);
+  await assert.rejects(git.sync(local, "pull"), /unavailable/);
+});

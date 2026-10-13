@@ -1,12 +1,26 @@
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
-const data = require("./research-catalog.json");
 const { DEFAULT_AREAS, stringList } = require("./core.cjs");
 
 async function researchCatalog(
-  root = path.join(os.homedir(), "Documents", "GitHub"),
+  root,
+  {
+    includePersonalData = root !== undefined ||
+      process.env.RESEARCH_DEMO_DATA === "1",
+  } = {},
 ) {
+  if (!includePersonalData) return { checkedAt: "", areas: [], candidates: [] };
+  // Historical author data is kept for explicit source-tree imports only.
+  // It is excluded from distributed applications.
+  let data;
+  try {
+    data = require("./research-catalog.json");
+  } catch (error) {
+    if (error.code !== "MODULE_NOT_FOUND") throw error;
+    return { checkedAt: "", areas: [], candidates: [] };
+  }
+  root ||= path.join(os.homedir(), "Documents", "GitHub");
   const candidates = await Promise.all(
     data.entries.map(async (entry) => {
       const folders = [];

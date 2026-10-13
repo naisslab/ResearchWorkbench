@@ -19,6 +19,8 @@ const crypto = require("node:crypto");
 const core = require("./core.cjs");
 const { createDraftStore } = require("./editor-drafts.cjs");
 const backup = require("./backup.cjs");
+const { createWorkspacePersistence } = require("./workspace-persistence.cjs");
+const { createPdfSessions } = require("./pdf-sessions.cjs");
 const { createReferences } = require("./references.cjs");
 const { pdfReportInWorker } = require("./pdf-report.cjs");
 const { applicationMenu, editMenu } = require("./menu.cjs");
@@ -80,16 +82,18 @@ function applyAppearance() {
 }
 const writeJson = (file, value) =>
   core.atomicWrite(file, JSON.stringify(value, null, 2));
-function updateState(transform, backup) {
-  return queue(async () => {
-    const next = core.validateState(await transform(state));
-    if (next === state) return state;
-    if (backup)
-      await fs.copyFile(store, `${store}.before-${backup}-${Date.now()}.bak`);
-    await writeJson(store, next);
-    return (state = next);
-  });
-}
+const workspacePersistence = createWorkspacePersistence({
+  read: () => state,
+  validate: core.validateState,
+  persist: (next) => writeJson(store, next),
+  before: (reason) =>
+    fs.copyFile(store, `${store}.before-${reason}-${Date.now()}.bak`),
+  commit: (next) => {
+    state = next;
+  },
+  queue,
+});
+const updateState = workspacePersistence.update;
 // A damaged workspace is kept; the user can start from the newest valid copy.
 // Unreadable files (permissions, disk errors) are not replaced.
 async function recoverWorkspace(error) {
@@ -150,7 +154,7 @@ function stopTerminals(predicate = () => true) {
       session.process.kill();
     }
 }
-const pdfs = new Map();
+const pdfs = createPdfSessions();
 const builds = new Map();
 const environment = require("./environment.cjs");
 function project(id) {
@@ -163,41 +167,10 @@ const agentProject = (id) =>
 function send(channel, payload) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 }
-function pdfUrl(
-  file,
-  projectId,
-  name = path.basename(file),
-  sourcePath = file,
-) {
-  const { size, mtimeMs } = fsSync.statSync(file);
-  const version = [file, projectId, name, sourcePath, size, mtimeMs].join("\0");
-  // An unchanged PDF keeps its URL, so a no-op build leaves the reader as it is.
-  for (const [url, document] of pdfs)
-    if (document.version === version) {
-      pdfs.delete(url);
-      pdfs.set(url, document);
-      return url;
-    }
-  const url = `research-pdf://document/${crypto.randomUUID()}`;
-  pdfs.set(url, { file, projectId, name, sourcePath, version });
-  // Four documents cover the open reader and saves still in flight.
-  if (pdfs.size > 4) pdfs.delete(pdfs.keys().next().value);
-  return url;
-}
+const pdfUrl = pdfs.open;
 async function pdfDocument(id, url) {
   project(id);
-  const document = pdfs.get(url);
-  if (!document || document.projectId !== id)
-    throw new Error("PDF session expired. Reopen the document.");
-  pdfs.delete(url);
-  pdfs.set(url, document);
-  if (!document.bytes) {
-    const metadata = await fs.stat(document.file);
-    if (metadata.size > core.MAX_PDF_BYTES)
-      throw new Error("PDF is too large to annotate (maximum 64 MB).");
-    document.bytes = await fs.readFile(document.file);
-  }
-  return document;
+  return pdfs.read(id, url);
 }
 function handle(channel, fn) {
   ipcMain.handle(channel, async (event, ...args) => {
@@ -214,6 +187,9 @@ function handle(channel, fn) {
       throw new Error(
         "Workspace backup or restoration is in progress. Please wait.",
       );
+    // Renderer metadata is optimistic. Follow-up reads and file operations must
+    // observe the saved project roots, after all earlier save requests settle.
+    if (channel !== "workspace:save") await workspacePersistence.settled();
     return fn(...args);
   });
 }
@@ -266,6 +242,7 @@ function createWindow() {
     void ai?.stopAll().catch(() => {});
     for (const controller of builds.values()) controller.abort();
     stopTerminals();
+    void pdfs.clear();
     win = null;
   });
 }
@@ -299,11 +276,17 @@ app
         }
       }
     }
-    state = await runMigrations(saved || core.seedWorkspace(), {
-      catalog: () => catalog.researchCatalog(),
-      tracker: deadlines.readMacTracker,
-      feed: () => deadlineFeed.snapshot(),
-    });
+    const includePersonalData =
+      !app.isPackaged && process.env.RESEARCH_DEMO_DATA === "1";
+    state = await runMigrations(
+      saved || core.seedWorkspace({ personal: includePersonalData }),
+      {
+        catalog: () => catalog.researchCatalog(),
+        tracker: deadlines.readMacTracker,
+        feed: () => deadlineFeed.snapshot(),
+      },
+      { includePersonalData },
+    );
     if (state !== saved) {
       if (saved)
         await fs.copyFile(store, `${store}.before-migration-${Date.now()}.bak`);
@@ -313,6 +296,125 @@ app
     const references = createReferences((url, options) =>
       net.fetch(url, options),
     );
+    const setup = require("./setup.cjs");
+    const portability = require("./project-portability.cjs");
+    handle("project:export-submission", async (id) => {
+      const p = project(id);
+      if (!p.folder) throw new Error("Attach a manuscript folder first.");
+      const choice = await dialog.showOpenDialog(win, {
+        title: "Choose a destination for the submission bundle",
+        properties: ["openDirectory", "createDirectory"],
+      });
+      if (choice.canceled) return null;
+      return repositoryOperation(
+        p.folder,
+        async () => {
+          const status = await git.status(p.folder);
+          const result =
+            await require("./submission-export.cjs").exportSubmission(
+              p,
+              choice.filePaths[0],
+              { revision: status.history?.[0]?.hash },
+            );
+          shell.showItemInFolder(result.manifestPath);
+          return result;
+        },
+        { checkDrafts: true },
+      );
+    });
+    handle("setup:diagnostics", () => setup.diagnostics());
+    handle("project:open-local", async (kind) => {
+      if (!["folder", "example"].includes(kind))
+        throw new Error("Choose a folder or example.");
+      const choice = await dialog.showOpenDialog(win, {
+        properties: ["openDirectory", "createDirectory"],
+        title:
+          kind === "example"
+            ? "Choose where to create the example folder"
+            : "Open a research folder",
+      });
+      if (choice.canceled) return null;
+      const folder =
+        kind === "example"
+          ? await setup.createExample(choice.filePaths[0])
+          : choice.filePaths[0];
+      const files = await core.listFiles(folder);
+      const main = files.includes("main.tex")
+        ? "main.tex"
+        : files.find((file) => file.endsWith(".tex")) || "";
+      const p = setup.blankProject(
+        state.areas[0].id,
+        folder,
+        main,
+        kind === "example" ? "Example manuscript" : path.basename(folder),
+      );
+      if (kind === "example") {
+        p.summary =
+          "A synthetic manuscript for trying editing, compilation, references, and review.";
+        p.tasks = [
+          {
+            id: crypto.randomUUID(),
+            text: "Edit a paragraph, save, and compile the manuscript",
+            done: false,
+            pinned: true,
+          },
+        ];
+      }
+      const workspace = await updateState((current) => ({
+        ...current,
+        projects: [...current.projects, p],
+      }));
+      return { workspace, projectId: p.id };
+    });
+    handle("project:export-manifest", async (id) => {
+      const p = project(id);
+      const manifest = portability.makeProjectManifest(state, id);
+      const choice = await dialog.showSaveDialog(win, {
+        defaultPath: `${p.name.replace(/[^\p{L}\p{N} _-]/gu, "-")}.research.json`,
+        filters: [{ name: "Research project metadata", extensions: ["json"] }],
+      });
+      if (choice.canceled || !choice.filePath) return false;
+      await writeJson(choice.filePath, manifest);
+      return true;
+    });
+    handle("project:import-manifest", async () => {
+      const choice = await dialog.showOpenDialog(win, {
+        properties: ["openFile"],
+        filters: [{ name: "Research project metadata", extensions: ["json"] }],
+      });
+      if (choice.canceled) return null;
+      const file = choice.filePaths[0];
+      if ((await fs.stat(file)).size > 2 * 1024 * 1024)
+        throw new Error("Project metadata exceeds 2 MB.");
+      const manifest = portability.validateProjectManifest(
+        JSON.parse(await fs.readFile(file, "utf8")),
+      );
+      const confirmation = await dialog.showMessageBox(win, {
+        type: "question",
+        buttons: ["Cancel", "Import project"],
+        defaultId: 1,
+        cancelId: 0,
+        message: `Import ${manifest.project.name}?`,
+        detail:
+          "This adds a separate project with new identifiers. Attach local files after import; existing projects stay unchanged.",
+      });
+      if (confirmation.response !== 1) return null;
+      return updateState(
+        (current) =>
+          portability.importProjectManifest(current, manifest).workspace,
+      );
+    });
+    handle("calendar:export", async (projectId) => {
+      if (projectId) project(projectId);
+      const data = portability.exportCalendar(state, { projectId });
+      const choice = await dialog.showSaveDialog(win, {
+        defaultPath: "research-dates.ics",
+        filters: [{ name: "Calendar", extensions: ["ics"] }],
+      });
+      if (choice.canceled || !choice.filePath) return false;
+      await core.atomicWrite(choice.filePath, data);
+      return true;
+    });
     handle("references:lookup", (input) => references.lookup(input));
     handle("references:bibtex", (kind, id) => references.bibtex(kind, id));
     handle("deadlines:feed", () => feedResult());
@@ -397,22 +499,20 @@ app
         "research",
       );
     });
-    // Memory changes at once, so no handler waits for the disk; the queued
-    // write stores whatever state is current when it runs.
-    handle("workspace:save", (next) => {
-      core.validateState(next);
+    handle("workspace:save", async (next) => {
+      const before = state;
+      const saved = await workspacePersistence.replace(next);
       stopTerminals(({ projectId }, key) => {
-        const after = next.projects.find((p) => p.id === projectId);
-        const before = state.projects.find((p) => p.id === projectId);
+        const after = saved.projects.find((p) => p.id === projectId);
+        const previous = before.projects.find((p) => p.id === projectId);
         return (
           !after ||
-          after.folder !== before?.folder ||
-          (key.endsWith(":ssh") && after.sshHost !== before?.sshHost)
+          after.folder !== previous?.folder ||
+          (key.endsWith(":ssh") && after.sshHost !== previous?.sshHost)
         );
       });
-      state = next;
       applyAppearance();
-      return queue(() => writeJson(store, state)).then(() => true);
+      return true;
     });
     handle("workspace:export", async () => {
       const choice = await dialog.showSaveDialog(win, {
@@ -447,7 +547,7 @@ app
       if (confirm.response !== 1) return null;
       await updateState(() => imported, "import");
       stopTerminals();
-      pdfs.clear();
+      await pdfs.clear();
       return state;
     });
     handle("folder:choose", async (id) => {
@@ -473,26 +573,347 @@ app
     handle("git:diff", (id, rootId, file) =>
       git.diff(core.fileRoot(project(id), rootId), file),
     );
-    for (const operation of ["init", "connect", "commit", "sync"]) {
-      handle(`git:${operation}`, async (id, rootId, argument, files) => {
-        const folder = core.fileRoot(project(id), rootId);
-        const key = await git.toplevel(folder);
-        if (ai?.isRunning(id))
-          throw new Error(
-            "Wait for the project agent or restore to finish before changing Git files.",
-          );
-        if (gitOperations.has(key))
-          throw new Error(
-            "A Git operation is already running for this repository.",
-          );
-        gitOperations.add(key);
-        try {
-          return await git[operation](folder, argument, files);
-        } finally {
-          gitOperations.delete(key);
+    async function repositoryOperation(
+      folder,
+      run,
+      { checkDrafts = false } = {},
+    ) {
+      const key = await git.toplevel(folder);
+      if (
+        ai?.isRunning(WORKSPACE_AGENT_ID) ||
+        state.projects.some((p) => ai?.isRunning(p.id))
+      )
+        throw new Error(
+          "Wait for running agents to finish before changing manuscript files.",
+        );
+      if (builds.size)
+        throw new Error(
+          "Wait for compilation to finish before changing manuscript files.",
+        );
+      if (gitOperations.has(key))
+        throw new Error("An operation is already running for this repository.");
+      gitOperations.add(key);
+      try {
+        if (checkDrafts) {
+          await draftRequests.settled();
+          const pending = await drafts.pendingIn(key);
+          if (pending.length)
+            throw new Error(
+              `Save or discard the editor drafts before synchronizing: ${pending.slice(0, 5).join(", ")}`,
+            );
         }
+        return await run();
+      } finally {
+        gitOperations.delete(key);
+      }
+    }
+    for (const operation of ["init", "connect", "commit", "sync"]) {
+      handle(`git:${operation}`, (id, rootId, argument, files) => {
+        const folder = core.fileRoot(project(id), rootId);
+        return repositoryOperation(
+          folder,
+          () => git[operation](folder, argument, files),
+          { checkDrafts: operation === "sync" },
+        );
       });
     }
+    const overleaf = require("./overleaf.cjs").createOverleaf({
+      directory: path.join(app.getPath("userData"), "overleaf"),
+      encryption: safeStorage,
+    });
+    async function overleafStatus(id) {
+      const p = project(id),
+        status = await overleaf.status(id);
+      if (
+        status.connected &&
+        (await fs.realpath(p.folder).catch(() => "")) !==
+          status.connection.folder
+      )
+        throw new Error(
+          "The attached folder changed. Restore the original manuscript folder before using this Overleaf connection.",
+        );
+      return status;
+    }
+    handle("overleaf:status", overleafStatus);
+    async function assertOverleafFolderOwner(id, folder) {
+      const canonical = await fs.realpath(folder);
+      for (const other of state.projects) {
+        if (
+          other.id === id ||
+          !other.folder ||
+          (await fs.realpath(other.folder).catch(() => "")) !== canonical
+        )
+          continue;
+        if ((await overleaf.status(other.id)).connected)
+          throw new Error(
+            `This manuscript folder is already connected through ${other.name}. Use that project or clone a separate copy.`,
+          );
+      }
+    }
+    handle("overleaf:connect", async (input) => {
+      if (!input || typeof input !== "object")
+        throw new Error("Enter the Overleaf connection details.");
+      const { projectId, url, token, mode, clone } = input;
+      const parsed = require("./overleaf.cjs").parseOverleafUrl(url);
+      const existing = projectId ? project(projectId) : null;
+      let folder = existing?.folder;
+      if (clone || !folder) {
+        const choice = await dialog.showSaveDialog(win, {
+          title: "Choose a new manuscript folder",
+          defaultPath: path.join(
+            app.getPath("documents"),
+            "Overleaf-manuscript",
+          ),
+          buttonLabel: "Clone here",
+        });
+        if (choice.canceled || !choice.filePath) return null;
+        folder = choice.filePath;
+      }
+      const id = existing?.id || crypto.randomUUID();
+      const shouldClone = clone || !existing?.folder;
+      let registered = false,
+        priorProject,
+        registeredFolder;
+      try {
+        await repositoryOperation(
+          shouldClone ? path.dirname(folder) : folder,
+          async () => {
+            if (shouldClone && existing?.folder) {
+              await draftRequests.settled();
+              if (
+                (await drafts.pendingIn(await git.toplevel(existing.folder)))
+                  .length
+              )
+                throw new Error(
+                  "Save or discard editor drafts before replacing this project's manuscript folder.",
+                );
+            }
+            if (!shouldClone) await assertOverleafFolderOwner(id, folder);
+            await overleaf.connect(
+              { projectId: id, folder, url, token, mode, clone: shouldClone },
+              async (connection) => {
+                registeredFolder = connection.folder;
+                await assertOverleafFolderOwner(id, registeredFolder);
+                const files = await core.listFiles(registeredFolder);
+                await updateState((current) => {
+                  priorProject = current.projects.find(
+                    (item) => item.id === id,
+                  );
+                  const mainFile =
+                    priorProject?.mainFile &&
+                    files.includes(priorProject.mainFile)
+                      ? priorProject.mainFile
+                      : files.includes("main.tex")
+                        ? "main.tex"
+                        : files.find((file) => file.endsWith(".tex")) || "";
+                  const p = priorProject
+                    ? {
+                        ...priorProject,
+                        folder: registeredFolder,
+                        mainFile,
+                        updatedAt: new Date().toISOString(),
+                      }
+                    : {
+                        ...setup.blankProject(
+                          current.areas[0].id,
+                          registeredFolder,
+                          mainFile,
+                          String(input.name || "Overleaf manuscript").slice(
+                            0,
+                            100,
+                          ),
+                        ),
+                        id,
+                      };
+                  if (
+                    shouldClone &&
+                    priorProject?.folder &&
+                    priorProject.folder !== registeredFolder &&
+                    !(p.localFolders || []).some(
+                      (root) => root.folder === priorProject.folder,
+                    )
+                  )
+                    p.localFolders = [
+                      ...(p.localFolders || []),
+                      {
+                        id: crypto.randomUUID(),
+                        label: "Previous manuscript",
+                        folder: priorProject.folder,
+                      },
+                    ];
+                  p.links = [
+                    ...(p.links || []).filter(
+                      (link) =>
+                        link.url !== parsed.projectUrl && link.url !== url,
+                    ),
+                    {
+                      id: crypto.randomUUID(),
+                      label: "Overleaf",
+                      url: parsed.projectUrl,
+                    },
+                  ];
+                  return {
+                    ...current,
+                    projects: priorProject
+                      ? current.projects.map((item) =>
+                          item.id === id ? p : item,
+                        )
+                      : [...current.projects, p],
+                  };
+                });
+                registered = true;
+              },
+            );
+          },
+          { checkDrafts: !shouldClone },
+        );
+      } catch (error) {
+        if (registered && !error.connectionCommitted) {
+          await updateState((current) => ({
+            ...current,
+            projects: current.projects.flatMap((item) =>
+              item.id === id && item.folder === registeredFolder
+                ? priorProject
+                  ? [priorProject]
+                  : []
+                : [item],
+            ),
+          })).catch(() => {});
+        }
+        const preserved =
+          shouldClone &&
+          (await fs.stat(folder).then(
+            (item) => item.isDirectory(),
+            () => false,
+          ));
+        throw new Error(
+          `${error.message}${preserved ? ` The cloned source was preserved at ${folder}. Reconnect that existing folder to recover it.` : ""}`,
+        );
+      }
+      return { workspace: state, projectId: id };
+    });
+    handle("overleaf:reconnect", async (id, token) => {
+      const status = await overleafStatus(id);
+      if (!status.connected) throw new Error("Connect the manuscript first.");
+      await repositoryOperation(project(id).folder, () =>
+        overleaf.replaceCredential(id, token),
+      );
+    });
+    handle("overleaf:action", async (id, action, options = {}) => {
+      const p = project(id);
+      const allowed = [
+        "check",
+        "plan",
+        "resolve",
+        "apply",
+        "publish",
+        "cancel",
+        "restore",
+        "mode",
+        "disconnect",
+        "checkpoint",
+        "compile",
+        "open-preview",
+      ];
+      if (!allowed.includes(action))
+        throw new Error("Unknown Overleaf action.");
+      await overleafStatus(id);
+      return repositoryOperation(
+        p.folder,
+        async () => {
+          const tx = options.transactionId;
+          if (action === "mode") await overleaf.setMode(id, options.mode);
+          else if (action === "checkpoint")
+            await git.commit(p.folder, options.message, options.files);
+          else if (action === "compile") {
+            const staged = { ...p, ...(await overleaf.stagingProject(id, tx)) };
+            const current = await overleaf.review(id, tx);
+            if (current.reviewToken !== options.reviewToken)
+              throw new Error(
+                "The source review changed. Refresh before compiling.",
+              );
+            await overleaf.recordCompile(id, tx, {
+              ok: false,
+              message: "Compilation in progress or interrupted.",
+              reviewToken: current.reviewToken,
+            });
+            const controller = new AbortController();
+            builds.set(id, controller);
+            const output = coalesce(
+              (text) => send("latex:output", { projectId: id, text }),
+              100,
+            );
+            try {
+              const result = await core.compile(
+                staged,
+                output,
+                environment,
+                controller.signal,
+                (config) => confirmBuildConfig(id, config),
+              );
+              const message = result.ok
+                ? "The reviewed source compiled successfully."
+                : result.log.slice(-2000);
+              await overleaf.recordCompile(id, tx, {
+                ok: result.ok,
+                message,
+                reviewToken: current.reviewToken,
+              });
+              return { message };
+            } catch (error) {
+              await overleaf
+                .recordCompile(id, tx, {
+                  ok: false,
+                  message: error.message,
+                  reviewToken: current.reviewToken,
+                })
+                .catch(() => {});
+              throw error;
+            } finally {
+              output.flush();
+              builds.delete(id);
+            }
+          } else if (action === "open-preview") {
+            const review = await overleaf.review(id, tx);
+            if (
+              !review.compile?.ok ||
+              review.compile.reviewToken !== review.reviewToken
+            )
+              throw new Error(
+                "Compile the current review before opening its PDF.",
+              );
+            const staged = await overleaf.stagingProject(id, tx);
+            const main = await core.safeFile(staged.folder, p.mainFile);
+            const target = core.pdfPath(main);
+            const canonical = await fs.realpath(target);
+            if (
+              !canonical.startsWith(
+                `${await fs.realpath(staged.folder)}${path.sep}`,
+              ) ||
+              !(await fs.stat(canonical)).isFile()
+            )
+              throw new Error(
+                "The reviewed PDF must be a file inside the private review folder.",
+              );
+            const error = await shell.openPath(target);
+            if (error) throw new Error(error);
+          } else if (["check", "disconnect"].includes(action))
+            await overleaf[action](id);
+          else if (action === "plan") await overleaf.plan(id, options);
+          else await overleaf[action](id, tx, options);
+          return undefined;
+        },
+        {
+          checkDrafts: [
+            "plan",
+            "apply",
+            "publish",
+            "restore",
+            "checkpoint",
+          ].includes(action),
+        },
+      );
+    });
     async function textTarget(id, relative, rootId) {
       const target = await core.safeFile(
         core.fileRoot(project(id), rootId),
@@ -567,61 +988,69 @@ app
         };
       },
     );
-    handle("file:write", async (id, relative, contents, rootId, expected) => {
-      if (ai?.isRunning(id))
-        throw new Error(
-          "Wait for the project agent to finish or stop it before saving.",
-        );
-      if (
-        typeof contents !== "string" ||
-        Buffer.byteLength(contents) > 2 * 1024 * 1024
-      )
-        throw new Error("File is too large.");
-      const target = await textTarget(id, relative, rootId);
-      if (
-        expected !== undefined &&
-        (await fs.stat(target)).mtimeMs !== expected
-      )
-        throw new Error("Changed on disk since it was opened.");
-      await core.atomicWrite(target, contents);
-      return (await fs.stat(target)).mtimeMs;
-    });
-    handle("file:create", async (id, name, rootId) => {
-      if (!/\.(tex|bib|md|txt)$/.test(name))
-        throw new Error("Use a filename ending in .tex, .bib, .md, or .txt.");
-      const target = await core.safeNewPath(
-        core.fileRoot(project(id), rootId),
-        name,
-      );
-      await fs
-        .writeFile(
-          target,
-          name.endsWith(".tex") ? "\\section{New Section}\n" : "",
-          { flag: "wx" },
+    handle("file:write", (id, relative, contents, rootId, expected) =>
+      repositoryOperation(core.fileRoot(project(id), rootId), async () => {
+        if (ai?.isRunning(id))
+          throw new Error(
+            "Wait for the project agent to finish or stop it before saving.",
+          );
+        if (
+          typeof contents !== "string" ||
+          Buffer.byteLength(contents) > 2 * 1024 * 1024
         )
-        .catch((error) => {
-          throw error.code === "EEXIST"
-            ? new Error(`${name} already exists in this project.`)
-            : error;
-        });
-      return true;
-    });
-    handle("file:rename", async (id, rootId, from, to) => {
-      const source = await textTarget(id, from, rootId);
-      const target = await core.safeNewPath(
-        core.fileRoot(project(id), rootId),
-        to,
-      );
-      if (!core.isTextFile(target))
-        throw new Error("Keep an editable extension, such as .tex or .py.");
-      const existing = await fs.lstat(target).catch(() => null);
-      // A case-only rename on a case-insensitive volume finds the source itself.
-      if (existing && existing.ino !== (await fs.stat(source)).ino)
-        throw new Error(`${to} already exists in this project.`);
-      await fs.rename(source, target);
-    });
+          throw new Error("File is too large.");
+        const target = await textTarget(id, relative, rootId);
+        if (
+          expected !== undefined &&
+          (await fs.stat(target)).mtimeMs !== expected
+        )
+          throw new Error("Changed on disk since it was opened.");
+        await core.atomicWrite(target, contents);
+        return (await fs.stat(target)).mtimeMs;
+      }),
+    );
+    handle("file:create", (id, name, rootId) =>
+      repositoryOperation(core.fileRoot(project(id), rootId), async () => {
+        if (!/\.(tex|bib|md|txt)$/.test(name))
+          throw new Error("Use a filename ending in .tex, .bib, .md, or .txt.");
+        const target = await core.safeNewPath(
+          core.fileRoot(project(id), rootId),
+          name,
+        );
+        await fs
+          .writeFile(
+            target,
+            name.endsWith(".tex") ? "\\section{New Section}\n" : "",
+            { flag: "wx" },
+          )
+          .catch((error) => {
+            throw error.code === "EEXIST"
+              ? new Error(`${name} already exists in this project.`)
+              : error;
+          });
+        return true;
+      }),
+    );
+    handle("file:rename", (id, rootId, from, to) =>
+      repositoryOperation(core.fileRoot(project(id), rootId), async () => {
+        const source = await textTarget(id, from, rootId);
+        const target = await core.safeNewPath(
+          core.fileRoot(project(id), rootId),
+          to,
+        );
+        if (!core.isTextFile(target))
+          throw new Error("Keep an editable extension, such as .tex or .py.");
+        const existing = await fs.lstat(target).catch(() => null);
+        // A case-only rename on a case-insensitive volume finds the source itself.
+        if (existing && existing.ino !== (await fs.stat(source)).ino)
+          throw new Error(`${to} already exists in this project.`);
+        await fs.rename(source, target);
+      }),
+    );
     handle("file:trash", async (id, rootId, file) =>
-      shell.trashItem(await textTarget(id, file, rootId)),
+      repositoryOperation(core.fileRoot(project(id), rootId), async () =>
+        shell.trashItem(await textTarget(id, file, rootId)),
+      ),
     );
     handle("pdf:last", async (id) => {
       const p = project(id);
@@ -786,7 +1215,7 @@ app
           bindProfileId: profileId,
         });
         state = result.workspace;
-        pdfs.clear();
+        await pdfs.clear();
         await ai.dispose();
         restoredPendingRestart = true;
         return result;
@@ -935,6 +1364,10 @@ app
     // Compile and its latexdiff variant share the build slot, output stream
     // and latexmkrc trust.
     const build = async (id, run) => {
+      if (gitOperations.size)
+        throw new Error(
+          "Wait for the repository operation to finish before compiling.",
+        );
       if (ai?.isRunning(id))
         throw new Error(
           "Wait for the project agent to finish or stop it before compiling.",
@@ -1046,14 +1479,6 @@ app
         throw new Error(
           "Source lookup requires this project's compiled PDF. Compile the manuscript and use its PDF preview.",
         );
-      return { p, document };
-    }
-    handle("synctex:forward", async (id, file, line, rootId, url) => {
-      const { p } = await compiledPdf(id, url);
-      return core.synctexForward(p, file, line, rootId, environment);
-    });
-    handle("synctex:inverse", async (id, page, x, y, url) => {
-      const { p, document } = await compiledPdf(id, url);
       const metadata = await fs.stat(document.file).catch(() => null);
       const version =
         metadata &&
@@ -1069,6 +1494,14 @@ app
         throw new Error(
           "The PDF has changed on disk. Compile again to refresh the preview before locating the source.",
         );
+      return { p, document };
+    }
+    handle("synctex:forward", async (id, file, line, rootId, url) => {
+      const { p } = await compiledPdf(id, url);
+      return core.synctexForward(p, file, line, rootId, environment);
+    });
+    handle("synctex:inverse", async (id, page, x, y, url) => {
+      const { p } = await compiledPdf(id, url);
       return core.synctexInverse(p, page, x, y, environment);
     });
     handle("terminal:start", async (id, mode) => {

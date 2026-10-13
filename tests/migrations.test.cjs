@@ -16,7 +16,7 @@ const {
   validateState,
 } = require("../electron/core.cjs");
 
-test("a new workspace is upgraded once, after which no data source is read", async () => {
+test("an explicit historical import runs once, after which no data source is read", async () => {
   const catalog = await researchCatalog("/tmp/no-research-folders");
   let reads = 0;
   const sources = {
@@ -24,7 +24,9 @@ test("a new workspace is upgraded once, after which no data source is read", asy
     tracker: async () => (reads++, { deadlines: [] }),
     feed: async () => (reads++, { conferences: [] }),
   };
-  const first = await runMigrations(seedWorkspace(), sources);
+  const first = await runMigrations(seedWorkspace(), sources, {
+    includePersonalData: true,
+  });
   assert.equal(reads, 3);
   assert.equal(first.projects.length, 25);
   assert.equal(first.appearance, "system");
@@ -33,7 +35,10 @@ test("a new workspace is upgraded once, after which no data source is read", asy
     Array(4).fill(["research-web-rag"]),
   );
   reads = 0;
-  assert.equal(await runMigrations(first, sources), first);
+  assert.equal(
+    await runMigrations(first, sources, { includePersonalData: true }),
+    first,
+  );
   assert.equal(reads, 0);
 });
 test("confirmed submission plans link shared dates, preserve exact times and remain editable after migration", async () => {
@@ -193,4 +198,32 @@ test("full names replace the previous short labels in an upgraded workspace", ()
   );
   assert.equal(next.areaLabelVersion, 2);
   assert.equal(next.projects, previous.projects);
+});
+
+test("default startup leaves new workspaces empty and never reads personal sources", async () => {
+  const unexpected = async () => {
+    throw new Error("Personal source must be opt-in");
+  };
+  const state = await runMigrations(seedWorkspace(), {
+    catalog: unexpected,
+    tracker: unexpected,
+    feed: unexpected,
+  });
+  assert.deepEqual(state.projects, []);
+  assert.deepEqual(state.trackedDeadlines || [], []);
+  assert.equal(state.researchSetupVersion, undefined);
+  assert.equal(state.submissionPlanVersion, undefined);
+  assert.equal(await runMigrations(state), state);
+});
+
+test("neutral startup preserves existing personal records without adding missing catalog projects", async () => {
+  const catalog = await researchCatalog("/tmp/no-research-folders");
+  const imported = activateCurrentResearch(seedWorkspace(), catalog);
+  imported.projects = imported.projects.slice(0, 1);
+  imported.projects[0].notes = "Existing research must survive upgrades";
+  delete imported.researchSetupVersion;
+  const before = structuredClone(imported.projects);
+  const result = await runMigrations(imported);
+  assert.deepEqual(result.projects, before);
+  assert.deepEqual(result.trackedDeadlines || [], []);
 });

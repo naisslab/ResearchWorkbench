@@ -21,6 +21,7 @@ import { stages } from "../types";
 import type { DatedItem } from "../dates";
 import { DateBlock, kindLabel, Urgency } from "../ProjectMilestones";
 import { BlurField, openExternal, Options, TaskAdd } from "../components/ui";
+import ProjectReview from "../components/ProjectReview";
 
 export default function ProjectDetailsView({
   project: p,
@@ -40,6 +41,7 @@ export default function ProjectDetailsView({
   report(message: string): void;
 }) {
   const [files, setFiles] = useState<string[]>([]);
+  const [sharingMessage, setSharingMessage] = useState("");
   useEffect(() => {
     window.research!.listFiles(p.id).then(setFiles, () => setFiles([]));
   }, [p.id, p.folder]);
@@ -91,6 +93,14 @@ export default function ProjectDetailsView({
               onCommit={(venue) => update({ venue })}
             />
           </label>
+          <label>
+            Project owner or lead
+            <BlurField
+              value={p.owner || ""}
+              placeholder="Researcher, student, or team name"
+              onCommit={(owner) => update({ owner })}
+            />
+          </label>
         </section>
         <section className="detail-card">
           <div className="section-heading">
@@ -133,6 +143,43 @@ export default function ProjectDetailsView({
                       }
                     />
                   )}
+                  <span className="task-assignment">
+                    <label>
+                      Assignee
+                      <BlurField
+                        aria-label={`Assignee for ${t.text}`}
+                        value={t.assignee || ""}
+                        placeholder="Who owns this step?"
+                        onCommit={(assignee) =>
+                          update((latest) => ({
+                            tasks: latest.tasks.map((item) =>
+                              item.id === t.id ? { ...item, assignee } : item,
+                            ),
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      Due date
+                      <input
+                        type="date"
+                        aria-label={`Due date for ${t.text}`}
+                        value={t.dueDate || ""}
+                        onChange={(event) =>
+                          update((latest) => ({
+                            tasks: latest.tasks.map((item) =>
+                              item.id === t.id
+                                ? {
+                                    ...item,
+                                    dueDate: event.target.value || undefined,
+                                  }
+                                : item,
+                            ),
+                          }))
+                        }
+                      />
+                    </label>
+                  </span>
                 </span>
                 <button
                   className="button text small"
@@ -180,6 +227,7 @@ export default function ProjectDetailsView({
             }
           />
         </section>
+        <ProjectReview key={p.id} project={p} update={update} report={report} />
         <section className="detail-card">
           <div className="section-heading">
             <h2>
@@ -221,6 +269,75 @@ export default function ProjectDetailsView({
         )}
       </div>
       <aside className="details-aside">
+        <section className="detail-card">
+          <div className="section-heading">
+            <h2>
+              <ExternalLink size={16} /> Share project metadata
+            </h2>
+          </div>
+          <p className="form-help">
+            The project file includes notes, tasks, reviews, decisions and
+            dates. Attached files, local folder paths, SSH settings and
+            conversations stay on this computer.
+          </p>
+          <div className="project-sharing-actions">
+            <button
+              className="button small"
+              disabled={!p.folder}
+              onClick={async () => {
+                try {
+                  const result = await window.research!.exportSubmission(p.id);
+                  if (result)
+                    setSharingMessage(
+                      `Submission snapshot exported: ${result.files} files${result.skipped.length ? `, ${result.skipped.length} skipped. Review the bundle manifest.` : "."}`,
+                    );
+                } catch (error) {
+                  report((error as Error).message);
+                }
+              }}
+            >
+              Export submission snapshot…
+            </button>
+            <button
+              className="button small"
+              onClick={async () => {
+                try {
+                  if (await window.research!.exportProject(p.id))
+                    setSharingMessage("Project metadata exported.");
+                } catch (error) {
+                  report((error as Error).message);
+                }
+              }}
+            >
+              Export project manifest…
+            </button>
+            <button
+              className="button small"
+              onClick={async () => {
+                try {
+                  if (await window.research!.exportCalendar(p.id))
+                    setSharingMessage(
+                      "Calendar exported. Import the .ics file into your calendar app.",
+                    );
+                } catch (error) {
+                  report((error as Error).message);
+                }
+              }}
+            >
+              Export project calendar…
+            </button>
+          </div>
+          <p className="form-help">
+            Submission snapshots copy saved source files and available outputs.
+            Save and compile first; an existing PDF may predate your latest
+            source changes.
+          </p>
+          {sharingMessage && (
+            <p className="form-help" role="status">
+              {sharingMessage}
+            </p>
+          )}
+        </section>
         <section className="detail-card">
           <div className="section-heading">
             <h2>

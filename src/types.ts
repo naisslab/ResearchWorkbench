@@ -26,6 +26,26 @@ export interface Task {
   done: boolean;
   pinned?: boolean;
   blocked?: string;
+  assignee?: string;
+  /** A local calendar date, not a UTC instant. */
+  dueDate?: string;
+}
+export interface ReviewRequest {
+  id: string;
+  title: string;
+  requestedAt: string;
+  status: "requested" | "in-review" | "reviewed";
+  /** Git commit identifying the manuscript requested for review. */
+  revision: string;
+  reviewedAt?: string;
+  reviewedRevision?: string;
+}
+export interface ProjectDecision {
+  id: string;
+  text: string;
+  createdAt: string;
+  /** Source commit, when the decision refers to a manuscript revision. */
+  revision?: string;
 }
 export interface Deadline {
   id: string;
@@ -151,6 +171,39 @@ export interface Project {
   pageLimit?: number;
   /** Double-blind review: the check looks for anything naming the authors. */
   anonymousReview?: boolean;
+  owner?: string;
+  reviewRequests?: ReviewRequest[];
+  decisions?: ProjectDecision[];
+  lastReviewedCommit?: string;
+  lastSubstantiveUpdate?: string;
+}
+export interface ProjectManifest {
+  format: "research-workbench-project";
+  version: 1;
+  exportedAt: string;
+  area: Pick<Area, "name" | "color" | "icon">;
+  trackedDeadlines: Omit<TrackedDeadline, "projectId" | "projectIds">[];
+  project: Pick<
+    Project,
+    | "name"
+    | "summary"
+    | "stage"
+    | "mainFile"
+    | "venue"
+    | "notes"
+    | "tasks"
+    | "deadlines"
+    | "updatedAt"
+    | "owner"
+    | "reviewRequests"
+    | "decisions"
+    | "lastReviewedCommit"
+    | "lastSubstantiveUpdate"
+    | "latexEngine"
+    | "pageLimit"
+    | "anonymousReview"
+    | "compileOnSave"
+  >;
 }
 export interface ResearchCandidate {
   id: string;
@@ -258,6 +311,21 @@ export interface DictationEvent {
   progress?: number;
 }
 export interface ResearchAPI {
+  overleafStatus(id: string): Promise<import("./release-types").OverleafStatus>;
+  overleafConnect(
+    input: import("./release-types").OverleafConnectInput,
+  ): Promise<{ workspace: Workspace; projectId: string } | null>;
+  overleafReconnect(id: string, token: string): Promise<void>;
+  overleafAction(
+    id: string,
+    action: string,
+    options?: Record<string, unknown>,
+  ): Promise<{ message?: string } | undefined>;
+  setupDiagnostics(): Promise<import("./release-types").SetupTool[]>;
+  openResearchProject(
+    kind: "folder" | "example",
+  ): Promise<{ workspace: Workspace; projectId: string } | null>;
+
   aiPaper(
     projectId: string,
     messageId: string,
@@ -574,6 +642,19 @@ export interface ResearchAPI {
   /** Shows the root, or `file` inside it, in Finder. */
   revealFolder(id: string, rootId?: string, file?: string): Promise<void>;
   info(): Promise<{ dataPath: string; version: string }>;
+  exportProject(id: string): Promise<boolean>;
+  /** Imports a portable manifest as a new project after a native preview. */
+  importProject(): Promise<Workspace | null>;
+  exportCalendar(projectId?: string): Promise<boolean>;
+  exportSubmission(
+    id: string,
+  ): Promise<{
+    path: string;
+    files: number;
+    bytes: number;
+    skipped: { path: string; reason: string }[];
+    manifestPath: string;
+  } | null>;
 }
 export interface AIErrorInfo {
   code: string;
