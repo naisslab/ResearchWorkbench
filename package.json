@@ -162,10 +162,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/shinan6/ResearchNativeDesktop.git"
+    "url": "https://github.com/naisslab/ResearchWorkbench.git"
   },
-  "homepage": "https://github.com/shinan6/ResearchNativeDesktop#readme",
+  "homepage": "https://github.com/naisslab/ResearchWorkbench#readme",
   "bugs": {
-    "url": "https://github.com/shinan6/ResearchNativeDesktop/issues"
+    "url": "https://github.com/naisslab/ResearchWorkbench/issues"
   }
 }

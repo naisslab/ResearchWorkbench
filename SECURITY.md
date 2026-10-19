@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-Use the repository's [private vulnerability reporting form](https://github.com/shinan6/ResearchNativeDesktop/security/advisories/new) when it is enabled. If that form is unavailable, open an issue asking the maintainer to enable private reporting, without exploit details or sensitive data. Do not post credentials, unpublished manuscripts, private collaborator links, or complete workspace backups in public issues.
+Use the repository's [private vulnerability reporting form](https://github.com/naisslab/ResearchWorkbench/security/advisories/new) when it is enabled. If that form is unavailable, open an issue asking the maintainer to enable private reporting, without exploit details or sensitive data. Do not post credentials, unpublished manuscripts, private collaborator links, or complete workspace backups in public issues.
 
 Include the affected version, platform, reproduction steps, impact, and a small synthetic example. This project does not yet commit to a response-time SLA. Security fixes target the latest release; check the release notes before reporting.
 
