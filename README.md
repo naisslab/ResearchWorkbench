@@ -1,12 +1,32 @@
 # Research Workbench
 
-A local macOS workspace for researchers and principal investigators. Organize projects, write LaTeX, review PDFs, coordinate manuscript feedback, and use optional AI assistance in one desktop app. Project files stay in ordinary folders on your computer.
+**All your research projects, an Agent that can work on them, and your manuscript workflow in one Mac app.**
 
-[中文使用指南](docs/USER_GUIDE.zh-CN.md) · [Downloads](https://github.com/naisslab/ResearchWorkbench/releases) · [Overleaf Collaboration](docs/overleaf.md) · [Contributing](CONTRIBUTING.md)
+Research Workbench brings project management, LaTeX, PDF feedback, and Overleaf collaboration into a local workspace for researchers and principal investigators. Project files stay in ordinary folders on your computer.
+
+[Install](#one-line-installation) · [Features](#feature-reference) · [中文使用指南](docs/USER_GUIDE.zh-CN.md) · [Downloads](https://github.com/naisslab/ResearchWorkbench/releases) · [Overleaf Collaboration](docs/overleaf.md) · [Contributing](CONTRIBUTING.md)
 
 ![LaTeX source and compiled PDF in Research Workbench](docs/images/workbench.png)
 
 *The screenshots show the actual application with fictional projects, collaborators, and manuscript content.*
+
+## One-Line Installation
+
+On an Apple silicon Mac running macOS 13 or later, with [GitHub CLI](https://cli.github.com) installed and signed in to an account that can access this private repository:
+
+```sh
+bash -c 'set -e; installer=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/naisslab/ResearchWorkbench/contents/scripts/install-macos.sh?ref=main"); bash -c "$installer"'
+```
+
+The [installer](scripts/install-macos.sh) downloads the pinned 0.1.0 preview, verifies its SHA-256 checksum and app identity, and installs it in `~/Applications`. It requires no source checkout, Node.js, Xcode, or administrator access. Existing installations are left unchanged; use the [DMG](#download-and-install) for an upgrade.
+
+**Prefer to ask Claude Code or Codex?** Copy this request into your agent:
+
+```text
+Install Research Workbench on my Mac from the private GitHub repository naisslab/ResearchWorkbench. Use gh to read README.md and follow its One-Line Installation instructions. Help set up GitHub CLI if needed, let me complete any required login, and report the installed app path and any first-launch limitation.
+```
+
+This development preview is unsigned and not notarized. macOS may block first launch; the installer preserves Gatekeeper and quarantine settings. Open the installed app from Finder. See [Download and Install](#download-and-install) for manual installation and optional TeX setup.
 
 ## All Your Research Projects in One Place
 
@@ -51,21 +71,48 @@ Overleaf collaborators can keep using their existing editor while you review sou
 
 ## Feature Reference
 
-| Workflow | Available Features |
+### Organize the Research Portfolio
+
+| Your Goal | What You Get |
 | --- | --- |
-| Project organization | Research areas, project owners, notes, drag-and-drop ordering, and a board covering exploration, experiments, writing, submission, revision, acceptance, and publication. |
-| Tasks and deadlines | Task assignees, due dates, project milestones, conference dates, calendar export, and local deadline notifications. |
-| PI review | Review inbox, requests linked to manuscript revisions, reviewed-commit tracking, and decision records. |
-| LaTeX editing | Multi-file editing, syntax highlighting, manuscript outline, word count, citation and label completion, and pdfLaTeX, XeLaTeX, or LuaLaTeX compilation. |
-| Source and PDF navigation | SyncTeX navigation in both directions, clickable build problems, and Source, Agent, or Both workbench layouts with resizable panes. |
-| PDF feedback | Text highlights, notes, ink, annotation search, open/resolved status, version snapshots, and export to standard PDF annotations. |
-| References and writing | DOI, arXiv, and title lookup; BibTeX insertion; citation checks; manuscript revision comparison; and submission checks. |
-| Overleaf collaboration | Git-based connection, incoming-change checks, source review, review compilation, local application, and explicit publication of reviewed source. |
-| Git and terminals | Local and SSH terminals, repository status, file diffs, and manuscript change review. |
-| Workspace search | Search projects, files, PDF text, notes, annotations, and saved conversations from the unified search panel. |
-| Optional AI assistance | ChatGPT sign-in, project and workspace conversations, file/selection/image context, tool approvals, execution records, change review, and selective revert. |
-| Recovery and portability | Unsaved-draft recovery, portable project metadata, submission bundles, and complete backup/restore with integrity checks. |
-| Desktop experience | Light, dark, and system themes; keyboard commands; bundled fonts; and on-device dictation on supported Macs. |
+| Keep all projects together | Research areas, project owners, notes, and drag-and-drop ordering across local folders and Overleaf repositories. |
+| See what needs attention | A stage board, next steps, task assignees, due dates, conference dates, milestones, and local reminders. |
+| Coordinate PI feedback | A review inbox, requests tied to manuscript revisions, reviewed-commit tracking, and decision records. |
+| Find prior work | Cross-project search over files, PDF text, notes, annotations, and saved conversations, with links back to the source. |
+
+### Work With an Agent
+
+| Your Goal | What You Get |
+| --- | --- |
+| Act on research requests | Project updates, multi-file edits, manuscript compilation, reference lookup, submission checks, and replies to PDF feedback. |
+| Guide a longer task | Live steering, queued follow-ups, pause/resume controls, and per-request model settings, skills, and attachments. |
+| Extend the available tools | Installed skills, MCP connections, web-search controls, and built-in code review. |
+| Inspect and keep control | Permission modes, access approvals, execution logs, file diffs, manuscript PDF comparisons, and selective revert. |
+| Continue an investigation | Separate project conversations, history search, conversation forks, and file, selection, PDF, or image context. |
+
+See [Agent-Native Research Workflows](#agent-native-research-workflows) for concrete requests and how the Agent carries them out. AI use is optional; connected capabilities depend on the account and service.
+
+### Write, Review, and Collaborate
+
+| Your Goal | What You Get |
+| --- | --- |
+| Write and compile LaTeX | Multi-file editing, highlighting, outline, word count, citation/label completion, and pdfLaTeX, XeLaTeX, or LuaLaTeX builds. |
+| Move between source and paper | Bidirectional SyncTeX navigation, clickable build problems, resizable panes, and Source, Agent, or Both layouts. |
+| Review the PDF | Highlights, notes, ink, annotation search, open/resolved feedback, version snapshots, and standard PDF annotation export. |
+| Prepare a submission | DOI/arXiv/title lookup, BibTeX insertion, citation checks, revision comparisons, and submission checks. |
+| Work with coauthors | Overleaf Git synchronization, incoming-change review, candidate compilation, and explicit publication of reviewed source. |
+| Use your development tools | Git status and diffs, local terminals, and SSH terminals. |
+
+### Preserve Work Between Sessions
+
+| Your Goal | What You Get |
+| --- | --- |
+| Recover unfinished work | Unsaved-draft recovery and project-specific editor, PDF, layout, and conversation state. |
+| Share or move a project | Portable metadata, calendar export, and submission bundles. |
+| Back up the workspace | Complete backup and restore with integrity checks, including selected project files, PDF feedback, and conversations. |
+| Fit your desktop workflow | Light/dark/system themes, keyboard commands, bundled fonts, and on-device dictation on supported Macs. |
+
+## Screenshots
 
 ### Research Overview and Project Board
 
