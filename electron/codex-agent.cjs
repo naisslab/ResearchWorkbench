@@ -76,6 +76,9 @@ function agentArguments(
     // and let the runtime choose the tool protocol for each model.
     "features.code_mode_host": true,
     "features.multi_agent": false,
+    // GPT-6 can enable the v2 runtime independently of the legacy feature flag.
+    // Its agent_message history items are unsupported by ChatGPT plan usage.
+    "agents.enabled": false,
     "features.tool_suggest": false,
     "features.tool_search": false,
     "features.deferred_tool_world_state": false,

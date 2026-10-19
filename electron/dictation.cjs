@@ -69,7 +69,14 @@ function createDictation({
               ? event.message.slice(0, 1000)
               : undefined;
           if (["final", "error", "cancelled"].includes(event.type))
-            finish({ type: event.type, text: session.text, message });
+            finish({
+              type: event.type,
+              text: session.text,
+              message,
+              ...(event.code === "microphone_permission_denied" && {
+                code: event.code,
+              }),
+            });
           else if (event.type === "level") {
             if (Number.isFinite(event.value))
               emit({
@@ -122,7 +129,7 @@ function createDictation({
         type: "error",
         text: session.text,
         message:
-          "Dictation stopped unexpectedly. Check microphone and speech recognition permissions.",
+          "Dictation stopped unexpectedly. Try again, or dismiss this message to continue typing.",
       }),
     );
     wait(

@@ -1004,6 +1004,7 @@ test("agent configuration uses subscribed Responses with the local Code Mode hos
   assert.match(args, /https:\/\/api.openai.com\/v1/);
   assert.match(args, /supports_websockets=false/);
   assert.match(args, /features.code_mode_host=true/);
+  assert.match(args, /agents.enabled=false/);
   assert.doesNotMatch(args, /features.code_mode(?:_only)?=false/);
   assert.match(args, /features.image_generation=false/);
   assert.doesNotMatch(args, /backend-api/);

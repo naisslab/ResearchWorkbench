@@ -14,6 +14,12 @@ async function runCodeModeFixture({
 }) {
   const cwd = path.join(root, "manuscript");
   await fs.mkdir(cwd, { recursive: true });
+  const image = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGNQSDjwHx9mGBkKAMSvj8GdcOtmAAAAAElFTkSuQmCC",
+    "base64",
+  );
+  const imagePath = path.join(root, "attached-figure.png");
+  await fs.writeFile(imagePath, image);
   await fs.writeFile(
     path.join(cwd, "main.tex"),
     "\\documentclass{article}\n\\begin{document}\n\\undefinedResearchCommand\n\\end{document}\n",
@@ -69,9 +75,27 @@ async function runCodeModeFixture({
           JSON.stringify(body.input).includes("WORKBENCH_NATIVE_SKILL_2026"),
           "The native runtime must load the selected SKILL.md into model context",
         );
+      assert.doesNotMatch(
+        JSON.stringify(body),
+        /"name":"spawn_agent"/,
+        "ChatGPT plan requests must not expose native multi-agent tools",
+      );
       assert.equal(body.model, "gpt-6-astra");
       assert.equal(body.store, false);
       assert.equal(body.stream, true);
+      // Exercise the real localImage -> Responses conversion, not only the
+      // app-server RPC. The image must survive every tool round-trip unchanged.
+      const images = body.input.flatMap((item) =>
+        (item.content || []).filter((part) => part.type === "input_image"),
+      );
+      assert.equal(images.length, 1);
+      // For GPT-6-Astra, omitted/auto detail uses original sizing. Do not
+      // accidentally opt into the lower patch budget of low/high detail.
+      assert.ok([undefined, "auto", "original"].includes(images[0].detail));
+      assert.equal(
+        images[0].image_url,
+        `data:image/png;base64,${image.toString("base64")}`,
+      );
       // This model carries Code Mode tool declarations in its input messages.
       assert.ok(
         JSON.stringify(body.input).includes("tools.exec_command"),
@@ -203,6 +227,7 @@ async function runCodeModeFixture({
       writableRoots: [cwd],
       text: "Compile main.tex, fix the undefined command, update notes.txt, and compile again. This is an isolated integration test.",
       skills: [skill],
+      images: [imagePath],
       signal: AbortSignal.timeout(45000),
       onThread: async () => {},
       onEvent: (event) => events.push(event),

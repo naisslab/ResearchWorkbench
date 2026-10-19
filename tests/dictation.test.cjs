@@ -99,3 +99,27 @@ test("dictation relays loudness, model downloads and the recognized language", (
     },
   ]);
 });
+
+test("permission denial is distinct from a helper crash, and both release the session", (t) => {
+  const f = fixture(t);
+  f.dictation.start("denied");
+  f.children[0].stdout.write(
+    JSON.stringify({
+      type: "error",
+      code: "microphone_permission_denied",
+      message: "Microphone access is off.",
+      text: "",
+    }) + "\n",
+  );
+  f.children[0].emit("close", 0);
+  assert.equal(f.events.length, 1);
+  assert.equal(f.events[0].code, "microphone_permission_denied");
+  assert.equal(f.children[0].killed, true);
+  f.dictation.start("crash");
+  f.children[1].emit("close", null, "SIGTRAP");
+  assert.equal(f.events[1].type, "error");
+  assert.equal(f.events[1].code, undefined);
+  assert.doesNotMatch(f.events[1].message, /permission|speech recognition/i);
+  f.dictation.start("retry");
+  f.dictation.cancel("retry");
+});

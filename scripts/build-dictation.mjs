@@ -9,6 +9,7 @@ import path from "node:path";
 if (process.platform === "darwin") {
   const root = fileURLToPath(new URL("../", import.meta.url));
   const source = path.join(root, "native/Dictation.swift");
+  const throttle = path.join(root, "native/AudioLevelThrottle.swift");
   const plist = path.join(root, "native/Dictation-Info.plist");
   const output = path.join(root, "build/native/research-dictation");
   const stamp = output + ".build.json";
@@ -35,6 +36,7 @@ if (process.platform === "darwin") {
   }).trim();
   const fingerprint = createHash("sha256")
     .update(readFileSync(source))
+    .update(readFileSync(throttle))
     .update(readFileSync(plist))
     .update(readFileSync(fileURLToPath(import.meta.url)))
     .update(JSON.stringify({ arch, minimum, sdk, sdkVersion, compiler }))
@@ -52,6 +54,7 @@ if (process.platform === "darwin") {
       [
         "swiftc",
         source,
+        throttle,
         "-o",
         output,
         "-O",

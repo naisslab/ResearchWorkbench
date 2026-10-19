@@ -490,6 +490,11 @@ app
     handle("dictation:start", (id) => dictation.start(id));
     handle("dictation:stop", (id) => dictation.stop(id));
     handle("dictation:cancel", (id) => dictation.cancel(id));
+    handle("dictation:open-settings", () =>
+      shell.openExternal(
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+      ),
+    );
     handle("workspace:load", () => state);
     handle("catalog:list", () => catalog.researchCatalog());
     handle("catalog:add", async (ids) => {

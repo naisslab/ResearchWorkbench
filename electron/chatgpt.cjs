@@ -66,7 +66,9 @@ function apiError(body, status, requestId) {
     subscription_sharing_usage_unavailable:
       "ChatGPT could not check usage availability. Try again later.",
     subscription_sharing_unsupported_capability:
-      "This model or capability is unavailable through ChatGPT plan usage. Choose another model.",
+      detail?.param === "input"
+        ? "ChatGPT plan usage rejected an unsupported conversation item. Update Research Workbench and retry this chat."
+        : "This model or capability is unavailable through ChatGPT plan usage. Choose another model.",
     subscription_sharing_route_not_supported:
       "ChatGPT plan usage does not support this request route.",
     subscription_sharing_invalid_user:

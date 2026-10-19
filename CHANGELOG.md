@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fix ChatGPT plan requests containing older helper messages while preserving image attachments across tool calls.
+- Show complete attached images without cropping their previews.
+- Fix a dictation crash on the first audio callback, make errors dismissible, and restore typing immediately after cancellation. Show a microphone settings shortcut when access is denied.
 - Add an Overleaf Git connector with encrypted credentials, isolated source review, conflict resolution, recoverable checkpoints, and publication gated by an exact reviewed build.
 - Add an empty-workspace welcome flow, a synthetic manuscript example, and local tool diagnostics.
 - Add project owners, task assignees and due dates, revision-linked review requests, a PI review inbox, and decision records.

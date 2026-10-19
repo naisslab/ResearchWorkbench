@@ -25,13 +25,18 @@ await smoke("writing-agent", async () => {
   const input = page.getByLabel("Message the AI agent", { exact: true });
   await input.waitFor();
   // Synthetic speech events exercise the UI without turning on a microphone.
-  await app.evaluate(({ ipcMain, BrowserWindow }) => {
+  await app.evaluate(({ ipcMain, BrowserWindow, shell }) => {
     let id;
     const emit = (event) =>
       BrowserWindow.getAllWindows()[0].webContents.send("dictation:event", {
         id,
         ...event,
       });
+    const fixture = { mode: "normal", settings: [], emit };
+    globalThis.__dictationFixture = fixture;
+    shell.openExternal = async (url) => {
+      fixture.settings.push(url);
+    };
     for (const channel of [
       "dictation:start",
       "dictation:stop",
@@ -40,16 +45,37 @@ await smoke("writing-agent", async () => {
       ipcMain.removeHandler(channel);
     ipcMain.handle("dictation:start", (_event, value) => {
       id = value;
+      if (fixture.mode === "denied" || fixture.mode === "crash") {
+        emit({
+          type: "error",
+          text: "",
+          ...(fixture.mode === "denied"
+            ? {
+                code: "microphone_permission_denied",
+                message: "Microphone access is off.",
+              }
+            : { message: "Dictation stopped unexpectedly. Try again." }),
+        });
+        return { id };
+      }
+      if (fixture.mode === "preparing") {
+        emit({ type: "preparing", message: "Preparing speech recognition…" });
+        return { id };
+      }
       emit({ type: "listening", language: "Chinese (China mainland)" });
       for (const value of [0.2, 0.9, 0.5]) emit({ type: "level", value });
       emit({ type: "partial", text: "加一个待办：修改摘要" });
       return { id };
     });
-    ipcMain.handle("dictation:stop", () =>
-      emit({ type: "final", text: "加一个待办：修改摘要" }),
-    );
-    ipcMain.handle("dictation:cancel", () =>
-      emit({ type: "cancelled", text: "" }),
+    ipcMain.handle("dictation:stop", () => {
+      if (fixture.mode === "stop-error")
+        throw new Error("Could not finish dictation.");
+      emit({ type: "final", text: "加一个待办：修改摘要" });
+    });
+    ipcMain.handle(
+      "dictation:cancel",
+      () =>
+        fixture.mode !== "preparing" && emit({ type: "cancelled", text: "" }),
     );
   });
   await input.fill("请帮我：旧内容。");
@@ -95,6 +121,66 @@ await smoke("writing-agent", async () => {
     .waitFor();
   assert.equal(await input.inputValue(), draft);
   assert.equal(await page.locator(".ai-user-text").count(), 0);
+  // Failures can be dismissed without losing the draft or leaving typing locked.
+  for (const mode of ["denied", "crash", "stop-error"]) {
+    await app.evaluate((_electron, mode) => {
+      globalThis.__dictationFixture.mode = mode;
+    }, mode);
+    await page
+      .getByRole("button", { name: "Start dictation", exact: true })
+      .click();
+    if (mode === "stop-error")
+      await page
+        .getByRole("button", { name: "Finish dictation", exact: true })
+        .click();
+    const alert = page.locator(".dictation-error");
+    await alert.waitFor();
+    assert.equal(await input.getAttribute("readonly"), null);
+    assert.equal(await input.inputValue(), draft);
+    const settings = page.getByRole("button", {
+      name: "Open Microphone Settings",
+      exact: true,
+    });
+    assert.equal(await settings.count(), mode === "denied" ? 1 : 0);
+    if (mode === "denied") {
+      await settings.click();
+      assert.deepEqual(
+        await app.evaluate(() => globalThis.__dictationFixture.settings),
+        [
+          "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+        ],
+      );
+      await page.screenshot({
+        path: "output/playwright/dictation-permission.png",
+      });
+    }
+    await page
+      .getByRole("button", { name: "Dismiss dictation error", exact: true })
+      .click();
+    await alert.waitFor({ state: "detached" });
+    await input.fill("仍然可以打字");
+    assert.equal(await input.inputValue(), "仍然可以打字");
+    await input.fill(draft);
+  }
+  // Cancel immediately even when the native permission/model preparation has
+  // not acknowledged cancellation. Late transcription must not alter the draft.
+  await app.evaluate(() => {
+    globalThis.__dictationFixture.mode = "preparing";
+  });
+  await page
+    .getByRole("button", { name: "Start dictation", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Cancel dictation", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Start dictation", exact: true })
+    .waitFor();
+  await app.evaluate(() =>
+    globalThis.__dictationFixture.emit({ type: "final", text: "stale" }),
+  );
+  assert.equal(await input.inputValue(), draft);
+  assert.equal(await input.getAttribute("readonly"), null);
   // Images dropped on the composer show as thumbnails until sent or removed;
   // other files are refused.
   const drop = (name, type, base64) =>

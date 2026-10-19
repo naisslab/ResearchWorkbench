@@ -293,6 +293,7 @@ export interface AgentToolRequest {
 }
 export interface DictationEvent {
   id: string;
+  code?: "microphone_permission_denied";
   type:
     | "preparing"
     | "listening"
@@ -371,6 +372,7 @@ export interface ResearchAPI {
   startDictation(id: string): Promise<{ id: string }>;
   stopDictation(id: string): Promise<void>;
   cancelDictation(id: string): Promise<void>;
+  openDictationSettings(): Promise<void>;
   onDictation(callback: (event: DictationEvent) => void): () => void;
   cancelBackup(): Promise<void>;
   onBackupProgress(

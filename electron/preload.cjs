@@ -41,6 +41,7 @@ contextBridge.exposeInMainWorld("research", {
   startDictation: invoke("dictation:start"),
   stopDictation: invoke("dictation:stop"),
   cancelDictation: invoke("dictation:cancel"),
+  openDictationSettings: invoke("dictation:open-settings"),
   onDictation: listen("dictation:event"),
   onAgentTool: listen("agent:tool"),
   completeAgentTool: invoke("agent:tool-complete"),

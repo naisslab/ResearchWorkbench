@@ -19,6 +19,7 @@ export default function Dictation({
   const [levels, setLevels] = useState(silence);
   const [preview, setPreview] = useState("");
   const [error, setError] = useState("");
+  const [permissionDenied, setPermissionDenied] = useState(false);
   const session = useRef("");
   const callbacks = useRef({ insert, onActive });
   callbacks.current = { insert, onActive };
@@ -43,6 +44,7 @@ export default function Dictation({
         if (event.type !== "cancelled" && event.text?.trim())
           callbacks.current.insert(event.text.trim());
         setPreview("");
+        setPermissionDenied(event.code === "microphone_permission_denied");
         setError(
           event.type === "error"
             ? event.message || "Dictation failed."
@@ -60,14 +62,41 @@ export default function Dictation({
     };
   }, []);
   useEffect(() => {
-    if (disabled && session.current)
-      void window.research!.cancelDictation(session.current);
+    if (disabled && session.current) void cancel();
   }, [disabled]);
+  async function cancel() {
+    const id = session.current;
+    session.current = "";
+    setPhase("");
+    setPreview("");
+    setLevels(silence);
+    callbacks.current.onActive?.(false);
+    if (id) {
+      try {
+        await window.research!.cancelDictation(id);
+      } catch (error) {
+        if (!session.current) setError((error as Error).message);
+      }
+    }
+  }
+  async function stop() {
+    const id = session.current;
+    if (!id) return;
+    setPhase("Finishing…");
+    try {
+      await window.research!.stopDictation(id);
+    } catch (error) {
+      if (session.current !== id) return;
+      await cancel();
+      if (!session.current) setError((error as Error).message);
+    }
+  }
   async function start() {
     if (session.current) return;
     const id = crypto.randomUUID();
     session.current = id;
     setError("");
+    setPermissionDenied(false);
     setPreview("");
     setLanguage("");
     setLevels(silence);
@@ -93,10 +122,8 @@ export default function Dictation({
         aria-label={phase ? "Finish dictation" : "Start dictation"}
         title={phase ? "Finish dictation" : "Dictate"}
         onClick={() => {
-          if (phase) {
-            setPhase("Finishing…");
-            void window.research!.stopDictation(session.current);
-          } else void start();
+          if (phase) void stop();
+          else void start();
         }}
       >
         {phase ? <Check size={19} /> : <Mic size={20} />}
@@ -106,7 +133,7 @@ export default function Dictation({
           type="button"
           className="dictation-button"
           aria-label="Cancel dictation"
-          onClick={() => void window.research!.cancelDictation(session.current)}
+          onClick={() => void cancel()}
         >
           <X size={18} />
         </button>
@@ -129,9 +156,39 @@ export default function Dictation({
         </span>
       )}
       {error && (
-        <span className="dictation-error" role="alert">
-          {error}
-        </span>
+        <div className="dictation-error" role="alert">
+          <span>{error}</span>
+          <div className="dictation-error-actions">
+            {permissionDenied && (
+              <button
+                type="button"
+                className="button small"
+                onClick={() =>
+                  void window
+                    .research!.openDictationSettings()
+                    .catch(() =>
+                      setError(
+                        "Open System Settings > Privacy & Security > Microphone to allow access.",
+                      ),
+                    )
+                }
+              >
+                Open Microphone Settings
+              </button>
+            )}
+            <button
+              type="button"
+              className="dictation-button"
+              aria-label="Dismiss dictation error"
+              onClick={() => {
+                setError("");
+                setPermissionDenied(false);
+              }}
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

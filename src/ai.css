@@ -1686,6 +1686,21 @@
 }
 .dictation-error {
   color: var(--danger);
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.dictation-error > span {
+  flex: 1;
+  min-width: 0;
+}
+.dictation-error-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex-shrink: 0;
+  max-width: 50%;
 }
 
 .ai-review-file-choice {
@@ -1723,7 +1738,7 @@
   display: block;
   width: 56px;
   height: 56px;
-  object-fit: cover;
+  object-fit: contain;
   border: 1px solid var(--border);
   border-radius: 6px;
 }
@@ -1747,8 +1762,10 @@
   margin: 5px 0 7px;
 }
 .ai-message-images img {
-  width: 96px;
-  height: 96px;
+  width: auto;
+  height: auto;
+  max-width: min(100%, 360px);
+  max-height: 240px;
 }
 .ai-native-tools {
   display: grid;

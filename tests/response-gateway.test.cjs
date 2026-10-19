@@ -555,3 +555,137 @@ test("cancelling an HTTP 503 backoff prevents replay", async (t) => {
   await gateway.close();
   assert.equal(calls, 1);
 });
+
+test("saved helper messages are replayed as context on both Responses routes without changing other input", async (t) => {
+  const original = {
+    model: "gpt-6-astra",
+    stream: true,
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Continue the paper" }],
+      },
+      {
+        type: "reasoning",
+        summary: [],
+        encrypted_content: "original-reasoning",
+      },
+      {
+        type: "custom_tool_call",
+        call_id: "exec-1",
+        name: "exec",
+        input: "text('done');",
+      },
+      { type: "custom_tool_call_output", call_id: "exec-1", output: "done" },
+      {
+        type: "agent_message",
+        id: "amsg_old",
+        author: "/root/helper",
+        recipient: "/root",
+        content: [
+          { type: "input_text", text: "Found the prior related work." },
+          { type: "input_image", image_url: "data:image/png;base64,fixture" },
+          {
+            type: "encrypted_content",
+            encrypted_content: "opaque-agent-context",
+          },
+        ],
+      },
+      {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "Keep all citations" }],
+      },
+    ],
+    tools: [{ type: "custom", name: "exec" }],
+  };
+  for (const route of ["responses", "responses/compact"]) {
+    for (const compressed of [false, true]) {
+      let calls = 0,
+        forwarded;
+      const gateway = await fixture(t, {
+        accessToken: async ({ rejectedToken } = {}) =>
+          rejectedToken ? "renewed" : "old",
+        fetcher: async (_url, options) => {
+          const data =
+            options.headers.get("content-encoding") === "gzip"
+              ? zlib.gunzipSync(options.body)
+              : options.body;
+          const body = JSON.parse(data.toString());
+          calls++;
+          assert.ok(!body.input.some((item) => item.type === "agent_message"));
+          assert.deepEqual(body.input.slice(0, 4), original.input.slice(0, 4));
+          assert.deepEqual(body.input[5], original.input[5]);
+          assert.deepEqual(body.tools, original.tools);
+          const restored = body.input[4];
+          assert.equal(restored.type, "message");
+          assert.equal(restored.role, "user");
+          assert.equal(restored.id, undefined);
+          assert.match(restored.content[0].text, /historical.*helper/i);
+          assert.match(restored.content[0].text, /\/root\/helper/);
+          assert.deepEqual(
+            restored.content.slice(1, 3),
+            original.input[4].content.slice(0, 2),
+          );
+          assert.doesNotMatch(JSON.stringify(body), /opaque-agent-context/);
+          assert.match(JSON.stringify(restored), /encrypted context/i);
+          if (calls === 1) {
+            forwarded = Buffer.from(options.body);
+            return Response.json(
+              { error: { code: "token_expired" } },
+              { status: 401 },
+            );
+          }
+          assert.deepEqual(
+            options.body,
+            forwarded,
+            "Token renewal reuses the normalized request",
+          );
+          return Response.json({ output: [] });
+        },
+      });
+      const json = Buffer.from(JSON.stringify(original));
+      const response = await request(gateway, route, {
+        body: compressed ? zlib.gzipSync(json) : json,
+        headers: compressed ? { "content-encoding": "gzip" } : {},
+      });
+      assert.equal(response.status, 200);
+      await response.json();
+      assert.equal(calls, 2);
+    }
+  }
+});
+
+test("unsupported input errors expose safe diagnostics without retries or token refresh", async (t) => {
+  let calls = 0,
+    refreshes = 0;
+  const error = {
+    code: "subscription_sharing_unsupported_capability",
+    param: "input",
+    message: "private upstream request details",
+  };
+  const gateway = await fixture(t, {
+    accessToken: async ({ rejectedToken } = {}) => {
+      if (rejectedToken) refreshes++;
+      return "fixture";
+    },
+    fetcher: async () => {
+      calls++;
+      return Response.json(
+        { error },
+        { status: 400, headers: { "x-request-id": "req-input" } },
+      );
+    },
+  });
+  const response = await request(gateway);
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error });
+  const detail = gateway.takeError();
+  assert.equal(detail.code, error.code);
+  assert.equal(detail.param, "input");
+  assert.equal(detail.requestId, "req-input");
+  assert.doesNotMatch(detail.message, /private upstream/);
+  assert.equal(calls, 1);
+  assert.equal(refreshes, 0);
+});

@@ -310,6 +310,37 @@ test(
       // Resume through a new app-server process, as happens after app updates.
       // The model must still see original requests AND native tool results.
       await agent.close();
+      const sessions = path.join(root, "agent-home", "sessions");
+      const rollout = (await fs.readdir(sessions, { recursive: true })).find(
+        (file) => file.endsWith(`${savedThreadId}.jsonl`),
+      );
+      assert.ok(rollout);
+      // Reproduce the saved v2 helper item that poisoned the next API request.
+      // Only the outbound representation changes; the rollout remains intact.
+      const lastRecord = JSON.parse(
+        (await fs.readFile(path.join(sessions, rollout), "utf8"))
+          .trim()
+          .split("\n")
+          .at(-1),
+      );
+      const helperMessage = {
+        ordinal: lastRecord.ordinal + 1,
+        timestamp: new Date().toISOString(),
+        type: "response_item",
+        payload: {
+          type: "agent_message",
+          id: "amsg_fixture_saved_helper",
+          author: "/root/helper",
+          recipient: "/root",
+          content: [
+            { type: "input_text", text: "Helper found the prior citations." },
+          ],
+        },
+      };
+      await fs.appendFile(
+        path.join(sessions, rollout),
+        JSON.stringify(helperMessage) + "\n",
+      );
       agent = createCodexAgent({
         accessToken: gateway.token,
         baseUrl: gateway.baseUrl,
@@ -330,6 +361,17 @@ test(
       const resumedInput = JSON.stringify(requests.at(-1).input);
       assert.match(resumedInput, /This is an isolated integration test/);
       assert.match(resumedInput, /native checks passed/);
+      assert.match(resumedInput, /Helper found the prior citations/);
+      assert.doesNotMatch(resumedInput, /"type":"agent_message"/);
+      assert.doesNotMatch(
+        JSON.stringify(requests.at(-1)),
+        /"name":"spawn_agent"/,
+      );
+      assert.ok(
+        (await fs.readFile(path.join(sessions, rollout), "utf8")).includes(
+          JSON.stringify(helperMessage),
+        ),
+      );
       assert.match(
         resumedInput,
         /function_call_output|custom_tool_call_output/,

@@ -67,7 +67,7 @@ enum Dictation {
   static var stopping = false
   static var listening = false
   static var tapped = false
-  static var lastLevel = DispatchTime.now()
+  static var levelThrottle = AudioLevelThrottle()
 
   static func best() -> Candidate? {
     // Ties, including before anything is finalized, go to the earlier
@@ -80,13 +80,15 @@ enum Dictation {
     guard let choice = best() else { return }
     emit(["type": "partial", "text": choice.text, "language": choice.name])
   }
-  static func finish(_ error: String? = nil, cancelled: Bool = false) {
+  static func finish(_ error: String? = nil, cancelled: Bool = false, code: String? = nil) {
     guard !finished else { return }
     finished = true
     stopAudio()
     let text = cancelled ? "" : best()?.text ?? ""
     if let error = error {
-      emit(["type": "error", "message": error, "text": text])
+      var event: [String: Any] = ["type": "error", "message": error, "text": text]
+      if let code { event["code"] = code }
+      emit(event)
     } else {
       emit([
         "type": cancelled ? "cancelled" : "final", "text": text, "language": best()?.name ?? "",
@@ -186,11 +188,9 @@ enum Dictation {
     return ready
   }
   static func level(_ buffer: AVAudioPCMBuffer) {
-    let now = DispatchTime.now()
-    guard now.uptimeNanoseconds - lastLevel.uptimeNanoseconds > 50_000_000,
-      let samples = buffer.floatChannelData?[0], buffer.frameLength > 0
+    guard let samples = buffer.floatChannelData?[0], buffer.frameLength > 0,
+      levelThrottle.shouldEmit(at: DispatchTime.now().uptimeNanoseconds)
     else { return }
-    lastLevel = now
     var sum: Float = 0
     for index in 0..<Int(buffer.frameLength) { sum += samples[index] * samples[index] }
     let decibels = 20 * log10(max(sqrt(sum / Float(buffer.frameLength)), 1e-7))
@@ -324,7 +324,8 @@ enum Dictation {
           guard !finished else { return }
           guard allowed else {
             finish(
-              "Allow Microphone access for Research Workbench in System Settings > Privacy & Security, then restart the app."
+              "Microphone access is off. Enable Research Workbench in System Settings > Privacy & Security > Microphone, then try again.",
+              code: "microphone_permission_denied"
             )
             return
           }
@@ -337,21 +338,26 @@ enum Dictation {
   }
 }
 
-if CommandLine.arguments.contains("--check") {
-  if #available(macOS 26.0, *) {
-    emit(["type": "availability", "supportedOS": true, "minimumOS": "26.0"])
-  } else {
-    emit(["type": "availability", "supportedOS": false, "minimumOS": "26.0"])
+@main
+struct DictationMain {
+  static func main() {
+    if CommandLine.arguments.contains("--check") {
+      if #available(macOS 26.0, *) {
+        emit(["type": "availability", "supportedOS": true, "minimumOS": "26.0"])
+      } else {
+        emit(["type": "availability", "supportedOS": false, "minimumOS": "26.0"])
+      }
+      output.sync {}
+    } else if #available(macOS 26.0, *) {
+      Dictation.run()
+    } else {
+      emit([
+        "type": "error",
+        "message":
+          "On-device dictation requires macOS 26 or later. You can continue typing on this Mac.",
+        "text": "",
+      ])
+      output.sync {}
+    }
   }
-  output.sync {}
-} else if #available(macOS 26.0, *) {
-  Dictation.run()
-} else {
-  emit([
-    "type": "error",
-    "message":
-      "On-device dictation requires macOS 26 or later. You can continue typing on this Mac.",
-    "text": "",
-  ])
-  output.sync {}
 }
