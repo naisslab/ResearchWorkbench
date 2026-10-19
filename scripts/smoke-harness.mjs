@@ -17,6 +17,7 @@ export async function launchApp({
   demoData = true,
   entry = ".",
 } = {}) {
+  const freshProfile = !(await fs.stat(dataDirectory).catch(() => null));
   app = await electron.launch({
     executablePath: process.env.RESEARCH_APP_PATH || undefined,
     args: process.env.RESEARCH_APP_PATH ? [] : [entry],
@@ -31,7 +32,17 @@ export async function launchApp({
   });
   page = await app.firstWindow();
   page.on("pageerror", (error) => errors.push(error.message));
+  await resizeWindow(app, page, 1510, 980);
   await page.locator(".sidebar").waitFor();
+  // A small CI display can collapse the sidebar before the first resize.
+  // Normalize fresh fixtures through the UI; keep saved layouts on restarts.
+  if (freshProfile)
+    await page
+      .getByRole("separator", {
+        name: "Resize research sidebar",
+        exact: true,
+      })
+      .dblclick();
   return { app, page };
 }
 
@@ -72,7 +83,13 @@ export async function dragDivider(page, name, dx, dy = 0) {
 export async function resizeWindow(app, page, width, height) {
   await app.evaluate(
     ({ BrowserWindow }, { width, height }) => {
-      BrowserWindow.getAllWindows()[0].setSize(width, height);
+      const window = BrowserWindow.getAllWindows()[0];
+      const minimum = window.getMinimumSize();
+      // macOS clamps normal window sizes to the CI display's work area.
+      // A temporary minimum allows the wide layouts this suite exercises.
+      window.setMinimumSize(width, height);
+      window.setSize(width, height);
+      window.setMinimumSize(...minimum);
     },
     { width, height },
   );
