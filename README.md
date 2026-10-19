@@ -1,191 +1,172 @@
 # Research Workbench
 
-**All your research projects, an Agent that can work on them, and your manuscript workflow in one Mac app.**
+**All your research projects, an Agent that works with them, and your manuscript workflow in one Mac app.**
 
-Research Workbench brings project management, LaTeX, PDF feedback, and Overleaf collaboration into a local workspace for researchers and principal investigators. Project files stay in ordinary folders on your computer.
+Research Workbench brings project management, AI assistance, LaTeX editing, and PDF review into a shared workspace for researchers and principal investigators. Keep your files in ordinary folders, connect an Overleaf project, and move between research, writing, and review without losing the context of each project.
 
-[Install](#one-line-installation) · [Features](#feature-reference) · [中文使用指南](docs/USER_GUIDE.zh-CN.md) · [Downloads](https://github.com/naisslab/ResearchWorkbench/releases) · [Overleaf Collaboration](docs/overleaf.md) · [Contributing](CONTRIBUTING.md)
+[Install](#install) · [Projects](#keep-your-projects-together) · [Agent](#work-with-an-agent) · [Writing and Review](#write-review-and-collaborate) · [Updates](#update-or-reinstall) · [中文指南](docs/USER_GUIDE.zh-CN.md)
 
-![LaTeX source and compiled PDF in Research Workbench](docs/images/workbench.png)
+![LaTeX source and compiled manuscript in Research Workbench](docs/images/workbench.png)
 
-*The screenshots show the actual application with fictional projects, collaborators, and manuscript content.*
+## Install
 
-## One-Line Installation
+[**Download for macOS**](https://github.com/naisslab/ResearchWorkbench/releases) · [Release Notes](CHANGELOG.md)
 
-On an Apple silicon Mac running macOS 13 or later, with [GitHub CLI](https://cli.github.com) installed and signed in to an account that can access this private repository:
+Open the release DMG, drag **Research Workbench** into Applications, and launch it. Choose **Open a folder**, **Connect Overleaf**, or **Try an example** to get started.
+
+> **Current release: 0.1.0 development preview.** The available installer is for Apple silicon and macOS 13 or later. It is unsigned and not notarized, so macOS may block first launch. A signed release is still pending. Intel packaging is configured, but no Intel installer is included in this preview. Windows and Linux are not supported yet.
+
+### One-Line Installation
+
+With [GitHub CLI](https://cli.github.com) installed and signed in (`gh auth login`), run:
 
 ```sh
 bash -c 'set -e; installer=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/naisslab/ResearchWorkbench/contents/scripts/install-macos.sh?ref=main"); bash -c "$installer" -- --preview'
 ```
 
-The [installer](scripts/install-macos.sh) selects the latest stable GitHub release, verifies its checksum and Apple signing/notarization, and installs or upgrades the app. The `--preview` option permits the pinned unsigned 0.1.0 preview only while no stable release exists. Fresh installations use `~/Applications` without administrator access. Existing installations are updated in place; a protected `/Applications` folder may require manual installation through Finder. No source checkout, Node.js, Xcode, or user signing certificate is needed.
+The [installer](scripts/install-macos.sh) installs or updates the latest stable release. Until a stable release exists, `--preview` explicitly allows the unsigned 0.1.0 preview. New installations go into `~/Applications`; existing installations are updated in place. Downloaded apps are checked before installation. Users do not need Node.js, Xcode, or a signing certificate.
 
-**Prefer to ask Claude Code or Codex?** Copy this request into your agent:
+**To install with Claude Code or Codex**, paste this request into your agent:
 
 ```text
-Install Research Workbench on my Mac from the private GitHub repository naisslab/ResearchWorkbench. Use gh to read README.md and follow its One-Line Installation instructions. Help set up GitHub CLI if needed, let me complete any required login, and report the installed app path and any first-launch limitation.
+Install Research Workbench on my Mac from https://github.com/naisslab/ResearchWorkbench. Read its README and follow the installation instructions. Help set up GitHub CLI if needed, let me complete any required login, and report the installed app path and any first-launch limitation.
 ```
 
-The current development preview is unsigned and not notarized. macOS may block first launch; the installer preserves Gatekeeper and quarantine settings. Open the installed app from Finder. See [Download and Install](#download-and-install) for manual installation and optional TeX setup.
+### Open Your First Project
 
-## All Your Research Projects in One Place
+1. **Bring your files.** Open a local folder, connect an Overleaf project, or try the included example.
+2. **Set up the manuscript.** Select its main `.tex` file and TeX engine, then choose **Compile**.
+3. **Choose how to work.** Use **Source** for editing, **Agent** for assisted work, or **Both** to see source, conversation, and PDF together.
 
-Keep every project in one workspace, even when its files live in different local folders or Overleaf repositories. Group projects by research area, assign owners, and track each manuscript from the first idea to publication. The overview brings together next steps, upcoming dates, and the PI review inbox.
+Project management and PDF reading work without a TeX installation or AI login. Compiling LaTeX requires `latexmk` and your selected TeX engine; [MacTeX](https://www.tug.org/mactex/) is one option. Connect a supported ChatGPT account to use the Agent.
 
-Switch between projects while keeping editor drafts, PDF reading positions, layouts, and conversations with their project. An Agent can continue working while you visit another project. Search across project files, PDF text, notes, feedback, and conversations from `⌘K`, then open a result in its original context.
+## Keep Your Projects Together
 
-For a research group, assign tasks and due dates, request a review of a specific manuscript revision, and record the resulting decision. Project metadata, calendars, and submission bundles can be exported for collaborators.
+Bring projects from different local folders and Overleaf repositories into one research portfolio. Group them by research area, assign owners, and track progress from the first idea through experiments, writing, submission, revision, and publication.
 
-## Agent-Native Research Workflows
+The overview brings together tasks, upcoming dates, and the PI review inbox. Review requests can refer to a specific manuscript revision, so a decision stays connected to the version that was reviewed.
 
-The Agent can use the workbench's research tools directly: read project state, edit manuscript files, compile LaTeX, inspect submission problems, find references, and respond to PDF feedback. Tool results update the same project data, build log, and PDF preview used by the interface.
+![Research overview with project owners, stages, and next steps](docs/images/overview.png)
 
-### From a Request to a Research Action
+Switch projects while retaining editor drafts, PDF reading positions, layouts, and conversations. An Agent can keep working while you visit another project. Use `⌘K` to search files, PDF text, notes, feedback, and saved conversations across the workspace, then open a result at its source.
 
-| Ask the Agent To… | What It Can Do |
+<details>
+<summary>See the project board</summary>
+
+Move projects between stages and keep the whole portfolio visible.
+
+![Project board organized by research stage](docs/images/board.png)
+
+</details>
+
+## Work With an Agent
+
+The Agent can act on the same research workspace you use: edit files, compile the manuscript, inspect problems, find references, read PDF feedback, and update project information. Results appear in the editor, build log, PDF preview, and project views.
+
+![Source, Agent conversation, and PDF together in the workbench](docs/images/agent-workbench.png)
+
+*Agent screenshots reuse existing UI captures with test conversations and illustrative model names. Available models depend on your account.*
+
+### Turn a Request Into Work
+
+| Try Asking… | The Agent Can… |
 | --- | --- |
-| “Show the next steps across my writing projects.” | Read workspace state and search across projects, with links back to files and PDFs. |
-| “Add an ablation task and move this project to revision.” | Update tasks, notes, milestones, and project stages through the workspace save flow, with undo. |
-| “Fix the compile errors and rebuild the paper.” | Edit source files, invoke manuscript compilation, inspect structured file/line problems, and refresh the PDF preview. |
-| “Find this paper by DOI and add its citation.” | Look up DOI, arXiv, or title metadata, retrieve BibTeX, and edit the manuscript and bibliography. |
-| “Address the open comments on this PDF.” | Read annotations, use available SyncTeX source locations, edit the manuscript, and record a reply on the feedback. You decide when a comment is resolved. |
-| “Check the manuscript before submission.” | Run the workbench's submission and reference checks against files and the compiled PDF. Checks help identify issues; they do not certify venue compliance. |
+| “What needs attention across my writing projects?” | Read workspace state, search across projects, and link back to relevant files and PDFs. |
+| “Add an ablation task and move this project to revision.” | Update tasks, notes, milestones, and project stages, with undo for workspace changes. |
+| “Fix the compile errors and rebuild the paper.” | Edit source, compile through the workbench, inspect file-and-line problems, and refresh the PDF. |
+| “Find this paper by DOI and add its citation.” | Retrieve reference metadata and BibTeX, then edit the bibliography and manuscript. |
+| “Address the open comments on this PDF.” | Read feedback, use available source locations, make changes, and record a reply. You decide when a comment is resolved. |
+| “Check the manuscript before submission.” | Run reference and submission checks against the files and compiled PDF. These checks help identify issues; they do not certify venue compliance. |
 
-### Control the Work as It Runs
+### Guide the Work
 
-**Steer or queue.** Send a correction to the active task with **Steer**, or queue follow-up requests with their own model settings, attachments, and skills. Reorder, pause, or resume queued work. Stop interrupts the active task and pauses the queue.
+Use **Steer** to add direction to the active task, or **Queue next** to save a follow-up. Queued requests retain their model settings, attachments, and selected skills. Reorder, pause, or resume the queue as your priorities change.
 
-**Use skills and connected tools.** Select installed research and writing skills from the composer or `/` menu. Configure MCP connections for HTTP or local tools, including OAuth where supported. Built-in controls also expose code review and Cached, Live, or Off web search. Availability depends on the connected service, model, account, and policy.
+Attach a file, selection, PDF excerpt, or image to a request. Each project can have separate conversations with searchable history. Fork a conversation to explore another approach; forks share the same project files.
 
-**Keep the research context.** Attach the current file, selected text, PDF excerpts, or images. Maintain separate conversations per project, search their history, or fork a conversation to explore another approach. Forks share the project files, so they are not isolated copies of the manuscript.
+<details>
+<summary>See queued requests in dark mode</summary>
 
-**Review the result.** Inspect command output and file diffs, compare before/after manuscript PDFs when snapshots are available, and compile to verify a run against its recorded source state. Revert selected file changes when later edits do not conflict. Choose the permission mode and handle access requests in the app.
+![Paused request queue with a Resume control](docs/images/agent-queue.png)
 
-Local project management, editing, and PDF reading work without an AI login. **Continue with ChatGPT** connects a supported account through [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source/). Files and tool output included in AI requests are sent to OpenAI. See [Security and Privacy](SECURITY.md) and the [Agent guide](docs/USER_GUIDE.zh-CN.md#chatgpt-agent).
+</details>
 
-## From Manuscript to Reviewed PDF
+### Bring Your Skills and Tools
 
-Write LaTeX, compile locally, navigate between source and PDF, and annotate the result in one window. Choose **Source**, **Agent**, or **Both** to fit the current task. Reference lookup, citation checks, revision comparisons, and submission checks support the same manuscript workflow.
+Select installed research or writing skills from the composer or `/` menu. Configure MCP connections for local tools or HTTP services, including OAuth where supported. The tools panel also provides code review and web-search controls.
 
-Overleaf collaborators can keep using their existing editor while you review source changes locally, compile a candidate, and explicitly publish the reviewed source. Complete backups preserve project files, PDF feedback, and conversations for recovery or migration.
+<table>
+<tr>
+<th>Choose Skills for a Request</th>
+<th>Connect Tools and Configure Reviews</th>
+</tr>
+<tr>
+<td width="50%"><a href="docs/images/agent-skills.png"><img src="docs/images/agent-skills.png" alt="Skills picker with a research writing skill selected"></a></td>
+<td width="50%"><a href="docs/images/agent-tools.png"><img src="docs/images/agent-tools.png" alt="Agent tools panel with code review, web search, and MCP connections"></a></td>
+</tr>
+</table>
+
+### Review What Changed
+
+Inspect execution logs and per-file diffs after a run. Revert selected changes when later edits do not conflict, or open a changed file to continue editing. Permission modes and access approvals let you control where the Agent can work.
+
+![Review changes with added, modified, and deleted files and selective revert controls](docs/images/agent-changes.png)
+
+**Paper result** compares the manuscript PDFs saved before and after a run, when snapshots are available. **Compile and verify this run** checks the build against that run's recorded source state.
+
+<details>
+<summary>See the before-and-after PDF review</summary>
+
+![Paper result review with before-and-after PDFs and build verification](docs/images/agent-paper-review.png)
+
+</details>
+
+AI is optional. ChatGPT model access and connected tools depend on your account and service availability. Files and tool output included in an AI request are sent to OpenAI. See [Security and Privacy](SECURITY.md) for details.
+
+## Write, Review, and Collaborate
+
+Edit multi-file LaTeX with syntax highlighting, outlines, word counts, and citation completion. Compile with pdfLaTeX, XeLaTeX, or LuaLaTeX. Click a build problem to jump to its source, or use SyncTeX to move between source and PDF.
+
+Mark up the manuscript with highlights, notes, and ink. Search feedback, track open and resolved comments, revisit annotated versions, and export a PDF containing standard annotations.
+
+![PDF annotations beside the manuscript source](docs/images/feedback.png)
+
+**Keep working with your coauthors.** Connect Overleaf through Git, inspect incoming source changes, compile a review candidate, and explicitly publish the reviewed source. A source ZIP can also be opened as a local project. Git synchronization does not include Overleaf comment threads or live editing state, and local TeX settings can produce different output. See the [Overleaf guide](docs/overleaf.md).
 
 ## Feature Reference
 
-### Organize the Research Portfolio
-
-| Your Goal | What You Get |
+| Area | Included Capabilities |
 | --- | --- |
-| Keep all projects together | Research areas, project owners, notes, and drag-and-drop ordering across local folders and Overleaf repositories. |
-| See what needs attention | A stage board, next steps, task assignees, due dates, conference dates, milestones, and local reminders. |
-| Coordinate PI feedback | A review inbox, requests tied to manuscript revisions, reviewed-commit tracking, and decision records. |
-| Find prior work | Cross-project search over files, PDF text, notes, annotations, and saved conversations, with links back to the source. |
-
-### Work With an Agent
-
-| Your Goal | What You Get |
-| --- | --- |
-| Act on research requests | Project updates, multi-file edits, manuscript compilation, reference lookup, submission checks, and replies to PDF feedback. |
-| Guide a longer task | Live steering, queued follow-ups, pause/resume controls, and per-request model settings, skills, and attachments. |
-| Extend the available tools | Installed skills, MCP connections, web-search controls, and built-in code review. |
-| Inspect and keep control | Permission modes, access approvals, execution logs, file diffs, manuscript PDF comparisons, and selective revert. |
-| Continue an investigation | Separate project conversations, history search, conversation forks, and file, selection, PDF, or image context. |
-
-See [Agent-Native Research Workflows](#agent-native-research-workflows) for concrete requests and how the Agent carries them out. AI use is optional; connected capabilities depend on the account and service.
-
-### Write, Review, and Collaborate
-
-| Your Goal | What You Get |
-| --- | --- |
-| Write and compile LaTeX | Multi-file editing, highlighting, outline, word count, citation/label completion, and pdfLaTeX, XeLaTeX, or LuaLaTeX builds. |
-| Move between source and paper | Bidirectional SyncTeX navigation, clickable build problems, resizable panes, and Source, Agent, or Both layouts. |
-| Review the PDF | Highlights, notes, ink, annotation search, open/resolved feedback, version snapshots, and standard PDF annotation export. |
-| Prepare a submission | DOI/arXiv/title lookup, BibTeX insertion, citation checks, revision comparisons, and submission checks. |
-| Work with coauthors | Overleaf Git synchronization, incoming-change review, candidate compilation, and explicit publication of reviewed source. |
-| Use your development tools | Git status and diffs, local terminals, and SSH terminals. |
-
-### Preserve Work Between Sessions
-
-| Your Goal | What You Get |
-| --- | --- |
-| Recover unfinished work | Unsaved-draft recovery and project-specific editor, PDF, layout, and conversation state. |
-| Share or move a project | Portable metadata, calendar export, and submission bundles. |
-| Back up the workspace | Complete backup and restore with integrity checks, including selected project files, PDF feedback, and conversations. |
-| Fit your desktop workflow | Light/dark/system themes, keyboard commands, bundled fonts, and on-device dictation on supported Macs. |
-
-## Screenshots
-
-### Research Overview and Project Board
-
-See the research portfolio, next steps, and project progress from one workspace. Group projects by research area and move them through the manuscript lifecycle.
-
-![Research overview with fictional projects](docs/images/overview.png)
-
-![Project board grouped by research stage](docs/images/board.png)
-
-### Write and Review in the Same Window
-
-Edit source beside the compiled manuscript. Use PDF feedback to record changes and track which comments remain open. Annotations are stored locally and can be exported in a PDF copy.
-
-![PDF feedback alongside the manuscript source](docs/images/feedback.png)
-
-The editor, PDF workspace, and application controls also support a dark theme.
-
-![Research Workbench in dark mode](docs/images/dark.png)
-
-### Collaborate With Overleaf
-
-Keep collaborators working in Overleaf while using local editing, PDF review, and project management. **Connect Overleaf** uses Git source synchronization. Follow the [Overleaf guide](docs/overleaf.md) for token setup, review, conflict resolution, compilation, and publication.
-
-A downloaded Overleaf source ZIP can also be extracted and opened as a local project. ZIP import does not synchronize subsequent changes. Overleaf comment threads and live editing state are not included in source synchronization. Local TeX packages, fonts, and build settings can produce different output.
-
-## Download and Install
-
-**Version 0.1.0 is a development preview.** The available DMG targets Apple silicon (M1 or newer) and macOS 13 or later. It has no Developer ID signature or Apple notarization; macOS may block opening it. It is intended for internal testing. A signed and notarized installer is still pending.
-
-1. Open the [0.1.0 development preview](https://github.com/naisslab/ResearchWorkbench/releases/tag/preview-0.1.0).
-2. Download `Research-Workbench-0.1.0-arm64.dmg` and, optionally, `SHA256SUMS-arm64.txt` to verify the download.
-3. Open the DMG and copy **Research Workbench** into Applications.
-4. Launch the app and choose **Open a folder**, **Connect Overleaf**, or **Try an example**.
-
-The private repository and release require a GitHub account with access. End users do not need Node.js or Xcode. An Intel build is configured but is not included in this preview. Windows and Linux packages are not supported yet.
-
-LaTeX compilation requires a local TeX distribution with `latexmk` and the selected engine. [MacTeX](https://www.tug.org/mactex/) is one option. Project organization and PDF reading work without TeX. On-device dictation requires macOS 26 or later and a supported speech model; models may download on first use.
+| Research portfolio | Research areas, owners, stage board, project notes, task assignees, milestones, conference dates, reminders, and PI review records. |
+| Agent workflows | Workspace search and updates, file editing, compilation, references, PDF feedback, steering, queued requests, skills, MCP, and change review. |
+| Manuscript preparation | LaTeX editing, three TeX engines, SyncTeX, BibTeX lookup, citation checks, revision comparisons, and submission checks. |
+| Developer tools | Git status and diffs, local terminals, and SSH terminals. |
+| Recovery and sharing | Unsaved-draft recovery, portable project metadata, calendar export, submission bundles, and complete backup/restore with integrity checks. |
+| Desktop controls | Resizable layouts, light/dark/system themes, keyboard commands, bundled fonts, and on-device dictation on macOS 26 or later with a supported speech model. |
 
 ## Update or Reinstall
 
-Quit Research Workbench, then run the same one-line command above. A newer stable release replaces the installed app; an already-current version is left alone. To force a fresh copy, add `--reinstall` after `--preview`. Add `--check` instead to report the installed and available versions without downloading the DMG.
+Quit Research Workbench and run the installation command again. It selects the latest stable release, upgrades an older installation, and leaves an already-current version alone.
 
-| Operation | Installer Behavior |
+| Need | What to Do |
 | --- | --- |
-| First installation | Download and verify the release, then install the app in `~/Applications`. |
-| Update | Find the existing app, reject downgrades, and replace it with a newer verified release. |
-| Reinstall | Use `--reinstall` to replace the current app with a fresh copy, even at the same version. |
-| Failed replacement | Attempt to restore the previous app automatically; retain its backup if restoration cannot complete. |
-| Manual installation | Download the release DMG, quit the app, and replace the app in the same Applications folder. |
+| Update | Rerun the one-line installation command, or download the new release DMG and replace the app in the same folder. |
+| Reinstall the same version | Add `--reinstall` after `--preview` in the command. |
+| Check for a newer version | Add `--check` after `--preview` to report versions without downloading the DMG. |
 
-The installer changes the app bundle only. Project folders and application support data remain in place. Each replacement retains the previous app at the backup path printed by the installer. Make a **Complete backup** before upgrading: an old app bundle alone cannot reverse future data-format migrations.
+The installer replaces the app bundle and retains a copy of the previous app. It leaves project folders and application support data in place, refuses downgrades, and attempts to restore the old app if replacement fails. Make a **Complete backup** before upgrading: retaining an old app does not undo future data-format migrations.
 
-Signed releases are prepared by the publisher. Users do not sign or notarize their own copies. Private releases require GitHub access, and app-internal background updates are not implemented yet. See [Distribution and Updates](docs/distribution.md) for the release process and future update options.
+Signing and notarization are handled by the publisher for signed releases. Users do not repeat them. App-internal automatic updates are not implemented yet. Maintainers can find the publishing process in [Distribution and Updates](docs/distribution.md).
 
-## First Project
+## Your Files and Data
 
-1. Choose **Open a folder**, **Connect Overleaf**, or **Try an example** on the welcome screen.
-2. In **Workbench setup**, choose the manuscript entry file and TeX engine.
-3. Open the workbench, edit a file, and select **Compile**. Build problems link back to source lines.
-4. Add tasks, milestones, and review requests. Use PDF annotations to record feedback.
-5. Create a **Complete backup** in Settings before moving to another computer.
+Project source files stay in the folders you choose. Removing a project from the workspace does not delete its files. Workspace metadata, drafts, PDF feedback, and conversations are stored in the application's support directory; Settings shows its exact location.
 
-| Shortcut | Action |
-| --- | --- |
-| `⌘K` | Open workspace search and conversation |
-| `⇧⌘P` | Open command search |
-| `⌘S` | Save the current file or PDF feedback |
-| `⌘↵` | Compile the manuscript |
-| `⇧⌘J` | Locate the source position in the PDF |
+Workspace JSON export contains metadata and paths. **Complete backup** can also include project folders, PDF snapshots, annotations, and conversations; authentication credentials are excluded. See [Security and Privacy](SECURITY.md).
 
-## Build From Source
+## Build and Contribute
 
-Development requires Node.js 24 LTS, npm 11+, and Xcode 26+ selected with `xcode-select`. Xcode builds the native dictation helper.
+Development requires Node.js 24 LTS, npm 11+, and Xcode 26+ for the native dictation helper.
 
 ```sh
 git clone https://github.com/naisslab/ResearchWorkbench.git
@@ -194,47 +175,9 @@ npm ci
 npm run dev
 ```
 
-Create a local development app or installer:
+Use `npm run package` for an app directory or `npm run dist` for a development DMG. Both create unsigned local builds. Run `npm test`, `npm run build`, and the relevant GUI suites before submitting changes. Desktop checks require macOS; manuscript checks also require TeX tools.
 
-```sh
-npm run package  # App directory
-npm run dist     # DMG installer
-npm run check:release -- --artifacts --development
-```
-
-On Apple silicon, the app appears at `release/mac-arm64/Research Workbench.app`. Intel builds use `release/mac/Research Workbench.app`. These commands create unsigned artifacts and do not upload releases. See the [release guide](docs/release.md) for signing, notarization, and distribution checks.
-
-## Verification
-
-```sh
-npm test
-npm run build
-npm run test:e2e
-npm run test:release-ui
-npm run test:portfolio-ui
-npm run test:packaged-ui
-```
-
-GUI checks require a macOS desktop session; compilation checks also require TeX tools. Tests use isolated application data. [Contributing](CONTRIBUTING.md) lists focused suites for AI, writing, recovery, and other workflows.
-
-To regenerate the README images with fictional data:
-
-```sh
-npm run build
-node scripts/readme-screenshots.mjs
-```
-
-Images are written to `output/playwright/readme-*.png`. Review them before copying the selected files to `docs/images/`.
-
-## Data and Release Status
-
-New installations start with an empty workspace. Existing workspaces retain their projects and notes. The historical personal catalog is excluded from packaged apps and requires an explicit development import in the source checkout.
-
-The app stores workspace metadata, drafts, PDF feedback, and conversations under its application support directory. Settings shows the exact path. Removing a project from the workspace does not delete its source folder.
-
-Workspace JSON export contains metadata and paths. **Complete backup** can also include linked project folders, PDF snapshots, annotations, and conversations. Authentication credentials are excluded. Backups may contain private research.
-
-This preview does not include app-internal background updates. Rerun the installer or download a newer release DMG, and make a complete backup before upgrading. See the [changelog](CHANGELOG.md) and [architecture and roadmap](docs/architecture-and-roadmap.md) for implementation notes and planned work.
+[Contributing](CONTRIBUTING.md) · [Architecture and Roadmap](docs/architecture-and-roadmap.md) · [Release Guide](docs/release.md) · [Changelog](CHANGELOG.md) · [Screenshot Sources](docs/images/README.md)
 
 ## License
 
