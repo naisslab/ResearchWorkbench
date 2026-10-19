@@ -81,7 +81,7 @@ export async function dragDivider(page, name, dx, dy = 0) {
 }
 
 export async function resizeWindow(app, page, width, height) {
-  await app.evaluate(
+  const viewport = await app.evaluate(
     ({ BrowserWindow, screen }, { width, height }) => {
       const window = BrowserWindow.getAllWindows()[0];
       const previousZoom = window.webContents.getZoomFactor();
@@ -105,10 +105,19 @@ export async function resizeWindow(app, page, width, height) {
       );
       window.setMinimumSize(...minimum.map((size) => Math.round(size * zoom)));
       window.center();
+      // Native dimensions are whole pixels (e.g. 2200 / 3 becomes 733).
+      return {
+        width: Math.round(width * zoom) / zoom,
+        height: Math.round(height * zoom) / zoom,
+      };
     },
     { width, height },
   );
-  await page.waitForFunction((width) => innerWidth === width, width);
+  await page.waitForFunction(
+    ({ width, height }) =>
+      Math.abs(innerWidth - width) <= 1 && Math.abs(innerHeight - height) <= 1,
+    viewport,
+  );
   // ResizeObserver and React need to finish before reading fitted pane sizes.
   await page.evaluate(
     () =>
