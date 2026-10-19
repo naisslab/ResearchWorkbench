@@ -15,10 +15,10 @@ Research Workbench brings project management, LaTeX, PDF feedback, and Overleaf 
 On an Apple silicon Mac running macOS 13 or later, with [GitHub CLI](https://cli.github.com) installed and signed in to an account that can access this private repository:
 
 ```sh
-bash -c 'set -e; installer=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/naisslab/ResearchWorkbench/contents/scripts/install-macos.sh?ref=main"); bash -c "$installer"'
+bash -c 'set -e; installer=$(gh api -H "Accept: application/vnd.github.raw+json" "repos/naisslab/ResearchWorkbench/contents/scripts/install-macos.sh?ref=main"); bash -c "$installer" -- --preview'
 ```
 
-The [installer](scripts/install-macos.sh) downloads the pinned 0.1.0 preview, verifies its SHA-256 checksum and app identity, and installs it in `~/Applications`. It requires no source checkout, Node.js, Xcode, or administrator access. Existing installations are left unchanged; use the [DMG](#download-and-install) for an upgrade.
+The [installer](scripts/install-macos.sh) selects the latest stable GitHub release, verifies its checksum and Apple signing/notarization, and installs or upgrades the app. The `--preview` option permits the pinned unsigned 0.1.0 preview only while no stable release exists. Fresh installations use `~/Applications` without administrator access. Existing installations are updated in place; a protected `/Applications` folder may require manual installation through Finder. No source checkout, Node.js, Xcode, or user signing certificate is needed.
 
 **Prefer to ask Claude Code or Codex?** Copy this request into your agent:
 
@@ -26,7 +26,7 @@ The [installer](scripts/install-macos.sh) downloads the pinned 0.1.0 preview, ve
 Install Research Workbench on my Mac from the private GitHub repository naisslab/ResearchWorkbench. Use gh to read README.md and follow its One-Line Installation instructions. Help set up GitHub CLI if needed, let me complete any required login, and report the installed app path and any first-launch limitation.
 ```
 
-This development preview is unsigned and not notarized. macOS may block first launch; the installer preserves Gatekeeper and quarantine settings. Open the installed app from Finder. See [Download and Install](#download-and-install) for manual installation and optional TeX setup.
+The current development preview is unsigned and not notarized. macOS may block first launch; the installer preserves Gatekeeper and quarantine settings. Open the installed app from Finder. See [Download and Install](#download-and-install) for manual installation and optional TeX setup.
 
 ## All Your Research Projects in One Place
 
@@ -151,6 +151,22 @@ The private repository and release require a GitHub account with access. End use
 
 LaTeX compilation requires a local TeX distribution with `latexmk` and the selected engine. [MacTeX](https://www.tug.org/mactex/) is one option. Project organization and PDF reading work without TeX. On-device dictation requires macOS 26 or later and a supported speech model; models may download on first use.
 
+## Update or Reinstall
+
+Quit Research Workbench, then run the same one-line command above. A newer stable release replaces the installed app; an already-current version is left alone. To force a fresh copy, add `--reinstall` after `--preview`. Add `--check` instead to report the installed and available versions without downloading the DMG.
+
+| Operation | Installer Behavior |
+| --- | --- |
+| First installation | Download and verify the release, then install the app in `~/Applications`. |
+| Update | Find the existing app, reject downgrades, and replace it with a newer verified release. |
+| Reinstall | Use `--reinstall` to replace the current app with a fresh copy, even at the same version. |
+| Failed replacement | Attempt to restore the previous app automatically; retain its backup if restoration cannot complete. |
+| Manual installation | Download the release DMG, quit the app, and replace the app in the same Applications folder. |
+
+The installer changes the app bundle only. Project folders and application support data remain in place. Each replacement retains the previous app at the backup path printed by the installer. Make a **Complete backup** before upgrading: an old app bundle alone cannot reverse future data-format migrations.
+
+Signed releases are prepared by the publisher. Users do not sign or notarize their own copies. Private releases require GitHub access, and app-internal background updates are not implemented yet. See [Distribution and Updates](docs/distribution.md) for the release process and future update options.
+
 ## First Project
 
 1. Choose **Open a folder**, **Connect Overleaf**, or **Try an example** on the welcome screen.
@@ -218,7 +234,7 @@ The app stores workspace metadata, drafts, PDF feedback, and conversations under
 
 Workspace JSON export contains metadata and paths. **Complete backup** can also include linked project folders, PDF snapshots, annotations, and conversations. Authentication credentials are excluded. Backups may contain private research.
 
-This preview does not include automatic background updates. Install newer releases manually and make a complete backup before upgrading. See the [changelog](CHANGELOG.md) and [architecture and roadmap](docs/architecture-and-roadmap.md) for implementation notes and planned work.
+This preview does not include app-internal background updates. Rerun the installer or download a newer release DMG, and make a complete backup before upgrading. See the [changelog](CHANGELOG.md) and [architecture and roadmap](docs/architecture-and-roadmap.md) for implementation notes and planned work.
 
 ## License
 

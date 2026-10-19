@@ -65,7 +65,7 @@ jobs:
       - name: Test a packaged fresh installation
         run: npm run test:packaged-ui
       - name: Record checksums
-        run: shasum -a 256 release/*.dmg > release/SHA256SUMS-${{ matrix.arch }}.txt
+        run: cd release && shasum -a 256 *.dmg > SHA256SUMS-${{ matrix.arch }}.txt
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish) && 'signed' || 'development' }}-macos-${{ matrix.arch }}

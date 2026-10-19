@@ -50,7 +50,7 @@ The configuration follows [electron-builder v26's Mac signing and notarization o
 
 Before publishing, verify installation on another Mac or clean account, test the oldest supported OS, confirm operation without MacTeX or an AI login, check recovery and backup/restore, and exercise one representative Overleaf project. Confirm that the release contains the required third-party notices. Automated tests do not validate real account access or microphone permission behavior.
 
-Automatic background updates are not implemented. Until they are, users install a newer verified release manually. Existing application data is preserved by the normal upgrade path; make a complete backup before changing versions.
+App-internal background updates are not implemented. The installer discovers the latest stable GitHub release and supports in-place upgrades, explicit reinstalls, and version checks. Stable installs require checksum, Developer ID signature, Gatekeeper, and stapled-ticket verification. The unsigned preview requires explicit opt-in. See [Distribution and Updates](distribution.md) for release promotion, client behavior, backups, and the remaining signing setup.
 
 ## Historical Personal Data
 
