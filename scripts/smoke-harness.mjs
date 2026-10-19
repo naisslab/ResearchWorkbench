@@ -82,14 +82,29 @@ export async function dragDivider(page, name, dx, dy = 0) {
 
 export async function resizeWindow(app, page, width, height) {
   await app.evaluate(
-    ({ BrowserWindow }, { width, height }) => {
+    ({ BrowserWindow, screen }, { width, height }) => {
       const window = BrowserWindow.getAllWindows()[0];
-      const minimum = window.getMinimumSize();
-      // macOS clamps normal window sizes to the CI display's work area.
-      // A temporary minimum allows the wide layouts this suite exercises.
-      window.setMinimumSize(width, height);
-      window.setSize(width, height);
-      window.setMinimumSize(...minimum);
+      const previousZoom = window.webContents.getZoomFactor();
+      const minimum = window
+        .getMinimumSize()
+        .map((size) => size / previousZoom);
+      const { width: availableWidth, height: availableHeight } =
+        screen.getDisplayMatching(window.getBounds()).workAreaSize;
+      // Keep the entire native window on screen so macOS delivers drag events.
+      // Zoom preserves the requested CSS viewport on small hosted CI displays.
+      const zoom =
+        1 /
+        Math.ceil(
+          Math.max(1, width / availableWidth, height / availableHeight),
+        );
+      window.setMinimumSize(1, 1);
+      window.webContents.setZoomFactor(zoom);
+      window.setContentSize(
+        Math.round(width * zoom),
+        Math.round(height * zoom),
+      );
+      window.setMinimumSize(...minimum.map((size) => Math.round(size * zoom)));
+      window.center();
     },
     { width, height },
   );

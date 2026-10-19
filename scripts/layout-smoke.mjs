@@ -165,8 +165,10 @@ Review the source, ask the agent, and read the manuscript side by side.
       sourceBefore + 49,
   );
   const agentBefore = Number(await agentDivider.getAttribute("aria-valuenow"));
+  const agentAfter = await dragDivider(page, "Resize agent and PDF", 50);
   assert.ok(
-    (await dragDivider(page, "Resize agent and PDF", 50)) >= agentBefore + 49,
+    agentAfter >= agentBefore + 49,
+    `Agent drag should add 50px: started at ${agentBefore}, ended at ${agentAfter}`,
   );
   await checkColumns();
   const savedWidths = await page.evaluate(() =>
